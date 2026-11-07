@@ -28,6 +28,30 @@ RETRYABLE = frozenset({-1712, -609, -600})
 MAX_DOCUMENTS = 200
 
 
+def _decode_wide_integers() -> None:
+    """Let appscript read the 8-byte integers Word for Mac sends as 32-bit ones.
+
+    Measured on Word 16.114: the answers to `count each paragraph` and
+    `compute statistics` are typed as 32-bit integers but carry 8 bytes, and
+    appscript fails on them with "unpack requires a buffer of 4 bytes".
+    """
+    import struct
+
+    from aem import aemcodecs
+
+    original = aemcodecs.Codecs.unpacksint32
+    if getattr(original, "_word_wide", False):
+        return
+
+    def unpacksint32(self, desc):
+        if len(desc.data) == 8:
+            return struct.unpack("q", desc.data)[0]
+        return original(self, desc)
+
+    unpacksint32._word_wide = True
+    aemcodecs.Codecs.unpacksint32 = unpacksint32
+
+
 def _ae_number(exc: BaseException) -> int | None:
     number = getattr(exc, "errornumber", None)
     if number is None:
@@ -53,6 +77,7 @@ class MacWord(Worker):
     def connect(self, allow_launch: bool = False):
         import appscript
 
+        _decode_wide_integers()
         running = self._word_running()
         if not running and not allow_launch:
             raise ConnectionError(

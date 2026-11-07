@@ -18,15 +18,32 @@ Measured 2026-11-08 with `appscript.app(id="com.microsoft.Word", terms="sdef")`.
 | Writing text | Setting `content` of a range made with `create_range` inserts the text; `\r` starts a new paragraph. |
 | Reading text | `paragraphs[i].text_object.content.get()` answers the paragraph's text without its mark. |
 | Latin font | `font_object.ascii_name` and `other_name` set and read back. |
-| East Asian font | `east_asian_name` set to "Hiragino Sans" took. Set to "Arial" (no East Asian glyphs) it is refused with -1708 and keeps the old value. Windows is expected to keep the old value silently instead; to be measured. |
+| East Asian font | `east_asian_name` set to "Hiragino Sans" took. Set to "Arial" (no East Asian glyphs) it is refused with -1708 and keeps the old value. |
 | Complex-script font | `complex_script_name` reads back as a theme reference, `+本文のフォント - コンプレックス スクリプト ()`, until a font is set. |
-| Line spacing | A new paragraph reads `line_spacing_rule` = `line_space_single`, `line_spacing` = 12.0. |
+| Line spacing | A new paragraph reads `line_spacing_rule` = `line_space_single`, `line_spacing` = 12.0. Setting the multiple rule with 18 pt reads back as `line_space1_pt5`, 18.0: Word turns 1.5 lines into its own rule. |
+| Integers | `count(each=k.paragraph)` and `compute statistics` answer an integer typed as 32-bit but 8 bytes long, which appscript fails to decode. Decoding 8 bytes as 64-bit fixes both (backend/mac.py). `paragraphs.get()` still fails, in another decoder. |
+| Counting paragraphs, again | Probing `paragraphs[i]` (doubling, then bisecting) counts them in a few calls. |
+| Ranges are re-resolved | A range reached through a reference (`paragraphs[3].text_object`) is asked for again each time: after `execute find` it still reads as the whole paragraph, so a found range cannot be read through it. Search the text in Python and make ranges with `create range`. |
+| Selection | `execute find` on a range left the selection at (0, 0). |
+| Style | Setting `style` to `k.style_heading1` applies 見出し 1; `outline_level` reads `outline_level1`, and `outline_level_body_text` for body text. `Word_styles["見出し 2"]` finds a style by its local name. |
+| Zoom | `active_window.view.zoom.percentage` reads 100. |
 | Style | `paragraphs[1].style.get()` answers a `Word_styles['標準']` reference; `style.name_local.get()` answers `標準` in a Japanese Word. |
 | End of the text | `text_object.end_of_content` answered 28 for 27 characters of text (the last paragraph mark counts). |
 | Closing | `close(saving=k.no)` closes without asking. |
 | New document name | `create_new_document()` names it `文書 1`, `文書 3`: the number is not reused. |
 
-## Word for Windows
+## Word for Windows (Microsoft 365, 16.0.20527 x64, Japanese UI)
 
-Not measured yet. `scripts/live_check.py` runs every tool against a scratch
-document and prints PASS or FAIL for each step.
+Measured 2026-11-08 with `scripts/live_check.py` (17 of 20 steps passed on
+the first run; the three failures are below and were fixed).
+
+| What | Seen |
+|---|---|
+| Style names | Built-in styles read back in the UI language: 標準, 見出し 1, 表題. Applying them by WdBuiltinStyle constant works. |
+| Theme fonts | A style's fonts read back as theme references: `+見出しのフォント`, `+本文のフォント - 日本語`, `+本文のフォント - コンプレックス スクリプト`. |
+| East Asian font | Setting `NameFarEast` to Segoe UI (no East Asian glyphs) raises `0x800A16D4` and keeps the old font. |
+| Line spacing | `LineSpacingRule` = multiple with `LineSpacing` = 18 reads back as `wdLineSpace1pt5`, 18.0. |
+| Replace all | `Find.Execute(..., ReplaceWith="dog", Replace=wdReplaceAll)` on `Document.Content` answered without error and replaced nothing; the match was still there. Cause not known. Replacing each match through its own range works. |
+| Undo record | One `UndoRecord` custom record per call: a single `Document.Undo(1)` took back a whole rewrite. |
+| Font.Bold | Reads back -1 for bold. |
+| Page | A new document from Normal: A4 (595.3 × 841.9 pt), margins 99.25 / 85.05 / 85.05 / 85.05 pt. |

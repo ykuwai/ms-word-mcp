@@ -33,8 +33,9 @@ PARA_KEYS = ("Alignment", "LineSpacingRule", "LineSpacing", "SpaceBefore", "Spac
              "FirstLineIndent", "LeftIndent", "RightIndent", "DisableLineHeightGrid",
              "KeepWithNext", "PageBreakBefore")
 
-# Fonts this fake refuses as an East Asian font, the way Word keeps the old
-# one when the new font has no East Asian glyphs.
+# Fonts this fake refuses as an East Asian font. Word refuses a font without
+# East Asian glyphs there and keeps the old one: 0x800A16D4 on Windows, -1708
+# on the Mac (both measured on Word 16).
 LATIN_ONLY_FONTS = {"Segoe UI", "Arial", "Calibri", "Helvetica Neue"}
 
 
@@ -87,7 +88,7 @@ class FakeFont:
         if name not in CHAR_KEYS:
             raise AttributeError(name)
         if name == "NameFarEast" and value in LATIN_ONLY_FONTS:
-            return
+            raise Exception("OLE error 0x800a16d4")
         if isinstance(value, bool):
             value = -1 if value else 0
         for a in self._chars():
@@ -117,6 +118,11 @@ class FakeParagraphFormat:
             raise AttributeError(name)
         for m in self._marks():
             m[name] = value
+            # Word turns a multiple of exactly 1, 1.5 or 2 lines into the
+            # single, one-and-a-half or double rule (measured on Word 16).
+            if (name == "LineSpacing" and m["LineSpacingRule"] == 5
+                    and m["LineSpacing"] in (12.0, 18.0, 24.0)):
+                m["LineSpacingRule"] = {12.0: 0, 18.0: 1, 24.0: 2}[m["LineSpacing"]]
 
 
 class FakeFind:

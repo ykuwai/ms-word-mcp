@@ -14,11 +14,11 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from .. import backend
-from ._common import READ_ONLY, WRITES, Input, annotations, call, follow
+from ._common import READ_ONLY, WRITES, Input, annotations, call, error_text, follow
 from ._word import (
     ALIGNMENTS, LINE_SPACING, WD_COLLAPSE_END, WD_FIND_STOP, check_span, clean_text,
-    fonts_of, paragraph_info, paragraphs_in, resolve_style, span_range, style_name,
-    undefined,
+    fonts_of, paragraph_info, paragraphs_in, resolve_style, spacing_in_lines,
+    span_range, style_name, undefined,
 )
 
 
@@ -100,15 +100,24 @@ def _format_text_impl(start, end, match, latin_font, east_asian_font,
                       underline, color):
     doc = backend.word.document()
     ranges = _target_ranges(doc, start, end, match)
+    refused = {}
     for rng in ranges:
         font = rng.Font
-        if latin_font is not None:
-            font.NameAscii = latin_font
-            font.NameOther = latin_font
-        if east_asian_font is not None:
-            font.NameFarEast = east_asian_font
-        if complex_script_font is not None:
-            font.NameBi = complex_script_font
+        # Word refuses a font name it will not use for that script (an East
+        # Asian font without East Asian glyphs answers 0x800A16D4 on Windows
+        # and -1708 on the Mac) and keeps the old one. The rest of the call
+        # still applies; the refusal comes back as a warning.
+        for script, members, wanted in (
+                ("latin", ("NameAscii", "NameOther"), latin_font),
+                ("east_asian", ("NameFarEast",), east_asian_font),
+                ("complex_script", ("NameBi",), complex_script_font)):
+            if wanted is None:
+                continue
+            for member in members:
+                try:
+                    setattr(font, member, wanted)
+                except Exception as exc:  # noqa: BLE001 - reported below
+                    refused[script] = error_text(exc)
         if size is not None:
             font.Size = size
         if size_complex_script is not None:
@@ -136,11 +145,12 @@ def _format_text_impl(start, end, match, latin_font, east_asian_font,
         for key, wanted in (("latin", latin_font), ("east_asian", east_asian_font),
                             ("complex_script", complex_script_font)):
             if wanted is not None and got[key] != wanted:
+                why = (" Word refused it" + (": an East Asian font needs East Asian "
+                                             "glyphs" if key == "east_asian" else "")
+                       + f" ({refused[key]})." if key in refused else "")
                 warnings.append(
                     f"The {key.replace('_', ' ')} font reads back as {got[key]!r}, not "
-                    f"{wanted!r}." + (" Word keeps the old East Asian font when the new "
-                                      "one has no East Asian glyphs."
-                                      if key == "east_asian" else ""))
+                    f"{wanted!r}.{why}")
         if size is not None and got["size"] != size:
             warnings.append(f"The size reads back as {got['size']}, not {size}.")
     follow(doc, ranges[0])
@@ -226,9 +236,20 @@ def _set_paragraph_format_impl(start, end, alignment, line_spacing_rule, line_sp
 
     out = [paragraph_info(i, p, detail=True) for i, p in paragraphs_in(doc, start, end)]
     warnings = []
-    for info in out[:1]:
-        if line_spacing_rule is not None and info["line_spacing_rule"] != line_spacing_rule:
-            warnings.append(f"Line spacing reads back as {info['line_spacing_rule']}.")
+    if line_spacing_rule is not None and out:
+        got = out[0]
+        wanted_lines = spacing_in_lines(
+            LINE_SPACING[line_spacing_rule],
+            _lines_to_points(line_spacing) if line_spacing_rule == "multiple"
+            else line_spacing)
+        if wanted_lines is not None:
+            if got.get("line_spacing_lines") != wanted_lines:
+                warnings.append(f"Line spacing reads back as {got['line_spacing_rule']}, "
+                                f"{got.get('line_spacing_lines', got.get('line_spacing_pt'))}.")
+        elif (got["line_spacing_rule"], got.get("line_spacing_pt")) != (
+                line_spacing_rule, line_spacing):
+            warnings.append(f"Line spacing reads back as {got['line_spacing_rule']}, "
+                            f"{got.get('line_spacing_pt')} pt.")
     follow(doc, rng)
     result = {"success": True, "paragraphs": out[:50]}
     if warnings:

@@ -12,7 +12,7 @@ from pydantic import Field, model_validator
 from .. import backend
 from ._common import DESTRUCTIVE, READ_ONLY, WRITES, Input, annotations, call, follow
 from ._word import (
-    WD_COLLAPSE_END, WD_FIND_STOP, WD_OUTLINE_BODY, WD_REPLACE_ALL,
+    WD_COLLAPSE_END, WD_FIND_STOP, WD_OUTLINE_BODY,
     WD_STATISTIC_CHARACTERS, WD_STATISTIC_PAGES, WD_STATISTIC_WORDS,
     check_span, clean_text, index_of, paragraph, paragraph_info, paragraphs_in,
     resolve_style, style_name,
@@ -241,7 +241,7 @@ class FindReplaceInput(Input):
 
 
 def _find_all(doc, find, match_case, whole_word, wildcards, limit=500):
-    """(paragraph index, matched text) of each match, in order."""
+    """(start, end, paragraph index, matched text) of each match, in order."""
     rng = doc.Content
     f = rng.Find
     f.ClearFormatting()
@@ -249,7 +249,7 @@ def _find_all(doc, find, match_case, whole_word, wildcards, limit=500):
     while f.Execute(FindText=find, MatchCase=match_case, MatchWholeWord=whole_word,
                     MatchWildcards=wildcards, Forward=True, Wrap=WD_FIND_STOP,
                     Format=False):
-        found.append((index_of(doc, rng), rng.Text))
+        found.append((rng.Start, rng.End, index_of(doc, rng), rng.Text))
         if len(found) >= limit:
             break
         rng.Collapse(WD_COLLAPSE_END)
@@ -261,22 +261,25 @@ def _find_replace_impl(find: str, replace: str | None, match_case: bool,
     doc = backend.word.document()
     matches = _find_all(doc, find, match_case, whole_word, wildcards)
     result = {"success": True, "matches": len(matches),
-              "paragraphs": sorted({i for i, _ in matches})}
+              "paragraphs": sorted({m[2] for m in matches})}
     if replace is None or not matches:
         return result
-    rng = doc.Content
-    f = rng.Find
-    f.ClearFormatting()
-    f.Replacement.ClearFormatting()
-    f.Execute(FindText=find, MatchCase=match_case, MatchWholeWord=whole_word,
-              MatchWildcards=wildcards, Forward=True, Wrap=WD_FIND_STOP, Format=False,
-              ReplaceWith=replace, Replace=WD_REPLACE_ALL)
-    left = _find_all(doc, find, match_case, whole_word, wildcards)
-    result["replaced"] = len(matches) - len(left) if find not in replace else len(matches)
-    if left and find not in replace:
-        result["warnings"] = [f"{len(left)} matches are still there after replacing."]
-    first = paragraph(doc, matches[0][0])
-    follow(doc, first.Range)
+    # Each match is replaced through its own range, last first so the
+    # positions of the ones before it hold. Word's own ReplaceAll answered
+    # success and replaced nothing on Word 16 for Windows, and a range is
+    # what both platforms can do; each replacement is read back.
+    text = replace.replace("\n", "\v")
+    missed = 0
+    for start, end, _, _ in reversed(matches):
+        target = doc.Range(start, end)
+        target.Text = text
+        if doc.Range(start, start + len(text)).Text != text:
+            missed += 1
+    result["replaced"] = len(matches) - missed
+    if missed:
+        result["warnings"] = [f"{missed} of {len(matches)} replacements read back "
+                              "differently. Read the paragraphs back."]
+    follow(doc, paragraph(doc, matches[0][2]).Range)
     return result
 
 

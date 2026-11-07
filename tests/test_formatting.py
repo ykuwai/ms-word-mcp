@@ -31,9 +31,11 @@ def test_three_scripts_each_get_their_own_font(make_doc):
 
 def test_an_east_asian_font_word_ignores_comes_back_as_a_warning(make_doc):
     make_doc("日本語")
-    out = fmt(1, east_asian_font="Segoe UI")
+    out = fmt(1, east_asian_font="Segoe UI", bold=True)
     assert out["success"]
-    assert any("East Asian" in w for w in out["warnings"])
+    assert any("East Asian" in w and "refused" in w for w in out["warnings"])
+    # The rest of the call still applied.
+    assert out["read_back"][0]["bold"] == -1
 
 
 def test_match_formats_only_the_occurrences(make_doc):
@@ -58,13 +60,14 @@ def test_color_is_written_as_word_bgr():
 
 def test_paragraph_format_line_spacing_in_lines_and_points(make_doc):
     make_doc("a", "b")
-    out = answer(formatting._set_paragraph_format_impl, 1, 2, "justify", "multiple", 1.5,
+    out = answer(formatting._set_paragraph_format_impl, 1, 2, "justify", "multiple", 1.2,
                  6, 0, None, None, None, False, None, None)
     first = out["paragraphs"][0]
     assert first["alignment"] == "justify"
     assert first["line_spacing_rule"] == "multiple"
-    assert first["line_spacing_lines"] == 1.5
+    assert first["line_spacing_lines"] == 1.2
     assert first["space_before"] == 6
+    assert "warnings" not in out
     out = answer(formatting._set_paragraph_format_impl, 1, None, None, "exactly", 18,
                  None, None, None, None, None, None, None, None)
     assert out["paragraphs"][0]["line_spacing_pt"] == 18
@@ -94,3 +97,12 @@ def test_apply_unknown_style_says_what_exists(make_doc):
 def test_format_text_needs_something_to_set():
     with pytest.raises(ValueError):
         formatting.FormatTextInput(start=1)
+
+
+def test_one_and_a_half_lines_reads_back_as_lines(make_doc):
+    make_doc("a")
+    out = answer(formatting._set_paragraph_format_impl, 1, None, None, "multiple", 1.5,
+                 None, None, None, None, None, None, None, None)
+    assert out["paragraphs"][0]["line_spacing_rule"] == "one_and_half"
+    assert out["paragraphs"][0]["line_spacing_lines"] == 1.5
+    assert "warnings" not in out

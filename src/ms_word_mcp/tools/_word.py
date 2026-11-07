@@ -144,9 +144,9 @@ def paragraph_info(index: int, p, detail: bool = False) -> dict:
         info["fonts"] = fonts_of(rng)
         rule = fmt.LineSpacingRule
         info["line_spacing_rule"] = LINE_SPACING_NAMES.get(rule, rule)
-        if rule == LINE_SPACING["multiple"]:
-            # Word stores a multiple in points, 12 to a line.
-            info["line_spacing_lines"] = round(fmt.LineSpacing / 12.0, 3)
+        lines = spacing_in_lines(rule, fmt.LineSpacing)
+        if lines is not None:
+            info["line_spacing_lines"] = lines
         else:
             info["line_spacing_pt"] = fmt.LineSpacing
         info["space_before"] = fmt.SpaceBefore
@@ -158,3 +158,18 @@ def paragraph_info(index: int, p, detail: bool = False) -> dict:
 LINE_SPACING = {"single": 0, "one_and_half": 1, "double": 2, "at_least": 3,
                 "exactly": 4, "multiple": 5}
 LINE_SPACING_NAMES = {v: k for k, v in LINE_SPACING.items()}
+_FIXED_LINES = {0: 1.0, 1: 1.5, 2: 2.0}
+
+
+def spacing_in_lines(rule, points) -> float | None:
+    """Line spacing in lines for the rules measured in lines, else None.
+
+    Word stores a multiple in points, 12 to a line, and turns a multiple of
+    exactly 1, 1.5 or 2 lines into the single, one-and-a-half or double rule
+    (measured on Word 16 for Windows and Mac), so those read back as lines too.
+    """
+    if rule in _FIXED_LINES:
+        return _FIXED_LINES[rule]
+    if rule == LINE_SPACING["multiple"]:
+        return round(points / 12.0, 3)
+    return None
