@@ -16,7 +16,7 @@ Measured 2026-11-08 with `appscript.app(id="com.microsoft.Word", terms="sdef")`.
 | Counting paragraphs | `document.paragraphs.get()` and `count(each=k.paragraph)` both fail to decode the answer (`unpack requires a buffer of 4 bytes`). Asking for `paragraphs[i]` past the last one is error -1728. Count another way. |
 | Making a range | `document.create_range(start=0, end_=0)`: appscript renames `end` to `end_`. |
 | Writing text | Setting `content` of a range made with `create_range` inserts the text; `\r` starts a new paragraph. |
-| Reading text | `paragraphs[i].text_object.content.get()` answers the paragraph's text without its mark. |
+| Reading text | `paragraphs[i].text_object.content.get()` answers the paragraph's text with its mark (`'Appended\r'`). |
 | Latin font | `font_object.ascii_name` and `other_name` set and read back. |
 | East Asian font | `east_asian_name` set to "Hiragino Sans" took. Set to "Arial" (no East Asian glyphs) it is refused with -1708 and keeps the old value. |
 | Complex-script font | `complex_script_name` reads back as a theme reference, `+本文のフォント - コンプレックス スクリプト ()`, until a font is set. |
