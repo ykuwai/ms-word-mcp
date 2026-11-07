@@ -24,6 +24,9 @@ BUNDLE_ID = "com.microsoft.Word"
 # timeout (-1712), a connection that went away (-609), an app not running (-600).
 RETRYABLE = frozenset({-1712, -609, -600})
 
+# A walk over Word's documents never goes further than this, whatever Word answers.
+MAX_DOCUMENTS = 200
+
 
 def _ae_number(exc: BaseException) -> int | None:
     number = getattr(exc, "errornumber", None)
@@ -73,12 +76,23 @@ class MacWord(Worker):
         return self.connect(allow_launch)
 
     def open_documents(self) -> list[OpenDocument]:
+        """The open documents, found by asking for each index in turn.
+
+        Measured on Word 16.114: `documents.get()` answers missing value when
+        none is open, and asking for a document past the last one answers
+        missing value for its name rather than an error, so the walk stops at
+        the first missing name (and at MAX_DOCUMENTS whatever happens).
+        """
+        from appscript import k
+
         app = self.get_app()
         out = []
-        count = len(app.documents.get())
-        for i in range(1, count + 1):
+        for i in range(1, MAX_DOCUMENTS + 1):
             doc = app.documents[i]
-            out.append(OpenDocument(i, doc.name.get(), doc.full_name.get()))
+            name = doc.name.get()
+            if name == k.missing_value or not isinstance(name, str):
+                break
+            out.append(OpenDocument(i, name, doc.full_name.get()))
         return out
 
     def document(self):
