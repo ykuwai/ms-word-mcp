@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ms-word-mcp"
+version = "0.1.0"
+description = "Real-time Microsoft Word control on Windows and macOS: an MCP server that works in the document beside you"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "ykuwai" },
+]
+keywords = ["mcp", "word", "microsoft-word", "com", "applescript", "automation", "ai-agent", "llm"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Office Suites",
+]
+dependencies = [
+    # Both 1.x and 2.x are supported (server.py imports either module layout).
+    # mcp 2.0 renamed mcp.server.fastmcp with no shim, so new majors stay opt-in.
+    "mcp[cli]>=1.0.0,<3.0.0",
+    "pydantic>=2.0.0",
+    # Tool handlers hand their blocking Word work to anyio.to_thread.
+    "anyio>=4.0.0",
+    # Windows drives Word through COM, macOS through Apple Events. Neither is
+    # installable on the other platform, so both carry a marker.
+    "pywin32>=306; sys_platform == 'win32'",
+    "appscript>=1.4.0; sys_platform == 'darwin'",
+]
+
+[project.urls]
+Homepage = "https://github.com/ykuwai/ms-word-mcp"
+Repository = "https://github.com/ykuwai/ms-word-mcp"
+Issues = "https://github.com/ykuwai/ms-word-mcp/issues"
+
+[project.scripts]
+ms-word-mcp = "ms_word_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+# A package of its own name, not a top-level `src`, so ms-word-mcp and
+# ppt-mcp can be installed in the same environment.
+packages = ["src/ms_word_mcp"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
