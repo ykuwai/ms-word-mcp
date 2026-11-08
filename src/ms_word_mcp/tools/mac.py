@@ -416,20 +416,32 @@ def insert_paragraphs(paragraphs, after, before):
                     "\r" + "\r".join(texts))
                 paragraphs = [{**item, "style": item.get("style") or "Normal"}
                               for item in paragraphs]
+    # A style goes on each run of paragraphs that share it, and the text is
+    # read back in one call: a call or more a paragraph took 57 s for 1,000
+    # paragraphs (docs/PROBES.md, Reading).
+    for style, a, b in text_tools.style_runs(paragraphs):
+        rng = doc.create_range(start=_bounds(doc, first + a)[0],
+                               end_=_bounds(doc, first + b)[1])
+        rng.style.set(_style_value(doc, style))
+        rng.font_object.reset()
+    last = first + len(texts) - 1
+    span = doc.create_range(start=_bounds(doc, first)[0], end_=_bounds(doc, last)[1])
+    got = (span.content.get() or "").split("\r")
+    looks: dict = {}
     written, warnings = [], []
     for offset, item in enumerate(paragraphs):
         index = first + offset
-        if item.get("style"):
-            p = doc.paragraphs[index]
-            p.style.set(_style_value(doc, item["style"]))
-            p.text_object.font_object.reset()
-        info = _info(doc, index)
-        if info["text"] != texts[offset]:
-            warnings.append(f"Paragraph {index} reads back as {info['text']!r}, not "
+        key = item.get("style")
+        if key not in looks:  # the style and level, read once for each style given
+            info = _info(doc, index)
+            looks[key] = {k: info[k] for k in ("style", "outline_level") if k in info}
+        now = _clean(got[offset]) if offset < len(got) else ""
+        if now != texts[offset]:
+            warnings.append(f"Paragraph {index} reads back as {now!r}, not "
                             f"{texts[offset]!r}.")
-        written.append(info)
+        written.append({"index": index, "text": now, **looks[key]})
     if written:
-        _scroll(doc, *_bounds(doc, written[-1]["index"]))
+        _scroll(doc, *_bounds(doc, last))
     out = {"success": True, "inserted": written, "paragraphs": _count(doc)}
     if warnings:
         out["warnings"] = warnings

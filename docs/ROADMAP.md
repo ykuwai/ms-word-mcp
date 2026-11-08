@@ -59,10 +59,17 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
 
 ## Next
 
-First, a fix to what is there: **read in bulk.** word_get_outline and
-word_get_paragraphs ask Word one paragraph at a time, which the reference
-branch measured at 15-20 s for 1,000 paragraphs. Read the whole text in one
-call and the styles from the document's XML instead (see PROBES.md).
+First, fixes to what is there, for long documents (PROBES.md, Reading):
+
+- **word_get_outline** now reads Word's heading list and checks each
+  heading (1,000 paragraphs: 2.5 s instead of 28 s on Windows, 3.4 s
+  instead of 20 s on the Mac).
+- **word_get_paragraphs** still asks Word three or more times a paragraph
+  (up to 200 a call). The styles could come from the document's XML on
+  Windows (Content.WordOpenXML) and through VBA on the Mac.
+- **word_insert_paragraphs** now sets a style on each run of paragraphs
+  that share it and reads the text back in one call (1,000 paragraphs on
+  the Mac: 6.5 s instead of 57 s).
 
 Then, ordered roughly by what the owner stressed.
 

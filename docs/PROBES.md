@@ -105,6 +105,22 @@ pushed it with the measurements to the `reference` branch of this repository
 - **Tables of contents:** a `TOC` field made with `create new field` gives the
   same table as Word's own command, on both platforms.
 
+## Reading a long document (Word 16, both platforms)
+
+Measured with `scripts/probes/mac_bulk_reads.py` and
+`scripts/probes/outline_speed.py` on 2026-11-08 (1,000 paragraphs).
+
+| What | Windows | Mac |
+|---|---|---|
+| One paragraph's outline level | | 17 ms a paragraph (200 in 3.4 s) |
+| A property of every paragraph in one Apple Event (`outline level of every paragraph`, `content`, `style`) | | 22-25 s each: slower than one at a time. Paragraph formatting, fonts, a slice of paragraphs, or their starts: no answer within 60 s (-1712). |
+| The whole text | | One call, 0.00-0.02 s |
+| The whole text split at `\r` | | 31 pieces for 19 paragraphs with two equations (each equation's text holds marks of its own) and a table of contents: the split cannot number paragraphs by itself |
+| Word's heading list (`get cross reference items` with `reference type heading`) | | One call, 9 ms. Paragraphs in a heading style only: a Normal paragraph given outline level 2 directly is not in it. Each item is the heading's text indented two spaces a level; a tab or line break becomes a space, the heading's own leading spaces are dropped, and a long heading is cut at about 100 characters. |
+| `go to next` a heading item from the start | | Stopped moving after three headings: not used |
+| word_get_outline, 1,000 paragraphs, 40 headings, 10 numbered equations | Every paragraph: 28.2 s. Heading list, each heading read back: 2.5 s, the same 40 headings | Every paragraph: 19.9 s. Heading list, each heading read back: 3.4 s, the same 40 headings |
+| word_insert_paragraphs, 1,000 paragraphs | 48.6 s, a style set and read back a paragraph at a time | 57 s the same way; 6.5 s with a style set on each run of paragraphs that share it and the text read back in one call |
+
 ## Tables (Word 16, both platforms)
 
 Measured with `scripts/probes/windows_tables.py` (Microsoft 365 16.0.20527,

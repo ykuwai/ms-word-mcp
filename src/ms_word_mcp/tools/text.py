@@ -164,6 +164,20 @@ class InsertParagraphsInput(Input):
         return self
 
 
+def style_runs(paragraphs: list[dict]) -> list[tuple[str, int, int]]:
+    """(style, first offset, last offset) of each run of paragraphs given one style."""
+    runs: list[list] = []
+    for offset, item in enumerate(paragraphs):
+        style = item.get("style")
+        if not style:
+            continue
+        if runs and runs[-1][0] == style and runs[-1][2] == offset - 1:
+            runs[-1][2] = offset
+        else:
+            runs.append([style, offset, offset])
+    return [tuple(r) for r in runs]
+
+
 def _insert_paragraphs_impl(paragraphs: list[dict], after: int | None,
                             before: int | None):
     doc = backend.word.document()
@@ -211,20 +225,32 @@ def _insert_paragraphs_impl(paragraphs: list[dict], after: int | None,
             rng = doc.Range(start, start)
             rng.InsertAfter("\r".join(texts) + "\r")
 
+    # A style goes on each run of paragraphs that share it, and the text is
+    # read back in one call, rather than several calls a paragraph.
+    last_index = first_index + len(texts) - 1
+    for style, a, b in style_runs(paragraphs):
+        rng = doc.Range(paragraph(doc, first_index + a).Range.Start,
+                        paragraph(doc, first_index + b).Range.End)
+        rng.Style = resolve_style(doc, style)
+        rng.Font.Reset()
+    span = doc.Range(paragraph(doc, first_index).Range.Start,
+                     paragraph(doc, last_index).Range.End)
+    got = (span.Text or "").split("\r")
+    looks: dict = {}
     written, warnings = [], []
-    for offset, (index, p) in enumerate(
-            paragraphs_in(doc, first_index, first_index + len(texts) - 1)):
-        wanted = paragraphs[offset].get("style")
-        if wanted:
-            p.Style = resolve_style(doc, wanted)
-            p.Range.Font.Reset()
-        info = paragraph_info(index, p)
-        if info["text"] != texts[offset].replace("\v", "\v"):
-            warnings.append(f"Paragraph {index} reads back as {info['text']!r}, not "
+    for offset, item in enumerate(paragraphs):
+        index = first_index + offset
+        key = item.get("style")
+        if key not in looks:  # the style and level, read once for each style given
+            info = paragraph_info(index, paragraph(doc, index))
+            looks[key] = {k: info[k] for k in ("style", "outline_level") if k in info}
+        now = clean_text(got[offset]) if offset < len(got) else ""
+        if now != texts[offset]:
+            warnings.append(f"Paragraph {index} reads back as {now!r}, not "
                             f"{texts[offset]!r}.")
-        written.append(info)
+        written.append({"index": index, "text": now, **looks[key]})
     if written:
-        follow(doc, paragraph(doc, written[-1]["index"]).Range)
+        follow(doc, paragraph(doc, last_index).Range)
     result = {"success": True, "inserted": written, "paragraphs": doc.Paragraphs.Count}
     if warnings:
         result["warnings"] = warnings

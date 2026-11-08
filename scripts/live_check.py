@@ -45,6 +45,10 @@ def step(label, impl, *args, undo=None, check=lambda out: "error" not in out):
 
 
 def main() -> int:
+    # A Windows console or a redirected file may be cp932 or the like, which
+    # cannot write the math characters the equation steps answer.
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(errors="backslashreplace")
     stamp = time.strftime("%Y%m%d-%H%M%S")
     # Inside the repository (.word-test/, ignored by git), so nothing outside
     # the project is read or written. Word for Mac, being sandboxed, asks once
