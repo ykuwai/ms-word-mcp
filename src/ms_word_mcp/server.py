@@ -50,8 +50,9 @@ async def app_lifespan(server):
 DOCUMENT_ARG = "document"
 TOOLS_WITHOUT_DOCUMENT_ARG = frozenset({
     "word_get_app_info", "word_list_documents", "word_activate_document",
-    "word_open_document", "word_create_document",
+    "word_open_document", "word_create_document", "word_describe",
 })
+DOCUMENT_PASSING_TOOLS = frozenset({"word_run", "word_run_steps"})
 
 
 class WordServer(MCPServer):
@@ -70,9 +71,12 @@ class WordServer(MCPServer):
 
     async def call_tool(self, name, arguments, *args, **kwargs):
         wanted = None
-        # The catalog tools take `document` as their own argument and pass it
-        # on to the tool they run, so it is left in place for them.
-        if (name not in CATALOG_TOOLS and isinstance(arguments, dict)
+        # word_run and word_run_steps take `document` as their own argument
+        # and pass it on to the tool they run, so it is left in place for
+        # them. word_describe has none, and is dropped like any tool's that
+        # does not work on a document: a client told to pass `document` on
+        # every call passes it there too (ppt-mcp #367).
+        if (name not in DOCUMENT_PASSING_TOOLS and isinstance(arguments, dict)
                 and DOCUMENT_ARG in arguments):
             arguments = dict(arguments)
             wanted = arguments.pop(DOCUMENT_ARG)

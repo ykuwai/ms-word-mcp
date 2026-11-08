@@ -27,6 +27,10 @@ Measured 2026-11-08 with `appscript.app(id="com.microsoft.Word", terms="sdef")`.
 | Selection | `execute find` on a range left the selection at (0, 0). |
 | Style | Setting `style` to `k.style_heading1` applies 見出し 1; `outline_level` reads `outline_level1`, and `outline_level_body_text` for body text. `Word_styles["見出し 2"]` finds a style by its local name. |
 | Zoom | `active_window.view.zoom.percentage` reads 100. |
+| Font color | Word for Mac takes 16-bit channels: setting `[192, 0, 0]` reads back black, `[49344, 0, 0]` reads back as #C00000. |
+| Spacing in lines | Setting `line_unit_before` to 0.5 made `space_before` read 9.0: the measure in lines wins while it is set (the same for indents in characters). |
+| Creating a style | `make new Word style` answers -1708 and makes nothing, with or without a type, whatever the name. Changing an existing style (base style, next style, font, paragraph format) works. A built-in style is reached with `Word_styles[k.style_heading1]`; `Word_styles["Heading 1"]` fails in a Japanese Word. |
+| Normal's base style | Answers a style named `""`. |
 | Style | `paragraphs[1].style.get()` answers a `Word_styles['標準']` reference; `style.name_local.get()` answers `標準` in a Japanese Word. |
 | End of the text | `text_object.end_of_content` answered 28 for 27 characters of text (the last paragraph mark counts). |
 | Closing | `close(saving=k.no)` closes without asking. |

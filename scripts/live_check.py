@@ -77,23 +77,55 @@ def run_steps(path: str) -> None:
          check=lambda o: [h["level"] for h in o.get("headings", [])][-2:] == [1, 2])
     step("paragraphs with detail", text._get_paragraphs_impl, 1, 5, True,
          check=lambda o: len(o.get("paragraphs", [])) == 5)
-    step("three fonts", formatting._format_text_impl, 3, None, None, "Segoe UI",
-         "BIZ UDPゴシック", "Arial", 11, None, None, None, None, "#1F4E79",
-         undo="Format text", check=lambda o: "warnings" not in o)
+    step("three fonts and a color", formatting._format_text_impl, 3, None, None,
+         {"latin_font": "Segoe UI", "east_asian_font": "BIZ UDPゴシック",
+          "complex_script_font": "Arial", "size": 11, "color": "#1F4E79"},
+         undo="Format text", check=lambda o: "warnings" not in o
+         and o["read_back"][0]["color"] == "#1F4E79")
     step("latin-only East Asian font warns", formatting._format_text_impl, 3, None, None,
-         None, "Segoe UI", None, None, None, None, None, None, None, undo="Format text",
-         check=lambda o: any("East Asian" in w for w in o.get("warnings", [])))
-    step("bold a match", formatting._format_text_impl, 3, None, "English", None, None,
-         None, None, None, True, None, None, None, undo="Format text",
-         check=lambda o: o.get("ranges") == 1)
-    step("line spacing 1.5 lines", formatting._set_paragraph_format_impl, 3, 5, "justify",
-         "multiple", 1.5, 6, 6, None, None, None, False, None, None,
+         {"east_asian_font": "Segoe UI"}, undo="Format text",
+         check=lambda o: any("east_asian_font" in w for w in o.get("warnings", [])))
+    step("bold a match", formatting._format_text_impl, 3, None, "English",
+         {"bold": True}, undo="Format text", check=lambda o: o.get("ranges") == 1)
+    step("emphasis dots, spacing, scaling", formatting._format_text_impl, 3, None, "日本語",
+         {"emphasis_mark": "dot_above", "character_spacing": 1, "scaling": 90},
+         undo="Format text", check=lambda o: "warnings" not in o)
+    step("line spacing 1.5 lines", formatting._set_paragraph_format_impl, 3, 5,
+         {"alignment": "justify", "line_spacing_rule": "multiple", "line_spacing": 1.5,
+          "space_before": 6, "space_after": 6, "snap_to_grid": False},
          undo="Paragraph format",
-         check=lambda o: o["paragraphs"][0].get("line_spacing_lines") == 1.5)
+         check=lambda o: o["paragraphs"][0].get("line_spacing_lines") == 1.5
+         and "warnings" not in o)
     step("line spacing exactly 18 pt", formatting._set_paragraph_format_impl, 5, None,
-         None, "exactly", 18, None, None, None, None, None, None, None, None,
-         undo="Paragraph format",
+         {"line_spacing_rule": "exactly", "line_spacing": 18}, undo="Paragraph format",
          check=lambda o: o["paragraphs"][0].get("line_spacing_pt") == 18)
+    step("Japanese spacing in lines and characters", formatting._set_paragraph_format_impl,
+         3, None, {"space_before_lines": 0.5, "first_line_indent_chars": 1,
+                   "east_asian_line_breaking": True, "hanging_punctuation": True},
+         undo="Paragraph format", check=lambda o: "warnings" not in o)
+    # Word for Mac cannot create a style through its scripting; there the
+    # check is that it says so, and the steps after it use Body Text.
+    style = "Body Text" if sys.platform == "darwin" else "MCP 本文"
+    if sys.platform == "darwin":
+        step("creating a style is refused on the Mac", formatting._set_style_impl,
+             "MCP 本文", "paragraph", None, None, None, None, None, None, None, None,
+             check=lambda o: "Styles pane" in o.get("error", ""))
+    step("define a paragraph style", formatting._set_style_impl, style,
+         None if sys.platform == "darwin" else "paragraph", "Normal", None, {"east_asian_font": "BIZ UDPゴシック", "size": 10.5,
+                          "color": "#333333"},
+         {"first_line_indent_chars": 1, "space_after_lines": 0.5,
+          "line_spacing_rule": "exactly", "line_spacing": 18},
+         None, None, None, None, undo="Define style",
+         check=lambda o: "warnings" not in o and "error" not in o)
+    step("read the style back", formatting._get_style_impl, style,
+         check=lambda o: o["style"]["paragraph"]["line_spacing_pt"] == 18
+         and o["style"]["font"]["size"] == 10.5)
+    step("change Heading 1 by its English name", formatting._set_style_impl, "Heading 1",
+         None, None, None, {"color": "#1F4E79"},
+         {"space_before": 12, "keep_with_next": True}, None, None, None, None,
+         undo="Define style", check=lambda o: "warnings" not in o)
+    step("apply the style", formatting._apply_style_impl, 3, None, style, False,
+         undo="Apply style", check=lambda o: "error" not in o and "warnings" not in o)
     step("apply Heading 2", formatting._apply_style_impl, 5, None, "Heading 2", True,
          undo="Apply style", check=lambda o: "warnings" not in o)
     step("rewrite a paragraph", text._set_paragraph_text_impl, 4, "Rewritten heading",

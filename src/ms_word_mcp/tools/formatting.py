@@ -5,6 +5,9 @@ East Asian text (Japanese, Chinese, Korean) and one for complex scripts
 (Arabic, Hebrew and other right-to-left text). Setting only one leaves the
 others as they were, which is why Japanese text so often stays in the wrong
 font. These tools take the three separately and read all three back.
+
+Text and styles share one table of properties (tools/_props.py), so a style
+can be given everything a paragraph can, and the other way round.
 """
 
 from __future__ import annotations
@@ -14,11 +17,11 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from .. import backend
-from ._common import READ_ONLY, WRITES, Input, annotations, call, error_text, follow
+from . import _props as P
+from ._common import READ_ONLY, WRITES, Input, annotations, call, follow
 from ._word import (
-    ALIGNMENTS, LINE_SPACING, WD_COLLAPSE_END, WD_FIND_STOP, check_span, clean_text,
-    flag, fonts_of, paragraph_info, paragraphs_in, resolve_style, spacing_in_lines,
-    span_range, style_name, undefined,
+    WD_COLLAPSE_END, WD_FIND_STOP, check_span, clean_text, paragraph_info,
+    paragraphs_in, resolve_style, span_range, style_name,
 )
 
 
@@ -53,106 +56,39 @@ def _target_ranges(doc, start: int, end: int | None, match: str | None):
     return found
 
 
+def _needs_something(model, names, what):
+    if not any(getattr(model, n, None) is not None for n in names):
+        raise ValueError(f"Give at least one {what} to set.")
+    return model
+
+
+# Always read back, whatever was set, so the caller sees the three fonts.
+_FONT_ALWAYS = ("latin_font", "east_asian_font", "complex_script_font", "size", "bold",
+                "italic", "color")
+
+
+def font_readback(got: dict, spec: dict) -> dict:
+    return {k: v for k, v in got.items() if k in spec or k in _FONT_ALWAYS}
+
+
 # -- character formatting -------------------------------------------------------
 
-class FormatTextInput(Target):
-    latin_font: str | None = Field(None, description=(
-        "Font for Latin text (alphabet, digits), e.g. \"Segoe UI\"."))
-    east_asian_font: str | None = Field(None, description=(
-        "Font for East Asian text, e.g. \"BIZ UDPゴシック\" or \"游明朝\". Word ignores "
-        "a font without East Asian glyphs here; the read-back says so."))
-    complex_script_font: str | None = Field(None, description=(
-        "Font for complex scripts: Arabic, Hebrew and other right-to-left text."))
-    size: float | None = Field(None, gt=0, le=1638, description=(
-        "Size in points for Latin and East Asian text."))
-    size_complex_script: float | None = Field(None, gt=0, le=1638, description=(
-        "Size in points for complex-script text."))
-    bold: bool | None = None
-    italic: bool | None = None
-    underline: bool | None = None
-    color: str | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description=(
-        "Text color as #RRGGBB."))
-
+class FormatTextInput(Target, P.FontSpec):
     @model_validator(mode="after")
     def _something(self):
-        fields = ("latin_font", "east_asian_font", "complex_script_font", "size",
-                  "size_complex_script", "bold", "italic", "underline", "color")
-        if all(getattr(self, f) is None for f in fields):
-            raise ValueError("Give at least one formatting argument: " + ", ".join(fields) + ".")
-        return self
+        return _needs_something(self, P.FONT_NAMES, "formatting argument")
 
 
-def _bgr(hex_color: str) -> int:
-    value = hex_color.lstrip("#")
-    r, g, b = int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
-    return r | (g << 8) | (b << 16)
-
-
-def _hex(bgr) -> str | None:
-    if bgr is None or bgr < 0 or bgr > 0xFFFFFF:
-        return None  # automatic, or mixed
-    r, g, b = bgr & 0xFF, (bgr >> 8) & 0xFF, (bgr >> 16) & 0xFF
-    return f"#{r:02X}{g:02X}{b:02X}"
-
-
-def _format_text_impl(start, end, match, latin_font, east_asian_font,
-                      complex_script_font, size, size_complex_script, bold, italic,
-                      underline, color):
+def _format_text_impl(start, end, match, font):
     doc = backend.word.document()
+    spec = P.with_latin_extended(P.given(font, P.FONT_NAMES))
     ranges = _target_ranges(doc, start, end, match)
-    refused = {}
+    warnings, readback = [], []
     for rng in ranges:
-        font = rng.Font
-        # Word refuses a font name it will not use for that script (an East
-        # Asian font without East Asian glyphs answers 0x800A16D4 on Windows
-        # and -1708 on the Mac) and keeps the old one. The rest of the call
-        # still applies; the refusal comes back as a warning.
-        for script, members, wanted in (
-                ("latin", ("NameAscii", "NameOther"), latin_font),
-                ("east_asian", ("NameFarEast",), east_asian_font),
-                ("complex_script", ("NameBi",), complex_script_font)):
-            if wanted is None:
-                continue
-            for member in members:
-                try:
-                    setattr(font, member, wanted)
-                except Exception as exc:  # noqa: BLE001 - reported below
-                    refused[script] = error_text(exc)
-        if size is not None:
-            font.Size = size
-        if size_complex_script is not None:
-            font.SizeBi = size_complex_script
-        if bold is not None:
-            font.Bold = bold
-            font.BoldBi = bold
-        if italic is not None:
-            font.Italic = italic
-            font.ItalicBi = italic
-        if underline is not None:
-            font.Underline = 1 if underline else 0
-        if color is not None:
-            font.Color = _bgr(color)
-
-    # Read back from Word, and say what did not take.
-    warnings = []
-    readback = []
-    for rng in ranges:
-        got = fonts_of(rng)
-        font = rng.Font
-        got.update({"bold": flag(font.Bold), "italic": flag(font.Italic),
-                    "color": _hex(undefined(font.Color))})
-        readback.append({"text": clean_text(rng.Text)[:80], **got})
-        for key, wanted in (("latin", latin_font), ("east_asian", east_asian_font),
-                            ("complex_script", complex_script_font)):
-            if wanted is not None and got[key] != wanted:
-                why = (" Word refused it" + (": an East Asian font needs East Asian "
-                                             "glyphs" if key == "east_asian" else "")
-                       + f" ({refused[key]})." if key in refused else "")
-                warnings.append(
-                    f"The {key.replace('_', ' ')} font reads back as {got[key]!r}, not "
-                    f"{wanted!r}.{why}")
-        if size is not None and got["size"] != size:
-            warnings.append(f"The size reads back as {got['size']}, not {size}.")
+        refused = P.com_apply(rng.Font, P.FONT_PROPS, spec)
+        got = P.com_read(rng.Font, P.FONT_PROPS)
+        warnings += P.mismatches(spec, got, refused)
+        readback.append({"text": clean_text(rng.Text)[:80], **font_readback(got, spec)})
     follow(doc, ranges[0])
     result = {"success": True, "ranges": len(ranges), "read_back": readback[:20]}
     if warnings:
@@ -162,109 +98,56 @@ def _format_text_impl(start, end, match, latin_font, east_asian_font,
 
 # -- paragraph formatting --------------------------------------------------------
 
-class ParagraphFormatInput(Input):
+class ParagraphFormatInput(P.ParagraphSpec):
     start: int = Field(..., ge=1, description="First paragraph, numbered from 1.")
     end: int | None = Field(None, ge=1, description="Last paragraph. Leave out for one.")
-    alignment: Literal["left", "center", "right", "justify", "distribute"] | None = None
-    line_spacing_rule: Literal["single", "one_and_half", "double", "at_least", "exactly",
-                               "multiple"] | None = Field(None, description=(
-        "How line_spacing is read: \"exactly\" and \"at_least\" take points, "
-        "\"multiple\" takes lines (1.2 = 1.2 lines)."))
-    line_spacing: float | None = Field(None, gt=0, le=1584, description=(
-        "Points for exactly/at_least, lines for multiple."))
-    space_before: float | None = Field(None, ge=0, le=1584, description="Points.")
-    space_after: float | None = Field(None, ge=0, le=1584, description="Points.")
-    first_line_indent: float | None = Field(None, ge=-1584, le=1584, description=(
-        "Points; negative for a hanging indent."))
-    left_indent: float | None = Field(None, ge=-1584, le=1584, description="Points.")
-    right_indent: float | None = Field(None, ge=-1584, le=1584, description="Points.")
-    snap_to_grid: bool | None = Field(None, description=(
-        "Align lines to the document grid. Japanese templates turn it on, and it "
-        "stretches line spacing: turn it off for exact spacing."))
-    keep_with_next: bool | None = None
-    page_break_before: bool | None = None
 
     @model_validator(mode="after")
-    def _consistent(self):
-        if self.line_spacing is not None and self.line_spacing_rule in (
-                None, "single", "one_and_half", "double"):
-            raise ValueError("line_spacing needs line_spacing_rule \"exactly\", "
-                             "\"at_least\" or \"multiple\".")
-        if self.line_spacing_rule in ("at_least", "exactly", "multiple") \
-                and self.line_spacing is None:
-            raise ValueError(f"line_spacing_rule \"{self.line_spacing_rule}\" needs "
-                             "line_spacing.")
-        return self
+    def _something(self):
+        return _needs_something(self, P.PARAGRAPH_NAMES, "paragraph setting")
 
 
-def _lines_to_points(lines: float) -> float:
-    # Word stores a "multiple" spacing in points, at 12 pt per line.
-    return lines * 12.0
+def paragraph_readback(got: dict, spec: dict) -> dict:
+    keep = set(spec) | {"alignment", "space_before", "space_after", "line_spacing_rule",
+                        "line_spacing_lines", "line_spacing_pt"}
+    return {k: v for k, v in got.items() if k in keep}
 
 
-def _set_paragraph_format_impl(start, end, alignment, line_spacing_rule, line_spacing,
-                               space_before, space_after, first_line_indent, left_indent,
-                               right_indent, snap_to_grid, keep_with_next,
-                               page_break_before):
+def _set_paragraph_format_impl(start, end, paragraph):
     doc = backend.word.document()
+    spec = P.given(paragraph, P.PARAGRAPH_NAMES)
     start, end = check_span(doc, start, end)
     rng = span_range(doc, start, end)
     fmt = rng.ParagraphFormat
-    if alignment is not None:
-        fmt.Alignment = ALIGNMENTS[alignment]
-    if line_spacing_rule is not None:
-        fmt.LineSpacingRule = LINE_SPACING[line_spacing_rule]
-        if line_spacing is not None:
-            fmt.LineSpacing = (_lines_to_points(line_spacing)
-                               if line_spacing_rule == "multiple" else line_spacing)
-    if space_before is not None:
-        fmt.SpaceBefore = space_before
-    if space_after is not None:
-        fmt.SpaceAfter = space_after
-    if first_line_indent is not None:
-        fmt.FirstLineIndent = first_line_indent
-    if left_indent is not None:
-        fmt.LeftIndent = left_indent
-    if right_indent is not None:
-        fmt.RightIndent = right_indent
-    if snap_to_grid is not None:
-        fmt.DisableLineHeightGrid = not snap_to_grid
-    if keep_with_next is not None:
-        fmt.KeepWithNext = keep_with_next
-    if page_break_before is not None:
-        fmt.PageBreakBefore = page_break_before
-
-    out = [paragraph_info(i, p, detail=True) for i, p in paragraphs_in(doc, start, end)]
+    refused = P.com_apply(fmt, P.PARAGRAPH_PROPS, spec)
+    P.com_apply_line_spacing(fmt, spec.get("line_spacing_rule"), spec.get("line_spacing"))
+    out = []
     warnings = []
-    if line_spacing_rule is not None and out:
-        got = out[0]
-        wanted_lines = spacing_in_lines(
-            LINE_SPACING[line_spacing_rule],
-            _lines_to_points(line_spacing) if line_spacing_rule == "multiple"
-            else line_spacing)
-        if wanted_lines is not None:
-            if got.get("line_spacing_lines") != wanted_lines:
-                warnings.append(f"Line spacing reads back as {got['line_spacing_rule']}, "
-                                f"{got.get('line_spacing_lines', got.get('line_spacing_pt'))}.")
-        elif (got["line_spacing_rule"], got.get("line_spacing_pt")) != (
-                line_spacing_rule, line_spacing):
-            warnings.append(f"Line spacing reads back as {got['line_spacing_rule']}, "
-                            f"{got.get('line_spacing_pt')} pt.")
+    for index, p in paragraphs_in(doc, start, min(end, start + 49)):
+        got = {**P.com_read(p.Format, P.PARAGRAPH_PROPS),
+               **P.com_read_line_spacing(p.Format)}
+        if not warnings:
+            warnings = P.mismatches(spec, got, refused)
+        out.append({"index": index, "text": clean_text(p.Range.Text)[:80],
+                    "style": style_name(p.Style), **paragraph_readback(got, spec)})
     follow(doc, rng)
-    result = {"success": True, "paragraphs": out[:50]}
+    result = {"success": True, "paragraphs": out}
     if warnings:
         result["warnings"] = warnings
     return result
 
 
-# -- styles ---------------------------------------------------------------------
+# -- applying a style ------------------------------------------------------------
+
+STYLE_NAME_HELP = (
+    "A built-in English name (\"Heading 1\", \"Normal\", \"Title\") that works in "
+    "every language of Word, or the document's own name for a style.")
+
 
 class ApplyStyleInput(Input):
     start: int = Field(..., ge=1, description="First paragraph, numbered from 1.")
     end: int | None = Field(None, ge=1, description="Last paragraph. Leave out for one.")
-    style: str = Field(..., min_length=1, description=(
-        "A built-in English name (\"Heading 1\", \"Normal\", \"Title\") that works "
-        "in every language of Word, or the document's own name for a style."))
+    style: str = Field(..., min_length=1, description=STYLE_NAME_HELP)
     clear_direct_formatting: bool = Field(False, description=(
         "Also remove manual character formatting, so the text looks as the "
         "style says."))
@@ -288,6 +171,8 @@ def _apply_style_impl(start, end, style, clear_direct_formatting):
     return result
 
 
+# -- listing, reading and defining styles ------------------------------------------
+
 class ListStylesInput(Input):
     in_use_only: bool = Field(True, description=(
         "Only the styles the document uses, or has changed. False lists every "
@@ -299,11 +184,11 @@ class ListStylesInput(Input):
 # Style.Linked (docs/reference/word-object-model.md, discrepancy 2).
 _STYLE_TYPES = {1: "paragraph", 2: "character", 3: "table", 4: "list", 5: "paragraph",
                 6: "paragraph"}
+_NEW_STYLE_TYPES = {"paragraph": 1, "character": 2}
 
 
 def _linked(style) -> bool:
-    """Style.Linked, which Word refuses for some styles (measured on Windows:
-    "this property cannot be used for this object")."""
+    """Style.Linked: readable on paragraph styles only (measured on Windows)."""
     try:
         return bool(style.Linked)
     except Exception:  # noqa: BLE001
@@ -325,40 +210,214 @@ def _list_styles_impl(in_use_only):
         if kind == "paragraph" and _linked(s):
             entry["linked"] = True
         if kind == "paragraph":
-            font = s.Font
-            entry["fonts"] = {"latin": font.NameAscii, "east_asian": font.NameFarEast,
-                              "size": undefined(font.Size)}
+            got = P.com_read(s.Font, P.FONT_PROPS)
+            entry["fonts"] = {"latin": got.get("latin_font"),
+                              "east_asian": got.get("east_asian_font"),
+                              "size": got.get("size")}
         out.append(entry)
     return {"success": True, "styles": out}
+
+
+class GetStyleInput(Input):
+    style: str = Field(..., min_length=1, description=STYLE_NAME_HELP)
+
+
+def _style_or_none(value):
+    """BaseStyle and NextParagraphStyle answer a Style, a name, or nothing."""
+    if value in (None, ""):
+        return None
+    return style_name(value)
+
+
+def _describe_style(s) -> dict:
+    kind = _STYLE_TYPES.get(s.Type, s.Type)
+    out = {"name": s.NameLocal, "type": kind, "builtin": bool(s.BuiltIn),
+           "in_use": bool(s.InUse)}
+    for key, member in (("description", "Description"), ("quick_style", "QuickStyle"),
+                        ("priority", "Priority"), ("locked", "Locked")):
+        try:
+            out[key] = getattr(s, member)
+        except Exception:  # noqa: BLE001 - not every style type has it
+            pass
+    if kind == "paragraph":
+        out["linked"] = _linked(s)
+        for key, member in (("base_style", "BaseStyle"),
+                            ("next_style", "NextParagraphStyle")):
+            try:
+                out[key] = _style_or_none(getattr(s, member))
+            except Exception:  # noqa: BLE001
+                out[key] = None
+        for key, member in (("automatically_update", "AutomaticallyUpdate"),
+                            ("no_space_between_same_style",
+                             "NoSpaceBetweenParagraphsOfSameStyle")):
+            try:
+                out[key] = bool(getattr(s, member))
+            except Exception:  # noqa: BLE001
+                pass
+    elif kind == "character":
+        try:
+            out["base_style"] = _style_or_none(s.BaseStyle)
+        except Exception:  # noqa: BLE001
+            out["base_style"] = None
+    if kind in ("paragraph", "character"):
+        out["font"] = P.com_read(s.Font, P.FONT_PROPS)
+    if kind == "paragraph":
+        fmt = s.ParagraphFormat
+        out["paragraph"] = {**P.com_read(fmt, P.PARAGRAPH_PROPS),
+                            **P.com_read_line_spacing(fmt)}
+    return out
+
+
+def _get_style_impl(style):
+    doc = backend.word.document()
+    return {"success": True, "style": _describe_style(resolve_style(doc, style))}
+
+
+class SetStyleInput(Input):
+    style: str = Field(..., min_length=1, description=(
+        STYLE_NAME_HELP + " With `create`, the name of the new style."))
+    create: Literal["paragraph", "character"] | None = Field(None, description=(
+        "Create the style, of this type. Refused if a style of that name exists."))
+    base_style: str | None = Field(None, min_length=1, description=(
+        "The style this one is based on; it inherits whatever it does not set."))
+    next_style: str | None = Field(None, min_length=1, description=(
+        "Paragraph styles: the style of the paragraph that follows when the user "
+        "presses Enter."))
+    font: P.FontSpec | None = Field(None, description="Character formatting of the style.")
+    paragraph: P.ParagraphSpec | None = Field(None, description=(
+        "Paragraph formatting of the style (paragraph styles)."))
+    quick_style: bool | None = Field(None, description="Show it in the Styles gallery.")
+    priority: int | None = Field(None, ge=0, le=99, description=(
+        "Its place in the Styles pane, lower first."))
+    automatically_update: bool | None = Field(None, description=(
+        "Paragraph styles: redefine the style when the user formats text in it."))
+    no_space_between_same_style: bool | None = Field(None, description=(
+        "Paragraph styles: drop the space before and after between paragraphs of "
+        "this style (\"Don't add space between paragraphs of the same style\")."))
+
+    @model_validator(mode="after")
+    def _consistent(self):
+        if self.create == "character" and self.paragraph is not None:
+            raise ValueError("A character style has no paragraph formatting.")
+        if self.create == "character" and (self.next_style or self.automatically_update
+                                           or self.no_space_between_same_style):
+            raise ValueError("next_style, automatically_update and "
+                             "no_space_between_same_style apply to paragraph styles.")
+        if self.create is None and all(getattr(self, f) is None for f in (
+                "base_style", "next_style", "font", "paragraph", "quick_style", "priority",
+                "automatically_update", "no_space_between_same_style")):
+            raise ValueError("Give something to set, or `create` to make the style.")
+        return self
+
+
+def _find_style(doc, name):
+    try:
+        return resolve_style(doc, name)
+    except ValueError:
+        return None
+
+
+def _set_style_impl(style, create, base_style, next_style, font, paragraph, quick_style,
+                    priority, automatically_update, no_space_between_same_style):
+    doc = backend.word.document()
+    existing = _find_style(doc, style)
+    if create:
+        if existing is not None:
+            raise ValueError(f"A style called '{style}' already exists. Leave out "
+                             "`create` to change it.")
+        s = doc.Styles.Add(style, _NEW_STYLE_TYPES[create])
+    else:
+        if existing is None:
+            resolve_style(doc, style)  # raises with the names that exist
+        s = existing
+    kind = _STYLE_TYPES.get(s.Type, s.Type)
+    if paragraph and kind != "paragraph":
+        raise ValueError(f"'{style}' is a {kind} style, which has no paragraph formatting.")
+
+    refused = {}
+    if base_style is not None:
+        try:
+            s.BaseStyle = resolve_style(doc, base_style)
+        except Exception as exc:  # noqa: BLE001
+            refused["base_style"] = str(exc)
+    if next_style is not None:
+        try:
+            s.NextParagraphStyle = resolve_style(doc, next_style)
+        except Exception as exc:  # noqa: BLE001
+            refused["next_style"] = str(exc)
+    for key, member, value in (("quick_style", "QuickStyle", quick_style),
+                               ("priority", "Priority", priority),
+                               ("automatically_update", "AutomaticallyUpdate",
+                                automatically_update),
+                               ("no_space_between_same_style",
+                                "NoSpaceBetweenParagraphsOfSameStyle",
+                                no_space_between_same_style)):
+        if value is not None:
+            try:
+                setattr(s, member, value)
+            except Exception as exc:  # noqa: BLE001
+                refused[key] = str(exc)
+    font_spec = P.with_latin_extended(P.given(font, P.FONT_NAMES))
+    para_spec = P.given(paragraph, P.PARAGRAPH_NAMES)
+    font_refused = P.com_apply(s.Font, P.FONT_PROPS, font_spec) if font_spec else {}
+    para_refused = {}
+    if para_spec:
+        fmt = s.ParagraphFormat
+        para_refused = P.com_apply(fmt, P.PARAGRAPH_PROPS, para_spec)
+        P.com_apply_line_spacing(fmt, para_spec.get("line_spacing_rule"),
+                                 para_spec.get("line_spacing"))
+
+    described = _describe_style(s)
+    warnings = [f"{k} was refused: {v}" for k, v in refused.items()]
+    for key, wanted in (("base_style", base_style), ("next_style", next_style)):
+        if wanted is not None and key not in refused:
+            have = described.get(key)
+            if have != style_name(resolve_style(doc, wanted)):
+                warnings.append(f"{key} reads back as {have!r}, not {wanted!r}.")
+    for key, value in (("quick_style", quick_style), ("priority", priority),
+                       ("automatically_update", automatically_update),
+                       ("no_space_between_same_style", no_space_between_same_style)):
+        if value is not None and key not in refused and key in described \
+                and described[key] != value:
+            warnings.append(f"{key} reads back as {described[key]!r}, not {value!r}.")
+    warnings += P.mismatches(font_spec, described.get("font", {}), font_refused)
+    warnings += P.mismatches(para_spec, described.get("paragraph", {}), para_refused)
+    result = {"success": True, "created": bool(create), "style": described}
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 def register(mcp) -> None:
     @mcp.tool(name="word_format_text", annotations=annotations("Format text", WRITES))
     async def word_format_text(params: FormatTextInput) -> str:
-        """Set fonts, size, bold, italic, underline and color on paragraphs, or on
-        each occurrence of `match` inside them.
+        """Set character formatting on paragraphs, or on each occurrence of
+        `match` inside them: fonts, size, bold, italic, underline style and
+        color, color, strikethrough, super- and subscript, caps, hidden,
+        character spacing, scaling, kerning, raised or lowered position,
+        Japanese emphasis dots, and the character grid.
 
         Latin, East Asian and complex-script (right-to-left) text each have
-        their own font; set the ones you mean. All three are read back, and a
-        font Word did not take comes back as a warning.
+        their own font; set the ones you mean. What was set is read back, and
+        what Word did not take comes back as a warning. Prefer word_set_style
+        for formatting that recurs.
         """
         p = params
-        return await call(_format_text_impl, p.start, p.end, p.match, p.latin_font,
-                          p.east_asian_font, p.complex_script_font, p.size,
-                          p.size_complex_script, p.bold, p.italic, p.underline, p.color,
-                          undo="Format text")
+        return await call(_format_text_impl, p.start, p.end, p.match,
+                          p.model_dump(include=set(P.FONT_NAMES)), undo="Format text")
 
     @mcp.tool(name="word_set_paragraph_format",
               annotations=annotations("Paragraph format", WRITES))
     async def word_set_paragraph_format(params: ParagraphFormatInput) -> str:
-        """Set alignment, line spacing, spacing before and after, indents, grid
-        snapping and page-flow options on paragraphs, and read them back."""
+        """Set paragraph formatting and read it back: alignment, line spacing,
+        spacing before and after in points or in lines (行), indents in points
+        or in characters (字), grid snapping, keep-with-next and page flow,
+        outline level, and the East Asian options (line-breaking rules, hanging
+        punctuation, space between Japanese and Latin text)."""
         p = params
-        return await call(_set_paragraph_format_impl, p.start, p.end, p.alignment,
-                          p.line_spacing_rule, p.line_spacing, p.space_before,
-                          p.space_after, p.first_line_indent, p.left_indent,
-                          p.right_indent, p.snap_to_grid, p.keep_with_next,
-                          p.page_break_before, undo="Paragraph format")
+        return await call(_set_paragraph_format_impl, p.start, p.end,
+                          p.model_dump(include=set(P.PARAGRAPH_NAMES)),
+                          undo="Paragraph format")
 
     @mcp.tool(name="word_apply_style", annotations=annotations("Apply a style", WRITES))
     async def word_apply_style(params: ApplyStyleInput) -> str:
@@ -375,3 +434,26 @@ def register(mcp) -> None:
     async def word_list_styles(params: ListStylesInput) -> str:
         """The document's paragraph and character styles, with their fonts."""
         return await call(_list_styles_impl, params.in_use_only)
+
+    @mcp.tool(name="word_get_style", annotations=annotations("Read a style", READ_ONLY))
+    async def word_get_style(params: GetStyleInput) -> str:
+        """Everything a style defines: its type, base and next style, gallery
+        settings, every character property and every paragraph property, in
+        the same names word_set_style takes."""
+        return await call(_get_style_impl, params.style)
+
+    @mcp.tool(name="word_set_style", annotations=annotations("Define a style", WRITES))
+    async def word_set_style(params: SetStyleInput) -> str:
+        """Create a style or change one: base and next style, gallery settings,
+        and any character or paragraph property, then read the whole style back.
+
+        Changing a style changes every paragraph in it at once, which is how a
+        document stays consistent: define the look in styles, then apply them.
+        """
+        p = params
+        return await call(
+            _set_style_impl, p.style, p.create, p.base_style, p.next_style,
+            p.font.model_dump() if p.font else None,
+            p.paragraph.model_dump() if p.paragraph else None,
+            p.quick_style, p.priority, p.automatically_update,
+            p.no_space_between_same_style, undo="Define style")

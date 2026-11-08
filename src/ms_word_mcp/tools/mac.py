@@ -23,6 +23,7 @@ from .. import backend
 from . import documents, edit, formatting
 from . import text as text_tools
 from ._common import mac_impl
+from . import _props as P
 from ._word import BUILTIN_STYLES, spacing_in_lines
 
 MAX_PARAGRAPHS_PER_READ = text_tools.MAX_PARAGRAPHS_PER_READ
@@ -429,10 +430,9 @@ def find_replace(find, replace, match_case, whole_word, wildcards):
 # -- formatting ------------------------------------------------------------------
 
 @mac_impl(formatting._format_text_impl)
-def format_text(start, end, match, latin_font, east_asian_font, complex_script_font,
-                size, size_complex_script, bold, italic, underline, color):
-    k = _k()
+def format_text(start, end, match, font):
     doc = backend.word.document()
+    spec = P.with_latin_extended(P.given(font, P.FONT_NAMES))
     start, end = _span(doc, start, end)
     span_start, _ = _bounds(doc, start)
     _, span_end = _bounds(doc, end)
@@ -444,93 +444,46 @@ def format_text(start, end, match, latin_font, east_asian_font, complex_script_f
         if not spans:
             raise ValueError(f"'{match}' does not occur in paragraphs {start} to {end}. "
                              "Nothing was changed.")
-    refused, warnings, readback = {}, [], []
+    warnings, readback = [], []
     for s, e in spans:
-        font = doc.create_range(start=s, end_=e).font_object
-        for script, props, wanted in (
-                ("latin", ("ascii_name", "other_name"), latin_font),
-                ("east_asian", ("east_asian_name",), east_asian_font),
-                ("complex_script", ("complex_script_name",), complex_script_font)):
-            if wanted is None:
-                continue
-            for prop in props:
-                try:
-                    getattr(font, prop).set(wanted)
-                except Exception as exc:  # noqa: BLE001 - reported below
-                    refused[script] = str(exc).splitlines()[0]
-        if size is not None:
-            font.font_size.set(size)
-        if bold is not None:
-            font.bold.set(bold)
-            font.bold_bi.set(bold)
-        if italic is not None:
-            font.italic.set(italic)
-            font.italic_bi.set(italic)
-        if underline is not None:
-            font.underline.set(k.underline_single if underline else k.underline_none)
-        if color is not None:
-            value = color.lstrip("#")
-            font.color.set([int(value[i:i + 2], 16) for i in (0, 2, 4)])
-        got = {"text": _clean(doc.create_range(start=s, end_=e).content.get())[:80],
-               "latin": _font_name(font.ascii_name.get()),
-               "east_asian": _font_name(font.east_asian_name.get()),
-               "complex_script": _font_name(font.complex_script_name.get()),
-               "size": font.font_size.get(), "bold": bool(font.bold.get())}
-        readback.append(got)
-        for script, wanted in (("latin", latin_font), ("east_asian", east_asian_font),
-                               ("complex_script", complex_script_font)):
-            if wanted is not None and got[script] != wanted:
-                why = (" Word refused it" + (": an East Asian font needs East Asian "
-                                             "glyphs" if script == "east_asian" else "")
-                       + f" ({refused[script]})." if script in refused else "")
-                warnings.append(f"The {script.replace('_', ' ')} font reads back as "
-                                f"{got[script]!r}, not {wanted!r}.{why}")
+        rng = doc.create_range(start=s, end_=e)
+        refused = P.mac_apply(rng.font_object, P.FONT_PROPS, spec)
+        got = P.mac_read(rng.font_object, P.FONT_PROPS)
+        warnings += P.mismatches(spec, got, refused)
+        readback.append({"text": _clean(rng.content.get())[:80],
+                         **formatting.font_readback(got, spec)})
     _scroll(doc, *spans[0])
     out = {"success": True, "ranges": len(spans), "read_back": readback[:20]}
-    if size_complex_script is not None:
-        warnings.append("size_complex_script is not set on macOS yet.")
     if warnings:
         out["warnings"] = sorted(set(warnings))
     return out
 
 
 @mac_impl(formatting._set_paragraph_format_impl)
-def set_paragraph_format(start, end, alignment, line_spacing_rule, line_spacing,
-                         space_before, space_after, first_line_indent, left_indent,
-                         right_indent, snap_to_grid, keep_with_next, page_break_before):
-    k = _k()
+def set_paragraph_format(start, end, paragraph):
     doc = backend.word.document()
+    spec = P.given(paragraph, P.PARAGRAPH_NAMES)
     start, end = _span(doc, start, end)
+    refused = {}
     for i in range(start, end + 1):
         fmt = doc.paragraphs[i].paragraph_format
-        if alignment is not None:
-            fmt.alignment.set(getattr(k, ALIGN_K[alignment]))
-        if line_spacing_rule is not None:
-            fmt.line_spacing_rule.set(getattr(k, LINE_K[line_spacing_rule]))
-            if line_spacing is not None:
-                fmt.line_spacing.set(line_spacing * 12.0 if line_spacing_rule == "multiple"
-                                     else line_spacing)
-        for prop, value in (("space_before", space_before), ("space_after", space_after),
-                            ("first_line_indent", first_line_indent),
-                            ("paragraph_format_left_indent", left_indent),
-                            ("paragraph_format_right_indent", right_indent),
-                            ("keep_with_next", keep_with_next),
-                            ("page_break_before", page_break_before)):
-            if value is not None:
-                getattr(fmt, prop).set(value)
-        if snap_to_grid is not None:
-            fmt.disable_line_height_grid.set(not snap_to_grid)
-    infos = [_info(doc, i, detail=True) for i in range(start, min(end, start + 49) + 1)]
-    out = {"success": True, "paragraphs": infos}
-    if line_spacing_rule is not None and infos:
-        wanted = spacing_in_lines(LINE_CODES[line_spacing_rule],
-                                  line_spacing * 12.0 if line_spacing_rule == "multiple"
-                                  else line_spacing)
-        got = infos[0]
-        if wanted is not None and got.get("line_spacing_lines") != wanted:
-            out["warnings"] = [f"Line spacing reads back as {got['line_spacing_rule']}."]
+        refused.update(P.mac_apply(fmt, P.PARAGRAPH_PROPS, spec))
+        P.mac_apply_line_spacing(fmt, spec.get("line_spacing_rule"),
+                                 spec.get("line_spacing"))
+    out, warnings = [], []
+    for i in range(start, min(end, start + 49) + 1):
+        fmt = doc.paragraphs[i].paragraph_format
+        got = {**P.mac_read(fmt, P.PARAGRAPH_PROPS), **P.mac_read_line_spacing(fmt)}
+        if not warnings:
+            warnings = P.mismatches(spec, got, refused)
+        info = _info(doc, i)
+        out.append({"index": i, "text": info["text"][:80], "style": info["style"],
+                    **formatting.paragraph_readback(got, spec)})
+    result = {"success": True, "paragraphs": out}
+    if warnings:
+        result["warnings"] = warnings
     _scroll(doc, _bounds(doc, start)[0], _bounds(doc, end)[1])
-    return out
+    return result
 
 
 @mac_impl(formatting._apply_style_impl)
@@ -662,3 +615,135 @@ def list_styles(in_use_only):
                               "size": font.font_size.get()}
         out.append(entry)
     return {"success": True, "styles": out}
+
+
+# -- reading and defining styles ---------------------------------------------------
+
+def _style_object(doc, name: str):
+    """The style called `name`: a built-in English name, or the document's own.
+
+    Measured: `Word_styles[k.style_heading1]` finds 見出し 1 in a Japanese Word,
+    and `Word_styles[name]` finds a style by its local name.
+    """
+    value = _style_value(doc, name)
+    return doc.Word_styles[value] if not hasattr(value, "name_local") else value
+
+
+def _mac_style_name(ref):
+    try:
+        name = ref.name_local.get()
+    except Exception:  # noqa: BLE001
+        return None
+    return name or None  # Normal's base style answers a style named ""
+
+
+def _describe_mac_style(s) -> dict:
+    raw = _name(s.style_type.get())
+    kind = STYLE_TYPES.get(raw, raw)
+    out = {"name": s.name_local.get(), "type": kind, "builtin": bool(s.built_in.get()),
+           "in_use": bool(s.in_use.get())}
+    try:
+        out["description"] = s.description.get()
+    except Exception:  # noqa: BLE001
+        pass
+    if kind == "paragraph":
+        out["linked"] = raw == "style_type_linked"
+        out["base_style"] = _mac_style_name(s.base_style)
+        out["next_style"] = _mac_style_name(s.next_paragraph_style)
+        out["automatically_update"] = bool(s.automatically_update.get())
+        out["no_space_between_same_style"] = bool(s.no_space_between_same.get())
+    elif kind == "character":
+        out["base_style"] = _mac_style_name(s.base_style)
+    if kind in ("paragraph", "character"):
+        out["font"] = P.mac_read(s.font_object, P.FONT_PROPS)
+    if kind == "paragraph":
+        fmt = s.paragraph_format
+        out["paragraph"] = {**P.mac_read(fmt, P.PARAGRAPH_PROPS),
+                            **P.mac_read_line_spacing(fmt)}
+    return out
+
+
+@mac_impl(formatting._get_style_impl)
+def get_style(style):
+    doc = backend.word.document()
+    return {"success": True, "style": _describe_mac_style(_style_object(doc, style))}
+
+
+@mac_impl(formatting._set_style_impl)
+def set_style(style, create, base_style, next_style, font, paragraph, quick_style,
+              priority, automatically_update, no_space_between_same_style):
+    k = _k()
+    doc = backend.word.document()
+    exists = True
+    try:
+        _style_object(doc, style).name_local.get()
+    except Exception:  # noqa: BLE001
+        exists = False
+    if create:
+        if exists:
+            raise ValueError(f"A style called '{style}' already exists. Leave out "
+                             "`create` to change it.")
+        # Measured on Word 16.114: `make new Word style`, with or without a
+        # type, answers -1708 and makes nothing, whatever the name.
+        raise ValueError(
+            "Creating a style does not work through Word for Mac's scripting (Word "
+            "answers -1708 and makes nothing). Create it in Word's Styles pane, or on "
+            "Windows, then change it here; or base the look on a built-in style such "
+            "as \"Body Text\" and change that.")
+    else:
+        s = _style_object(doc, style)
+        s.name_local.get()  # raises if it does not exist
+    kind = STYLE_TYPES.get(_name(s.style_type.get()), "paragraph")
+    if paragraph and kind != "paragraph":
+        raise ValueError(f"'{style}' is a {kind} style, which has no paragraph formatting.")
+
+    refused = {}
+    if base_style is not None:
+        try:
+            s.base_style.set(_style_value(doc, base_style))
+        except Exception as exc:  # noqa: BLE001
+            refused["base_style"] = str(exc).splitlines()[0]
+    if next_style is not None:
+        try:
+            s.next_paragraph_style.set(_style_value(doc, next_style))
+        except Exception as exc:  # noqa: BLE001
+            refused["next_style"] = str(exc).splitlines()[0]
+    for key, prop, value in (("automatically_update", "automatically_update",
+                              automatically_update),
+                             ("no_space_between_same_style", "no_space_between_same",
+                              no_space_between_same_style)):
+        if value is not None:
+            try:
+                getattr(s, prop).set(value)
+            except Exception as exc:  # noqa: BLE001
+                refused[key] = str(exc).splitlines()[0]
+    for key, value in (("quick_style", quick_style), ("priority", priority)):
+        if value is not None:
+            refused[key] = "Word for Mac's scripting has no such property; it works on Windows."
+    font_spec = P.with_latin_extended(P.given(font, P.FONT_NAMES))
+    para_spec = P.given(paragraph, P.PARAGRAPH_NAMES)
+    font_refused = P.mac_apply(s.font_object, P.FONT_PROPS, font_spec) if font_spec else {}
+    para_refused = {}
+    if para_spec:
+        fmt = s.paragraph_format
+        para_refused = P.mac_apply(fmt, P.PARAGRAPH_PROPS, para_spec)
+        P.mac_apply_line_spacing(fmt, para_spec.get("line_spacing_rule"),
+                                 para_spec.get("line_spacing"))
+
+    described = _describe_mac_style(s)
+    warnings = [f"{key} was refused: {why}" for key, why in refused.items()]
+    for key, wanted in (("base_style", base_style), ("next_style", next_style)):
+        if wanted is not None and key not in refused:
+            want = _mac_style_name(_style_object(doc, wanted))
+            if described.get(key) != want:
+                warnings.append(f"{key} reads back as {described.get(key)!r}, not {want!r}.")
+    for key, value in (("automatically_update", automatically_update),
+                       ("no_space_between_same_style", no_space_between_same_style)):
+        if value is not None and key not in refused and described.get(key) != value:
+            warnings.append(f"{key} reads back as {described.get(key)!r}, not {value!r}.")
+    warnings += P.mismatches(font_spec, described.get("font", {}), font_refused)
+    warnings += P.mismatches(para_spec, described.get("paragraph", {}), para_refused)
+    out = {"success": True, "created": bool(create), "style": described}
+    if warnings:
+        out["warnings"] = warnings
+    return out

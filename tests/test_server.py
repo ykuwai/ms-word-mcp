@@ -172,3 +172,10 @@ def test_describe_lists_every_tool_a_line_each():
     lines = asyncio.run(go()).splitlines()
     names = {t.name for t in server.mcp.all_tools()} - server.CATALOG_TOOLS
     assert {line.split(":")[0] for line in lines} == names
+
+
+def test_describe_takes_the_document_argument_every_call_carries(word):
+    """The instructions say to pass `document` on every call; word_describe
+    has nothing to do with it and must not refuse it (ppt-mcp #367)."""
+    lines = server.text_of(call("word_describe", {"document": "report.docx"}))
+    assert "word_get_outline" in lines

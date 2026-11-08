@@ -25,13 +25,33 @@ DEFAULT_ATTRS = {
     "SpaceBefore": 0.0, "SpaceAfter": 0.0, "FirstLineIndent": 0.0, "LeftIndent": 0.0,
     "RightIndent": 0.0, "DisableLineHeightGrid": False, "KeepWithNext": False,
     "PageBreakBefore": False,
+    "UnderlineColor": -16777216, "StrikeThrough": 0, "DoubleStrikeThrough": 0,
+    "Superscript": 0, "Subscript": 0, "SmallCaps": 0, "AllCaps": 0, "Hidden": 0,
+    "Spacing": 0.0, "Scaling": 100, "Kerning": 0.0, "Position": 0.0, "EmphasisMark": 0,
+    "DisableCharacterSpaceGrid": False,
+    "LineUnitBefore": 0.0, "LineUnitAfter": 0.0, "SpaceBeforeAuto": 0, "SpaceAfterAuto": 0,
+    "CharacterUnitFirstLineIndent": 0.0, "CharacterUnitLeftIndent": 0.0,
+    "CharacterUnitRightIndent": 0.0, "KeepTogether": 0, "WidowControl": -1,
+    "FarEastLineBreakControl": -1, "HangingPunctuation": -1,
+    "HalfWidthPunctuationOnTopOfLine": 0, "AddSpaceBetweenFarEastAndAlpha": -1,
+    "AddSpaceBetweenFarEastAndDigit": -1, "AutoAdjustRightIndent": -1, "WordWrap": -1,
+    "BaseLineAlignment": 4,
 }
 
 CHAR_KEYS = ("NameAscii", "NameOther", "NameFarEast", "NameBi", "Size", "SizeBi", "Bold",
-             "BoldBi", "Italic", "ItalicBi", "Underline", "Color")
+             "BoldBi", "Italic", "ItalicBi", "Underline", "Color", "UnderlineColor",
+             "StrikeThrough", "DoubleStrikeThrough", "Superscript", "Subscript",
+             "SmallCaps", "AllCaps", "Hidden", "Spacing", "Scaling", "Kerning", "Position",
+             "EmphasisMark", "DisableCharacterSpaceGrid")
 PARA_KEYS = ("Alignment", "LineSpacingRule", "LineSpacing", "SpaceBefore", "SpaceAfter",
              "FirstLineIndent", "LeftIndent", "RightIndent", "DisableLineHeightGrid",
-             "KeepWithNext", "PageBreakBefore")
+             "KeepWithNext", "PageBreakBefore", "LineUnitBefore", "LineUnitAfter",
+             "SpaceBeforeAuto", "SpaceAfterAuto", "CharacterUnitFirstLineIndent",
+             "CharacterUnitLeftIndent", "CharacterUnitRightIndent", "KeepTogether",
+             "WidowControl", "FarEastLineBreakControl", "HangingPunctuation",
+             "HalfWidthPunctuationOnTopOfLine", "AddSpaceBetweenFarEastAndAlpha",
+             "AddSpaceBetweenFarEastAndDigit", "AutoAdjustRightIndent", "WordWrap",
+             "BaseLineAlignment")
 
 # Fonts this fake refuses as an East Asian font. Word refuses a font without
 # East Asian glyphs there and keeps the old one: 0x800A16D4 on Windows, -1708
@@ -39,26 +59,88 @@ PARA_KEYS = ("Alignment", "LineSpacingRule", "LineSpacing", "SpaceBefore", "Spac
 LATIN_ONLY_FONTS = {"Segoe UI", "Arial", "Calibri", "Helvetica Neue"}
 
 
+class AttrProxy:
+    """A Font or ParagraphFormat over one dict, as a style holds them."""
+
+    def __init__(self, data, keys):
+        object.__setattr__(self, "_data", data)
+        object.__setattr__(self, "_keys", keys)
+
+    def __getattr__(self, name):
+        if name not in self._keys:
+            raise AttributeError(name)
+        return self._data[name]
+
+    def __setattr__(self, name, value):
+        if name not in self._keys:
+            raise AttributeError(name)
+        if name == "NameFarEast" and value in LATIN_ONLY_FONTS:
+            raise Exception("OLE error 0x800a16d4")
+        if isinstance(value, bool) and name not in ("DisableLineHeightGrid",
+                                                    "DisableCharacterSpaceGrid"):
+            value = -1 if value else 0
+        self._data[name] = value
+
+
 class FakeStyle:
-    def __init__(self, name):
+    def __init__(self, name, type_=1, builtin=False):
         self.NameLocal = name
+        self.Type = type_
+        self.BuiltIn = builtin
+        self.InUse = True
+        self.Description = f"{name} description"
+        self.QuickStyle = False
+        self.Priority = 99
+        self.Locked = False
+        self.BaseStyle = "" if name == "Normal" else "Normal"
+        self.NextParagraphStyle = name
+        self.AutomaticallyUpdate = False
+        self.NoSpaceBetweenParagraphsOfSameStyle = False
+        self._data = dict(DEFAULT_ATTRS)
+        self.Font = AttrProxy(self._data, CHAR_KEYS)
+        if type_ == 1:
+            self.ParagraphFormat = AttrProxy(self._data, PARA_KEYS)
+
+    @property
+    def Linked(self):
+        if self.Type != 1:
+            raise Exception("This property cannot be used for this object.")
+        return False
 
     def __eq__(self, other):
         return isinstance(other, FakeStyle) and other.NameLocal == self.NameLocal
+
+    def __hash__(self):
+        return hash(self.NameLocal)
 
 
 class FakeStyles:
     def __init__(self, doc):
         self.doc = doc
+        self.defs = {name: FakeStyle(name, builtin=True) for name in BUILTIN_NAMES.values()}
+        for name in doc.custom_styles:
+            self.defs[name] = FakeStyle(name)
+
+    @property
+    def Count(self):
+        return len(self.defs)
 
     def Item(self, key):
-        if isinstance(key, int):
+        if isinstance(key, int) and key < 0:
             if key not in BUILTIN_NAMES:
                 raise KeyError(key)
-            return FakeStyle(BUILTIN_NAMES[key])
-        if key in self.doc.custom_styles or key in BUILTIN_NAMES.values():
-            return FakeStyle(key)
+            return self.defs[BUILTIN_NAMES[key]]
+        if isinstance(key, int):
+            return list(self.defs.values())[key - 1]
+        if key in self.defs:
+            return self.defs[key]
         raise Exception("The requested member of the collection does not exist.")
+
+    def Add(self, name, type_=1):
+        if name in self.defs:
+            raise Exception("That style name already exists.")
+        self.defs[name] = FakeStyle(name, type_)
+        return self.defs[name]
 
 
 def outline_of(style_name):

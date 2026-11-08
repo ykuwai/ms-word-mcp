@@ -2,19 +2,19 @@ import json
 
 import pytest
 
-from ms_word_mcp.tools import _common, formatting
+from ms_word_mcp.tools import _common, _props, formatting
 
 
 def answer(impl, *args):
     return json.loads(_common.run(impl, *args))
 
 
-def fmt(start, end=None, match=None, **kw):
-    args = dict(latin_font=None, east_asian_font=None, complex_script_font=None, size=None,
-                size_complex_script=None, bold=None, italic=None, underline=None,
-                color=None)
-    args.update(kw)
-    return answer(formatting._format_text_impl, start, end, match, *args.values())
+def fmt(start, end=None, match=None, **font):
+    return answer(formatting._format_text_impl, start, end, match, font)
+
+
+def para(start, end=None, **paragraph):
+    return answer(formatting._set_paragraph_format_impl, start, end, paragraph)
 
 
 def test_three_scripts_each_get_their_own_font(make_doc):
@@ -29,11 +29,11 @@ def test_three_scripts_each_get_their_own_font(make_doc):
     assert doc.paragraph_objects()[1].Range.Font.NameAscii == "Calibri"
 
 
-def test_an_east_asian_font_word_ignores_comes_back_as_a_warning(make_doc):
+def test_an_east_asian_font_word_refuses_comes_back_as_a_warning(make_doc):
     make_doc("日本語")
     out = fmt(1, east_asian_font="Segoe UI", bold=True)
     assert out["success"]
-    assert any("East Asian" in w and "refused" in w for w in out["warnings"])
+    assert any("east_asian_font" in w and "refused" in w for w in out["warnings"])
     # The rest of the call still applied.
     assert out["read_back"][0]["bold"] is True
 
@@ -52,32 +52,72 @@ def test_match_that_is_not_there_changes_nothing(make_doc):
     assert "error" in out and "Nothing was changed" in out["error"]
 
 
+def test_every_character_property_is_set_and_read_back(make_doc):
+    make_doc("text")
+    out = fmt(1, underline="double", underline_color="#00B050", color="#C00000",
+              strikethrough=True, small_caps=True, character_spacing=1.5, scaling=90,
+              kerning_from=10.5, position=2, emphasis_mark="dot_above",
+              ignore_character_grid=True)
+    assert "warnings" not in out, out.get("warnings")
+    got = out["read_back"][0]
+    assert got["underline"] == "double" and got["color"] == "#C00000"
+    assert got["emphasis_mark"] == "dot_above" and got["scaling"] == 90
+
+
 def test_color_is_written_as_word_bgr():
-    assert formatting._bgr("#FF0000") == 0x0000FF
-    assert formatting._hex(0x0000FF) == "#FF0000"
-    assert formatting._hex(-16777216) is None
+    assert _props.bgr("#FF0000") == 0x0000FF
+    assert _props.hex_of(0x0000FF) == "#FF0000"
+    assert _props.hex_of(-16777216) is None
 
 
 def test_paragraph_format_line_spacing_in_lines_and_points(make_doc):
     make_doc("a", "b")
-    out = answer(formatting._set_paragraph_format_impl, 1, 2, "justify", "multiple", 1.2,
-                 6, 0, None, None, None, False, None, None)
+    out = para(1, 2, alignment="justify", line_spacing_rule="multiple", line_spacing=1.2,
+               space_before=6, space_after=0, snap_to_grid=False)
     first = out["paragraphs"][0]
     assert first["alignment"] == "justify"
     assert first["line_spacing_rule"] == "multiple"
     assert first["line_spacing_lines"] == 1.2
-    assert first["space_before"] == 6
+    assert first["space_before"] == 6 and first["snap_to_grid"] is False
     assert "warnings" not in out
-    out = answer(formatting._set_paragraph_format_impl, 1, None, None, "exactly", 18,
-                 None, None, None, None, None, None, None, None)
+    out = para(1, line_spacing_rule="exactly", line_spacing=18)
     assert out["paragraphs"][0]["line_spacing_pt"] == 18
 
 
-def test_paragraph_format_model_checks_rule_and_value():
+def test_one_and_a_half_lines_reads_back_as_lines(make_doc):
+    make_doc("a")
+    out = para(1, line_spacing_rule="multiple", line_spacing=1.5)
+    assert out["paragraphs"][0]["line_spacing_rule"] == "one_and_half"
+    assert out["paragraphs"][0]["line_spacing_lines"] == 1.5
+    assert "warnings" not in out
+
+
+def test_japanese_paragraph_settings(make_doc):
+    doc = make_doc("本文")
+    out = para(1, space_before_lines=0.5, first_line_indent_chars=1,
+               east_asian_line_breaking=True, hanging_punctuation=False,
+               space_between_east_asian_and_latin=False)
+    assert "warnings" not in out, out.get("warnings")
+    mark = doc.attrs[-1]
+    assert mark["LineUnitBefore"] == 0.5 and mark["CharacterUnitFirstLineIndent"] == 1
+    assert mark["HangingPunctuation"] is False
+
+
+def test_snap_to_grid_writes_the_inverted_member(make_doc):
+    doc = make_doc("a")
+    para(1, snap_to_grid=False)
+    assert doc.attrs[-1]["DisableLineHeightGrid"] is True
+
+
+def test_paragraph_spec_checks_rule_value_and_units():
     with pytest.raises(ValueError):
         formatting.ParagraphFormatInput(start=1, line_spacing=12)
     with pytest.raises(ValueError):
         formatting.ParagraphFormatInput(start=1, line_spacing_rule="exactly")
+    with pytest.raises(ValueError, match="not both"):
+        formatting.ParagraphFormatInput(start=1, space_before=6, space_before_lines=0.5)
+    with pytest.raises(ValueError, match="at least one"):
+        formatting.ParagraphFormatInput(start=1)
     formatting.ParagraphFormatInput(start=1, line_spacing_rule="double")
 
 
@@ -97,12 +137,61 @@ def test_apply_unknown_style_says_what_exists(make_doc):
 def test_format_text_needs_something_to_set():
     with pytest.raises(ValueError):
         formatting.FormatTextInput(start=1)
+    with pytest.raises(ValueError):
+        formatting.FormatTextInput(start=1, superscript=True, subscript=True)
 
 
-def test_one_and_a_half_lines_reads_back_as_lines(make_doc):
+def set_style(style, create=None, base_style=None, next_style=None, font=None,
+              paragraph=None, **flags):
+    return answer(formatting._set_style_impl, style, create, base_style, next_style, font,
+                  paragraph, flags.get("quick_style"), flags.get("priority"),
+                  flags.get("automatically_update"),
+                  flags.get("no_space_between_same_style"))
+
+
+def test_create_a_paragraph_style_with_every_part(make_doc):
+    doc = make_doc("a")
+    out = set_style("本文インデント", create="paragraph", base_style="Normal",
+                    next_style="Normal",
+                    font={"east_asian_font": "游明朝", "size": 10.5},
+                    paragraph={"first_line_indent_chars": 1, "space_after_lines": 0.5,
+                               "line_spacing_rule": "exactly", "line_spacing": 18},
+                    quick_style=True, priority=1, no_space_between_same_style=True)
+    assert out["created"] and "warnings" not in out, out.get("warnings")
+    style = out["style"]
+    assert style["font"]["east_asian_font"] == "游明朝"
+    assert style["paragraph"]["first_line_indent_chars"] == 1
+    assert style["paragraph"]["line_spacing_pt"] == 18
+    assert style["quick_style"] is True and style["no_space_between_same_style"] is True
+    assert doc.Styles.Item("本文インデント").Font.Size == 10.5
+
+
+def test_create_refuses_an_existing_name_and_change_refuses_a_missing_one(make_doc):
     make_doc("a")
-    out = answer(formatting._set_paragraph_format_impl, 1, None, None, "multiple", 1.5,
-                 None, None, None, None, None, None, None, None)
-    assert out["paragraphs"][0]["line_spacing_rule"] == "one_and_half"
-    assert out["paragraphs"][0]["line_spacing_lines"] == 1.5
-    assert "warnings" not in out
+    assert "already exists" in set_style("Normal", create="paragraph")["error"]
+    assert "No style called" in set_style("Nope", font={"size": 12})["error"]
+
+
+def test_change_a_builtin_style_by_its_english_name(make_doc):
+    doc = make_doc("a")
+    out = set_style("Heading 1", font={"east_asian_font": "BIZ UDPゴシック", "bold": True},
+                    paragraph={"space_before": 12, "keep_with_next": True})
+    assert "warnings" not in out, out.get("warnings")
+    assert doc.Styles.Item(-2).ParagraphFormat.SpaceBefore == 12
+
+
+def test_a_character_style_has_no_paragraph_formatting(make_doc):
+    make_doc("a")
+    with pytest.raises(ValueError):
+        formatting.SetStyleInput(style="x", create="character", paragraph={"space_before": 1})
+    out = set_style("強調", create="character", font={"color": "#C00000"})
+    assert out["style"]["type"] == "character" and "paragraph" not in out["style"]
+
+
+def test_get_style_answers_in_set_style_names(make_doc):
+    make_doc("a")
+    out = answer(formatting._get_style_impl, "Normal")
+    style = out["style"]
+    assert style["name"] == "Normal" and style["base_style"] is None
+    assert set(style["font"]) <= set(_props.FONT_NAMES)
+    assert "line_spacing_rule" in style["paragraph"]

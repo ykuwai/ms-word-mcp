@@ -29,6 +29,11 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
   bold, italic, underline, color; paragraph alignment, line spacing (lines or
   points), spacing, indents, grid snapping; apply and list styles.
 - Undo and redo.
+- Styles: read a style whole (word_get_style) and define one (word_set_style):
+  type, base and next style, gallery settings, and every character and
+  paragraph property of tools/_props.py, which word_format_text and
+  word_set_paragraph_format share. On the Mac a style can be changed but not
+  created.
 
 ## Next
 
@@ -39,11 +44,8 @@ call and the styles from the document's XML instead (see PROBES.md).
 
 Then, ordered roughly by what the owner stressed.
 
-1. **Styles, every property.** Create and modify styles: base and next
-   style, font (all three scripts and every character property), paragraph
-   format (spacing before and after in points and in lines, line spacing,
-   indents in characters, East Asian line breaking, grid), borders, shading,
-   list linkage, Quick Style gallery. Read a style back whole.
+1. **Styles, the rest.** Borders and shading, tab stops, list linkage, the
+   language of a style; creating a style on the Mac (through VBA).
 2. **Lists and bullets.** Bullet character, its font and color, numbering
    format and style, indents per level, linking levels to heading styles,
    multilevel lists, restart and continue.
