@@ -103,3 +103,20 @@ pushed it with the measurements to the `reference` branch of this repository
   spell-checked.
 - **Tables of contents:** a `TOC` field made with `create new field` gives the
   same table as Word's own command, on both platforms.
+
+## Equations (Word 16, both platforms)
+
+Measured with `scripts/probes/windows_equations.py` and `scripts/probes/mac_equations.py`;
+what Microsoft documents is in [reference/equations.md](reference/equations.md).
+
+| What | Windows | Mac |
+|---|---|---|
+| Making an equation | `OMaths.Add(range)` then `OMath.BuildUp()` | `create new equation from range r in document d`: both arguments are needed (`from range` alone, `in range`, `in selection` and `make new math object` answer -1708). Then `build up` of the document's `math object`. |
+| UnicodeMath | `a/b`, `E=mc^2+√(x^2+1)`, `∫_0^∞ e^(-x^2) dx=√π/2` build up as they should | The same |
+| TeX control words | `\alpha`, `\frac{a}{b}`, `\sqrt{x}` stay as text (Math AutoCorrect does not act on text put in by code) | The same |
+| `#(1)` | Builds up into an equation array holding `#(1)`; no number | The same |
+| Reading back | `Range.Text` of a built-up equation is its pieces split by `\r`; after `Linearize`, `Range.Text` is UnicodeMath (`∫_0^∞▒〖𝑒^(−𝑥^2 ) 𝑑𝑥〗=√𝜋/2`), letters in math italic | The same, through the paragraph's content |
+| Display or inline | `Type` 0 (display) for an equation alone in its paragraph | `display type` = `equation display professional` |
+| Numbering | A three-cell table, equation in the middle cell, `(` SEQ Equation `)` in the right cell: (1), then (2) | `create new field` with `field type field sequence` gives (1) |
+| MathML through `InsertXML` | With `MML2OMML.XSL` (in `C:\Program Files\Microsoft Office\Root\Office16`) as the transform: "XML markup cannot be inserted at this location" (25625). Plain MathML: no error, no equation. | No `InsertXML` in the dictionary |
+| Math AutoCorrect list | `Application.OMathAutoCorrect.Entries` | Each entry's `value` answers missing value |
