@@ -20,7 +20,9 @@ WD_STATISTIC_CHARACTERS = 3
 
 # Built-in styles by their English name, as WdBuiltinStyle. A localized Word
 # names its styles in its own language (見出し 1, 標準), so a style is looked
-# up by this constant first: "Heading 1" works on every Word.
+# up by this constant first: "Heading 1" works on every Word. Every value is
+# checked in docs/reference/word-object-model.md (B.1). "No Spacing" has no
+# WdBuiltinStyle member (-158 is wdStyleNormalObject), so it is found by name.
 BUILTIN_STYLES = {
     "normal": -1,
     "heading 1": -2, "heading 2": -3, "heading 3": -4, "heading 4": -5,
@@ -33,7 +35,6 @@ BUILTIN_STYLES = {
     "list paragraph": -180,
     "quote": -181,
     "intense quote": -182,
-    "no spacing": -158,
     "list bullet": -49,
     "list number": -50,
 }
@@ -53,6 +54,16 @@ def style_name(style) -> str | None:
         return None
     name = getattr(style, "NameLocal", None)
     return str(name) if name is not None else str(style)
+
+
+def flag(value):
+    """A True/False/wdUndefined Long as true, false or None (mixed).
+
+    Font.Bold and its kind are Longs that hold True (-1), False (0) or
+    wdUndefined; read through pywin32 they come back as numbers.
+    """
+    value = undefined(value)
+    return None if value is None else bool(value)
 
 
 def undefined(value):

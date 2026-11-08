@@ -475,7 +475,7 @@ def format_text(start, end, match, latin_font, east_asian_font, complex_script_f
                "latin": _font_name(font.ascii_name.get()),
                "east_asian": _font_name(font.east_asian_name.get()),
                "complex_script": _font_name(font.complex_script_name.get()),
-               "size": font.font_size.get(), "bold": font.bold.get()}
+               "size": font.font_size.get(), "bold": bool(font.bold.get())}
         readback.append(got)
         for script, wanted in (("latin", latin_font), ("east_asian", east_asian_font),
                                ("complex_script", complex_script_font)):
@@ -636,7 +636,7 @@ def save_document_as(path, overwrite):
 
 STYLE_TYPES = {"style_type_paragraph": "paragraph", "style_type_character": "character",
                "style_type_table": "table", "style_type_list": "list",
-               "style_type_linked": "linked", "style_type_paragraph_only": "paragraph"}
+               "style_type_linked": "paragraph", "style_type_paragraph_only": "paragraph"}
 
 
 @mac_impl(formatting._list_styles_impl)
@@ -648,11 +648,14 @@ def list_styles(in_use_only):
         s = doc.Word_styles[i]
         if in_use_only and not s.in_use.get():
             continue
-        kind = STYLE_TYPES.get(_name(s.style_type.get()), _name(s.style_type.get()))
+        raw = _name(s.style_type.get())
+        kind = STYLE_TYPES.get(raw, raw)
         if kind in ("table", "list"):
             continue
         entry = {"name": s.name_local.get(), "type": kind, "builtin": bool(s.built_in.get())}
-        if kind in ("paragraph", "linked"):
+        if raw == "style_type_linked":
+            entry["linked"] = True
+        if kind == "paragraph":
             font = s.font_object
             entry["fonts"] = {"latin": _font_name(font.ascii_name.get()),
                               "east_asian": _font_name(font.east_asian_name.get()),

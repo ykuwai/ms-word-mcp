@@ -35,7 +35,7 @@ def test_an_east_asian_font_word_ignores_comes_back_as_a_warning(make_doc):
     assert out["success"]
     assert any("East Asian" in w and "refused" in w for w in out["warnings"])
     # The rest of the call still applied.
-    assert out["read_back"][0]["bold"] == -1
+    assert out["read_back"][0]["bold"] is True
 
 
 def test_match_formats_only_the_occurrences(make_doc):

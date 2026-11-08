@@ -17,7 +17,7 @@ from .. import backend
 from ._common import READ_ONLY, WRITES, Input, annotations, call, error_text, follow
 from ._word import (
     ALIGNMENTS, LINE_SPACING, WD_COLLAPSE_END, WD_FIND_STOP, check_span, clean_text,
-    fonts_of, paragraph_info, paragraphs_in, resolve_style, spacing_in_lines,
+    flag, fonts_of, paragraph_info, paragraphs_in, resolve_style, spacing_in_lines,
     span_range, style_name, undefined,
 )
 
@@ -139,7 +139,7 @@ def _format_text_impl(start, end, match, latin_font, east_asian_font,
     for rng in ranges:
         got = fonts_of(rng)
         font = rng.Font
-        got.update({"bold": undefined(font.Bold), "italic": undefined(font.Italic),
+        got.update({"bold": flag(font.Bold), "italic": flag(font.Italic),
                     "color": _hex(undefined(font.Color))})
         readback.append({"text": clean_text(rng.Text)[:80], **got})
         for key, wanted in (("latin", latin_font), ("east_asian", east_asian_font),
@@ -294,8 +294,11 @@ class ListStylesInput(Input):
         "style, which is slow."))
 
 
-# WdStyleType
-_STYLE_TYPES = {1: "paragraph", 2: "character", 3: "table", 4: "list", 5: "linked"}
+# WdStyleType: 1 to 4 are documented for VBA; the interop reference adds 5
+# (paragraph only) and 6 (linked) as reserved. Whether a style is linked is
+# Style.Linked (docs/reference/word-object-model.md, discrepancy 2).
+_STYLE_TYPES = {1: "paragraph", 2: "character", 3: "table", 4: "list", 5: "paragraph",
+                6: "paragraph"}
 
 
 def _list_styles_impl(in_use_only):
@@ -310,7 +313,9 @@ def _list_styles_impl(in_use_only):
         if kind in ("table", "list"):
             continue
         entry = {"name": s.NameLocal, "type": kind, "builtin": bool(s.BuiltIn)}
-        if kind in ("paragraph", "linked"):
+        if kind == "paragraph" and s.Linked:
+            entry["linked"] = True
+        if kind == "paragraph":
             font = s.Font
             entry["fonts"] = {"latin": font.NameAscii, "east_asian": font.NameFarEast,
                               "size": undefined(font.Size)}
