@@ -123,6 +123,7 @@ Japanese UI) and `scripts/probes/mac_tables.py` (Word 16.114.4) on
 | Adding columns | `Columns.Add()`, `Columns.Add(Columns(1))` | `make new column` (after or before a column): -1708. `insert columns` works on the selection only. |
 | Deleting rows and columns | `Rows(i).Delete`, `Columns(i).Delete` | `delete row i`, `delete column i` |
 | Merging | `Cell(1,1).Merge(Cell(1,2))`: the cell holds both texts, a paragraph each; `Uniform` False; `Columns(1)` can no longer be reached ("cell widths differ") | `merge cell ... with` the same; `columns` can no longer be reached (-1728) |
+| `Uniform` | Read False in the live check for a table none of whose cells had been merged (rows added at the bottom, fitted to the window, cells shaded); why is not measured, so the tools do not ask it before reaching a column | True until cells are merged |
 | Cells of a row with merged cells | `Rows(1).Cells.Count` 3 of 4 | `count rows 1 each cell` 2 of 3; `get cell from table row 1 column 2` is the cell after the merged one |
 | A table's text | Each cell ends in `\r\x07`, each row too after its cells | The same |
 | Shading | `Cell.Shading.BackgroundPatternColor` (BGR) | `background pattern color` of the cell's `shading`, 16-bit channels |

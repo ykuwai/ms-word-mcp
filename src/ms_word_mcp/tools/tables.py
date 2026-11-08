@@ -17,6 +17,7 @@ any other by the name word_list_styles gives.
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -311,6 +312,21 @@ def _grid(tb, start_row: int = 1, limit: int = MAX_ROWS_PER_READ) -> list[list[s
     return rows[start_row - 1:start_row - 1 + limit]
 
 
+@contextmanager
+def _columns_reachable(what: str):
+    """Answer Word's refusal to reach a column of a table with merged cells.
+
+    Table.Uniform is not asked first: it read False on Windows for a table
+    no cell of which had been merged (live check), while Columns(i) worked.
+    """
+    from ..backend.com import ComError
+
+    try:
+        yield
+    except ComError as exc:
+        raise ValueError(f"This table has merged cells, so {what}. ({exc})") from None
+
+
 def _describe(doc, tb, number: int, cells: bool = True) -> dict:
     out = {"table": number, "rows": tb.Rows.Count, "columns": tb.Columns.Count,
            "style": tb.Style.NameLocal if tb.Style is not None else None,
@@ -368,12 +384,11 @@ def _apply_look(doc, tb, style, header_rows, borders, column_widths, autofit,
         if len(column_widths) != tb.Columns.Count:
             raise ValueError(f"column_widths has {len(column_widths)} entries; the table "
                              f"has {tb.Columns.Count} columns.")
-        if not tb.Uniform:
-            raise ValueError("This table has merged cells, so its columns have no single "
-                             "width to set. Set widths before merging.")
         tb.PreferredWidthType = WD_PREFERRED_WIDTH_AUTO  # the columns' widths add up
         for i, width in enumerate(column_widths, start=1):
-            col = tb.Columns.Item(i)
+            with _columns_reachable("its columns have no single width to set. Set widths "
+                                    "before merging"):
+                col = tb.Columns.Item(i)
             col.PreferredWidthType = WD_PREFERRED_WIDTH_POINTS
             col.PreferredWidth = width
             col.Width = width
@@ -612,9 +627,6 @@ def _delete_rows_impl(table, start, end):
 def _insert_columns_impl(table, after_column, count, values):
     doc = backend.word.document()
     tb = _table(doc, table)
-    if not tb.Uniform:
-        raise ValueError("This table has merged cells, and Word adds columns to tables "
-                         "without them only. Add columns before merging.")
     n = count or len(values)
     cols = tb.Columns.Count
     after_column = cols if after_column is None else after_column
@@ -622,11 +634,13 @@ def _insert_columns_impl(table, after_column, count, values):
         raise ValueError(f"The table has {cols} columns.")
     if cols + n > 63:
         raise ValueError("A table has at most 63 columns.")
-    for i in range(n):
-        if after_column < cols:
-            tb.Columns.Add(tb.Columns.Item(after_column + i + 1))
-        else:
-            tb.Columns.Add()
+    with _columns_reachable("Word adds columns only to tables without them. Add "
+                            "columns before merging"):
+        for i in range(n):
+            if after_column < cols:
+                tb.Columns.Add(tb.Columns.Item(after_column + i + 1))
+            else:
+                tb.Columns.Add()
     first = after_column + 1
     for c, column in enumerate(values or [], start=first):
         if len(column) > tb.Rows.Count:
@@ -648,11 +662,9 @@ def _delete_columns_impl(table, start, end):
         raise ValueError(f"Columns {start} to {end} are not all in the table: it has {cols}.")
     if start == 1 and end == cols:
         raise ValueError("That is every column. Use word_delete_table to delete the table.")
-    if not tb.Uniform:
-        raise ValueError("This table has merged cells, so Word cannot reach its columns "
-                         "one by one.")
-    for c in range(end, start - 1, -1):
-        tb.Columns.Item(c).Delete()
+    with _columns_reachable("Word cannot reach its columns one by one"):
+        for c in range(end, start - 1, -1):
+            tb.Columns.Item(c).Delete()
     follow(doc, tb.Range)
     return {"success": True, "table": table, "columns": tb.Columns.Count,
             "cells": _grid(tb), "paragraphs": _span(doc, tb)}
