@@ -36,7 +36,7 @@ def test_headings_are_placed_and_each_read_back():
     paragraphs = [("Intro", 1), ("text", None), ("Part", 2), ("more", None)]
     read_text, read_level, reads = _word(paragraphs)
     found = o.locate_headings(["Intro", "  Part"], o.split_texts("Intro\rtext\rPart\rmore\r"),
-                              read_text, read_level)
+                              read_text, read_level, lambda i: True)
     assert found == [1, 3]
     assert reads == [1, 3]
 
@@ -45,7 +45,7 @@ def test_a_contents_line_with_the_same_words_is_passed_over():
     paragraphs = [("Intro\t1", None), ("Intro", 1), ("text", None)]
     read_text, read_level, _ = _word(paragraphs)
     whole = "Intro\t1\rIntro\rtext\r"
-    assert o.locate_headings(["Intro"], o.split_texts(whole), read_text, read_level) == [2]
+    assert o.locate_headings(["Intro"], o.split_texts(whole), read_text, read_level, lambda i: True) == [2]
 
 
 def test_an_equation_makes_the_split_run_ahead_and_the_heading_is_found_behind():
@@ -55,7 +55,7 @@ def test_an_equation_makes_the_split_run_ahead_and_the_heading_is_found_behind()
     whole = "Intro\rE\r=\rm\rc2\rNext\rafter\r"
     read_text, read_level, _ = _word(paragraphs)
     assert o.locate_headings(["Intro", "Next"], o.split_texts(whole), read_text,
-                             read_level) == [1, 3]
+                             read_level, lambda i: True) == [1, 3]
 
 
 def test_a_shortened_heading_still_matches():
@@ -64,18 +64,27 @@ def test_a_shortened_heading_still_matches():
     read_text, read_level, _ = _word(paragraphs)
     item = "  " + long[:100]
     assert o.locate_headings([item], o.split_texts(long + "\r"), read_text,
-                             read_level) == [1]
+                             read_level, lambda i: True) == [1]
 
 
 def test_a_heading_that_cannot_be_found_gives_up():
     paragraphs = [("Intro", 1)]
     read_text, read_level, _ = _word(paragraphs)
     assert o.locate_headings(["Missing"], o.split_texts("Intro\r"), read_text,
-                             read_level) is None
+                             read_level, lambda i: True) is None
 
 
 def test_a_heading_at_the_wrong_level_is_not_taken():
     paragraphs = [("Intro", 2)]
     read_text, read_level, _ = _word(paragraphs)
     assert o.locate_headings(["Intro"], o.split_texts("Intro\r"), read_text,
-                             read_level) is None
+                             read_level, lambda i: True) is None
+
+
+def test_a_body_paragraph_with_the_same_words_and_level_is_passed_over():
+    # An equation adds a mark, so the split puts "Next" one further on: at
+    # the body paragraph, which was given outline level 1 directly.
+    paragraphs = [("Intro", 1), ("E", None), ("Next", 1), ("Next", 1)]
+    read_text, read_level, _ = _word(paragraphs)
+    assert o.locate_headings(["Intro", "Next"], o.split_texts("Intro\rE\r=\rNext\rNext\r"),
+                             read_text, read_level, {1, 3}.__contains__) == [1, 3]

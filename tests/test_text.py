@@ -117,3 +117,78 @@ def test_styles_go_on_runs_of_paragraphs():
              {"text": "e", "style": "Heading 1"}]
     assert text.style_runs(items) == [("Heading 1", 0, 0), ("Normal", 2, 3),
                                       ("Heading 1", 4, 4)]
+
+
+def test_more_than_500_matches_are_all_replaced(make_doc):
+    doc = make_doc("cat " * 501)
+    out = answer(text._find_replace_impl, "cat", "dog", False, False, False)
+    assert (out["matches"], out["replaced"]) == (501, 501)
+    assert "cat" not in doc.texts()[0]
+
+
+def test_a_search_that_stops_moving_changes_nothing(make_doc, monkeypatch):
+    doc = make_doc("cat")
+
+    class Stuck:
+        Start, End = 0, 3
+
+        def ClearFormatting(self):
+            pass
+
+        def Execute(self, **kwargs):
+            return True
+
+        @property
+        def Find(self):
+            return self
+
+        Text = "cat"
+
+        def Collapse(self, direction):
+            pass
+
+    monkeypatch.setattr(type(doc), "Content", property(lambda self: Stuck()))
+    with pytest.raises(ValueError, match="Nothing was changed"):
+        text._find_all(doc, "cat", False, False, False, float("inf"))
+
+
+def test_spaces_in_text_arguments_are_kept():
+    replace = text.FindReplaceInput(find="cat ", replace=" ")
+    assert (replace.find, replace.replace) == ("cat ", " ")
+    assert text.NewParagraph(text="　indented ").text == "　indented "
+    assert text.SetParagraphTextInput(index=1, text=" a ").text == " a "
+
+
+def test_spaces_around_a_name_are_not():
+    assert text.NewParagraph(text="a", style=" Heading 1 ").style == "Heading 1"
+
+
+def test_a_search_out_of_time_says_there_are_more(make_doc, monkeypatch):
+    make_doc("cat cat cat")
+    monkeypatch.setattr(text, "SEARCH_SECONDS", -1.0)
+    out = answer(text._find_replace_impl, "cat", None, False, False, False)
+    assert (out["matches"], out["complete"]) == (1, False)
+    assert "still searching" in out["warnings"][0] and "at least 1" in out["warnings"][0]
+
+
+def test_a_replacement_out_of_time_says_how_far_it_got(make_doc, monkeypatch):
+    doc = make_doc("cat cat cat")
+    monkeypatch.setattr(text, "WORK_SECONDS", -1.0)
+    out = answer(text._find_replace_impl, "cat", "dog", False, False, False)
+    assert (out["matches"], out["replaced"], out["complete"]) == (3, 0, False)
+    assert "Call again" in out["warnings"][0]
+    assert doc.texts() == ["cat cat cat"]
+
+
+def test_calling_again_is_not_offered_when_it_would_replace_twice(make_doc, monkeypatch):
+    make_doc("cat cat")
+    monkeypatch.setattr(text, "WORK_SECONDS", -1.0)
+    out = answer(text._find_replace_impl, "cat", "catfish", False, False, False)
+    assert "narrow the search" in out["warnings"][0]
+
+
+def test_only_the_first_matches_are_given_paragraph_numbers(make_doc):
+    make_doc(*["cat"] * 101)
+    out = answer(text._find_replace_impl, "cat", None, False, False, False)
+    assert out["matches"] == 101 and out["paragraphs"] == list(range(1, 101))
+    assert out["paragraphs_cover"] == "the first 100 matches"

@@ -8,6 +8,7 @@ back from Word after the change.
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 # Values Word uses, written out here so nothing depends on makepy constants.
 WD_UNDEFINED = 9999999
@@ -184,6 +185,41 @@ def with_ruby(text: str, codes: list[str]) -> tuple[str, list[dict]]:
     return text.replace("\x15", ""), rubies
 
 
+def check_spans(text: str, spans: list[str]) -> None:
+    """Refuse spans that are not all in `text`, one after the other."""
+    cursor = 0
+    for span in spans:
+        at = text.find(span, cursor)
+        if at < 0:
+            raise ValueError(f"'{span}' is not in the paragraph after what comes before it. "
+                             "Give the spans in the order they come. Nothing was changed.")
+        cursor = at + len(span)
+
+
+def ruby_to_drop(raw: str, codes: list[str], spans: list[str]) -> list[tuple[int, str]]:
+    """Which ruby fields give way to `spans`: (place among `codes`, its word) of each.
+
+    `raw` is the paragraph's text, with a \\x15 for each ruby word, and `codes`
+    its field codes in order. The spans are checked against the text as it
+    will be once those fields are plain text, so a request that cannot be
+    carried out is refused before any reading is taken off.
+    """
+    wanted = Counter(spans)
+    found = []
+    for i, code in enumerate(codes):
+        got = ruby_of(code)
+        if got is None:
+            continue
+        if wanted[got[0]] > 0:
+            wanted[got[0]] -= 1
+            found.append((i, got[0]))
+            raw = raw.replace("\x15", got[0], 1)
+        else:
+            raw = raw.replace("\x15", "\x00", 1)  # stays a field: no span can cross it
+    check_spans(raw, spans)
+    return found
+
+
 def locate_spans(raw: str, spans: list[str], read, start: int, hidden: int) -> list[tuple[int, int]]:
     """Word's (start, end) of each span, in order, each read back from Word.
 
@@ -193,12 +229,10 @@ def locate_spans(raw: str, spans: list[str], read, start: int, hidden: int) -> l
     def u16(text):
         return len(text.encode("utf-16-le")) // 2
 
+    check_spans(raw, spans)
     out, cursor, drift = [], 0, 0
     for span in spans:
         at = raw.find(span, cursor)
-        if at < 0:
-            raise ValueError(f"'{span}' is not in the paragraph after what comes before it. "
-                             "Give the spans in the order they come. Nothing was changed.")
         base, n = start + u16(raw[:at]), u16(span)
         for shift in range(drift, hidden + 1):
             if read(base + shift, base + shift + n) == span:

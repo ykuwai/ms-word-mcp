@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from .. import backend
-from ._common import READ_ONLY, WRITES, Input, annotations, call, follow, mac_impl, mac_with_active
+from ._common import READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow, mac_impl, mac_with_active
 from ._word import check_span, clean_text, locate_spans, paragraph, span_range
 
 WD_FIELD_EMPTY = -1
@@ -223,7 +223,7 @@ def _list_fields_impl(start, end):
 
 class InsertFieldInput(Input):
     index: int = Field(..., ge=1, description="The paragraph the field goes in.")
-    code: str = Field(..., min_length=1, max_length=255, description=(
+    code: Trimmed = Field(..., min_length=1, max_length=255, description=(
         "The field code without braces: PAGE, NUMPAGES, DATE \\@ \"yyyy/M/d\", "
         "STYLEREF \"Heading 1\" \\n, SEQ Figure, REF bookmark \\h ..."))
     position: Literal["end", "start"] = Field("end", description=(

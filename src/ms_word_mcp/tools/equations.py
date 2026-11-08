@@ -19,7 +19,7 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from .. import backend
-from ._common import READ_ONLY, WRITES, Input, annotations, call, follow, mac_impl, mac_with_active
+from ._common import READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow, mac_impl, mac_with_active
 from ._word import clean_text, paragraph
 from .latex import LatexError, latex_to_unicodemath
 
@@ -28,7 +28,7 @@ NUMBER_MARK = "#(1)"
 
 
 class InsertEquationInput(Input):
-    equation: str = Field(..., min_length=1, max_length=4000, description=(
+    equation: Trimmed = Field(..., min_length=1, max_length=4000, description=(
         "The equation, in LaTeX (\\frac{a}{b}, \\sum_{i=1}^n, \\begin{pmatrix}...) "
         "or UnicodeMath (a/b, ∑_(i=1)^n▒, ■(a&b@c&d)), as `format` says. "
         "Without $ signs, or with them: they are taken off."))
@@ -38,7 +38,7 @@ class InsertEquationInput(Input):
     numbered: bool = Field(False, description=(
         "Number the equation (1), (2)... at the right margin, counted by a SEQ "
         "field so the numbers stay in order when equations are added."))
-    sequence: str = Field("Equation", pattern=r"^[A-Za-z][A-Za-z0-9_]{0,39}$", description=(
+    sequence: Trimmed = Field("Equation", pattern=r"^[A-Za-z][A-Za-z0-9_]{0,39}$", description=(
         "The SEQ name the number counts in. Equations in different sequences "
         "are numbered separately."))
     after: int | None = Field(None, ge=0, description=(

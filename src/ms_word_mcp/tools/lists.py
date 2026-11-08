@@ -16,7 +16,7 @@ from pydantic import Field, model_validator
 
 from .. import backend
 from . import _props as P
-from ._common import DESTRUCTIVE, READ_ONLY, WRITES, Input, annotations, call, follow
+from ._common import DESTRUCTIVE, READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow
 from ._word import check_span, clean_text, paragraph, paragraphs_in, span_range
 
 # WdListNumberStyle, by the names the tools take (reference B.2).
@@ -42,10 +42,10 @@ WD_LIST_APPLY_TO_WHOLE_LIST = 0
 class BulletFont(Input):
     """The bullet's or number's own character formatting."""
 
-    name: str | None = Field(None, description=(
+    name: Trimmed | None = Field(None, description=(
         "Font of the bullet or number. A Unicode bullet such as ● ■ ◆ ✓ shows in "
         "most text fonts; Symbol and Wingdings have their own."))
-    color: str | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description="#RRGGBB.")
+    color: Trimmed | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description="#RRGGBB.")
     size: float | None = Field(None, gt=0, le=1638, description="Points.")
     bold: bool | None = None
 
@@ -77,7 +77,7 @@ class LevelSpec(Input):
     alignment: Literal[tuple(LEVEL_ALIGNMENT)] | None = Field(None, description=(  # type: ignore[valid-type]
         "How the number aligns at number_position."))
     start_at: int | None = Field(None, ge=0, le=32767)
-    linked_style: str | None = Field(None, min_length=1, description=(
+    linked_style: Trimmed | None = Field(None, min_length=1, description=(
         "A paragraph style whose paragraphs take this level, such as \"Heading 1\" "
         "for numbered headings."))
 

@@ -7,15 +7,17 @@ document.
 
 from __future__ import annotations
 
+import time
+
 from pydantic import Field, model_validator
 
 from .. import backend
-from ._common import DESTRUCTIVE, READ_ONLY, WRITES, Input, annotations, call, follow
+from ._common import DESTRUCTIVE, READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow
 from ._word import (
     WD_COLLAPSE_END, WD_FIND_STOP, WD_OUTLINE_BODY,
     WD_STATISTIC_CHARACTERS, WD_STATISTIC_PAGES, WD_STATISTIC_WORDS,
     check_span, clean_text, index_of, paragraph, paragraph_info, paragraphs_in,
-    resolve_style, style_name,
+    BUILTIN_STYLES, resolve_style, style_name,
 )
 
 MAX_PARAGRAPHS_PER_READ = 200
@@ -62,12 +64,19 @@ def _fast_outline(doc, count: int) -> list[dict] | None:
     items = list(doc.GetCrossReferenceItems(WD_REF_TYPE_HEADING) or ())
     if not items:
         return []
-    paragraphs, texts, levels = {}, {}, {}
+    paragraphs, texts, levels, styles = {}, {}, {}, {}
+    heading_styles = {doc.Styles.Item(BUILTIN_STYLES[f"heading {n}"]).NameLocal
+                      for n in range(1, 10)}
 
     def para(i):
         if i not in paragraphs:
             paragraphs[i] = doc.Paragraphs.Item(i)
         return paragraphs[i]
+
+    def is_heading(i):
+        if i not in styles:
+            styles[i] = style_name(para(i).Style)
+        return styles[i] in heading_styles
 
     def read_text(i):
         if i not in texts:
@@ -80,12 +89,13 @@ def _fast_outline(doc, count: int) -> list[dict] | None:
             levels[i] = None if level == WD_OUTLINE_BODY else int(level)
         return levels[i]
 
-    found = locate_headings(items, split_texts(doc.Content.Text), read_text, read_level)
+    found = locate_headings(items, split_texts(doc.Content.Text), read_text, read_level,
+                            is_heading)
     if found is None:
         return None
-    # The text and level were read to place each heading; only the style is new.
+    # The text, level and style were all read to place each heading.
     return [{"index": i, "level": levels[i], "text": clean_text(texts[i]),
-             "style": style_name(para(i).Style)} for i in found]
+             "style": styles[i]} for i in found]
 
 
 def _get_outline_impl(every_paragraph=False):
@@ -138,7 +148,7 @@ class NewParagraph(Input):
     text: str = Field(..., description=(
         "The paragraph's text, without a paragraph mark. A \\n inside becomes a "
         "line break within the paragraph."))
-    style: str | None = Field(None, description=(
+    style: Trimmed | None = Field(None, description=(
         "Paragraph style: a built-in English name such as \"Heading 1\" or "
         "\"Normal\", which works in every language of Word, or the document's "
         "own name for a style. When given, manual character formatting is "
@@ -334,8 +344,39 @@ class FindReplaceInput(Input):
     wildcards: bool = Field(False, description="Treat `find` as a Word wildcard pattern.")
 
 
-def _find_all(doc, find, match_case, whole_word, wildcards, limit=500):
-    """(start, end, paragraph index, matched text) of each match, in order.
+#: How long one word_find_replace searches, and how long it works in all. A
+#: call has 60 s on Windows and 84 s on the Mac before the worker gives it up,
+#: and then it cannot say how far it got; stopping sooner, it can.
+SEARCH_SECONDS = 20.0
+WORK_SECONDS = 45.0
+#: Paragraph numbers are read for this many matches, at one call each.
+LISTED_MATCHES = 100
+
+
+def replace_outcome(result: dict, listed: int, searched_all: bool, replaced: int | None,
+                    find: str, replace: str | None) -> None:
+    """Add to a find-and-replace answer what the time limit left undone."""
+    if result["matches"] > listed:
+        result["paragraphs_cover"] = f"the first {listed} matches"
+    if searched_all and (replaced is None or replaced == result["matches"]):
+        return
+    result["complete"] = False
+    found = f"{'at least ' if not searched_all else ''}{result['matches']}"
+    if replace is None:
+        note = (f"Word was still searching when the time for one call ran out: there are "
+                f"{found} matches.")
+    else:
+        note = (f"The time for one call ran out with {replaced} of {found} matches replaced. ")
+        note += ("The new text holds what was searched for, so calling again would replace "
+                 "those too: narrow the search." if find.lower() in replace.lower() else
+                 "Call again with the same arguments for the rest.")
+    result.setdefault("warnings", []).append(note)
+
+
+def _find_all(doc, find, match_case, whole_word, wildcards, deadline):
+    """(start, end, paragraph index) of each match, in order, and whether all were found.
+
+    The paragraph index is None after the first LISTED_MATCHES.
 
     Outside wildcard searches Word reads ^ as the start of a special code
     (^p, ^t, ^2...), so a caret is doubled to find itself: "x^2" finds x^2.
@@ -345,40 +386,55 @@ def _find_all(doc, find, match_case, whole_word, wildcards, limit=500):
     rng = doc.Content
     f = rng.Find
     f.ClearFormatting()
-    found = []
+    found, reached = [], -1
     while f.Execute(FindText=find, MatchCase=match_case, MatchWholeWord=whole_word,
                     MatchWildcards=wildcards, Forward=True, Wrap=WD_FIND_STOP,
                     Format=False):
-        found.append((rng.Start, rng.End, index_of(doc, rng), rng.Text))
-        if len(found) >= limit:
-            break
+        if rng.End <= reached:  # a search that stops moving would never end
+            raise ValueError(f"Word's search stopped moving forward at position {rng.End}, "
+                             f"after {len(found)} matches. Nothing was changed. Try a "
+                             "narrower search.")
+        reached = rng.End
+        found.append((rng.Start, rng.End,
+                      index_of(doc, rng) if len(found) < LISTED_MATCHES else None))
+        if time.monotonic() > deadline:
+            return found, False
         rng.Collapse(WD_COLLAPSE_END)
-    return found
+    return found, True
 
 
 def _find_replace_impl(find: str, replace: str | None, match_case: bool,
                        whole_word: bool, wildcards: bool):
     doc = backend.word.document()
-    matches = _find_all(doc, find, match_case, whole_word, wildcards)
+    began = time.monotonic()
+    matches, searched_all = _find_all(doc, find, match_case, whole_word, wildcards,
+                                      began + SEARCH_SECONDS)
+    listed = matches[:LISTED_MATCHES]
     result = {"success": True, "matches": len(matches),
-              "paragraphs": sorted({m[2] for m in matches})}
+              "paragraphs": sorted({m[2] for m in listed})}
     if replace is None or not matches:
+        replace_outcome(result, len(listed), searched_all, None, find, None)
         return result
     # Each match is replaced through its own range, last first so the
     # positions of the ones before it hold. Word's own ReplaceAll answered
     # success and replaced nothing on Word 16 for Windows, and a range is
     # what both platforms can do; each replacement is read back.
     text = replace.replace("\n", "\v")
-    missed = 0
-    for start, end, _, _ in reversed(matches):
+    length = len(text.encode("utf-16-le")) // 2  # Word counts UTF-16 units
+    done, missed = 0, 0
+    for start, end, _ in reversed(matches):
+        if time.monotonic() > began + WORK_SECONDS:
+            break
         target = doc.Range(start, end)
         target.Text = text
-        if doc.Range(start, start + len(text)).Text != text:
+        done += 1
+        if (doc.Range(start, start + length).Text or "") != text:
             missed += 1
-    result["replaced"] = len(matches) - missed
+    result["replaced"] = done - missed
     if missed:
-        result["warnings"] = [f"{missed} of {len(matches)} replacements read back "
+        result["warnings"] = [f"{missed} of {done} replacements read back "
                               "differently. Read the paragraphs back."]
+    replace_outcome(result, len(listed), searched_all, done, find, replace)
     follow(doc, paragraph(doc, matches[0][2]).Range)
     return result
 
@@ -443,7 +499,9 @@ def register(mcp) -> None:
         """Find text in the whole document, and replace it if `replace` is given.
 
         Answers how many matched, in which paragraphs, and how many were
-        replaced.
+        replaced. Very many matches can take longer than one call may run:
+        then the answer has `complete` false and a warning saying how far it
+        got and what to do next.
         """
         return await call(
             _find_replace_impl, params.find, params.replace, params.match_case,

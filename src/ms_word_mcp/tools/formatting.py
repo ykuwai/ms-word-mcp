@@ -18,7 +18,7 @@ from pydantic import Field, model_validator
 
 from .. import backend
 from . import _props as P
-from ._common import READ_ONLY, WRITES, Input, annotations, call, follow
+from ._common import READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow
 from ._word import (
     WD_COLLAPSE_END, WD_FIND_STOP, check_span, clean_text, paragraph_info,
     paragraphs_in, resolve_style, span_range, style_name,
@@ -162,7 +162,7 @@ STYLE_NAME_HELP = (
 class ApplyStyleInput(Input):
     start: int = Field(..., ge=1, description="First paragraph, numbered from 1.")
     end: int | None = Field(None, ge=1, description="Last paragraph. Leave out for one.")
-    style: str = Field(..., min_length=1, description=STYLE_NAME_HELP)
+    style: Trimmed = Field(..., min_length=1, description=STYLE_NAME_HELP)
     clear_direct_formatting: bool = Field(False, description=(
         "Also remove manual character formatting, so the text looks as the "
         "style says."))
@@ -242,7 +242,7 @@ def _list_styles_impl(in_use_only, kind_wanted="text"):
 
 
 class GetStyleInput(Input):
-    style: str = Field(..., min_length=1, description=STYLE_NAME_HELP)
+    style: Trimmed = Field(..., min_length=1, description=STYLE_NAME_HELP)
 
 
 def _style_or_none(value):
@@ -301,13 +301,13 @@ def _get_style_impl(style):
 
 
 class SetStyleInput(Input):
-    style: str = Field(..., min_length=1, description=(
+    style: Trimmed = Field(..., min_length=1, description=(
         STYLE_NAME_HELP + " With `create`, the name of the new style."))
     create: Literal["paragraph", "character"] | None = Field(None, description=(
         "Create the style, of this type. Refused if a style of that name exists."))
-    base_style: str | None = Field(None, min_length=1, description=(
+    base_style: Trimmed | None = Field(None, min_length=1, description=(
         "The style this one is based on; it inherits whatever it does not set."))
-    next_style: str | None = Field(None, min_length=1, description=(
+    next_style: Trimmed | None = Field(None, min_length=1, description=(
         "Paragraph styles: the style of the paragraph that follows when the user "
         "presses Enter."))
     font: P.FontSpec | None = Field(None, description="Character formatting of the style.")

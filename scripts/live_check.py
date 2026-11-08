@@ -258,6 +258,7 @@ def run_steps(path: str) -> None:
          check=lambda o: o["headings"] == full["headings"] and len(o["headings"]) >= 2)
     run_table_steps()
     run_picture_and_page_steps(Path(path).parent)
+    run_review_steps()
     step("picture of page 1", screen._get_page_image_impl, 1, None,
          check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)
     step("picture of the page a paragraph is on", screen._get_page_image_impl, None, 5,
@@ -266,6 +267,59 @@ def run_steps(path: str) -> None:
     pdf = os.path.splitext(path)[0] + ".pdf"
     step("export PDF", documents._save_document_as_impl, pdf, True,
          check=lambda o: o.get("bytes", 0) > 0)
+
+
+def run_review_steps() -> None:
+    """What a code review found: spaces, many matches, ruby, look-alike headings.
+
+    In a document of its own, so the paragraph numbers are short and nothing
+    above moves.
+    """
+    other = step("a document for the review's cases", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("headings, and a body paragraph with a heading's words",
+                    text._insert_paragraphs_impl,
+                    [{"text": "Intro", "style": "Heading 1"},
+                     {"text": "Next", "style": "Heading 1"},
+                     {"text": "Next", "style": None},
+                     {"text": "\u3000indented, with spaces after  ", "style": None},
+                     {"text": "aa aa x", "style": None},
+                     {"text": "zeta " * 520, "style": None},
+                     {"text": "swap me", "style": None},
+                     {"text": "漢字と文章", "style": None}], None, None)
+        if "error" in made:
+            return
+        step("an equation that adds marks to the text", equations._insert_equation_impl,
+             "E=mc^2", "latex", True, "Equation", 1, None)
+        step("the body paragraph gets outline level 1", formatting._set_paragraph_format_impl,
+             4, 4, {"outline_level": "1"}, undo="Paragraph format")
+        step("the outline holds the heading, not the body paragraph", text._get_outline_impl, False,
+             check=lambda o: [h["index"] for h in o["headings"]] == [1, 3])
+        step("leading and trailing spaces are written", text._get_paragraphs_impl, 5, 5, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "\u3000indented, with spaces after  ")
+        step("a search ending in a space", text._find_replace_impl, "aa ", "b ", False, False,
+             False, undo="Replace", check=lambda o: o.get("replaced") == 2)
+        step("only the spaces searched for went", text._get_paragraphs_impl, 6, 6, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "b b x")
+        step("more than 500 matches are all replaced", text._find_replace_impl, "zeta", "eta",
+             True, False, False, undo="Replace",
+             check=lambda o: o.get("replaced") == 520 and "warnings" not in o)
+        step("a replacement beyond the basic plane reads back", text._find_replace_impl, "swap me",
+             "\U0001F600 done", True, False, False, undo="Replace",
+             check=lambda o: o.get("replaced") == 1 and "warnings" not in o)
+        step("ruby to keep", page._add_ruby_impl, 9, [{"text": "漢字", "ruby": "かんじ"}], "center",
+             None, undo="Add ruby", check=lambda o: len(o.get("ruby", [])) == 1)
+        step("a changed reading with a span that is not there is refused", page._add_ruby_impl, 9,
+             [{"text": "漢字", "ruby": "カンジ"}, {"text": "ない", "ruby": "x"}], "center", None,
+             undo="Add ruby", check=lambda o: "Nothing was changed" in o.get("error", ""))
+        step("the old reading is still there", text._get_paragraphs_impl, 9, 9, False,
+             check=lambda o: [r["ruby"] for r in o["paragraphs"][0].get("ruby", [])] == ["かんじ"])
+        step("close the document of the review's cases", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
 
 
 def run_picture_and_page_steps(folder: Path) -> None:
