@@ -263,10 +263,13 @@ def _unhead(is_heading, unhead, after_row, first, n, total) -> None:
     """
     if after_row == 0:
         return
-    below = first + n
-    if below <= total and is_heading(below):
-        return
-    if not is_heading(after_row):
+    try:
+        below = first + n
+        if below <= total and is_heading(below):
+            return
+        if not is_heading(after_row):
+            return
+    except Exception:  # noqa: BLE001 - rows out of reach: the rows were added anyway
         return
     for r in range(first, first + n):
         unhead(r)
