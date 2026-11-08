@@ -213,7 +213,9 @@ user to stop typing.
    `full_name` as `document` on every further call.
 2. Read before writing: `word_get_outline` for the headings, then
    `word_get_paragraphs` for the parts you need.
-3. Define the look with styles before writing much text: `word_set_style` on
+3. Define the look with styles before writing much text (the fonts of a
+   document are in Normal, the heading styles, Title and TOC 1-9 separately:
+   set each one to change the fonts throughout): `word_set_style` on
    "Normal" for the body font (Latin and East Asian separately), and on
    "Heading 1", "Heading 2" for headings. The English built-in names work in
    every language of Word ("Normal", "Heading 1", "Title", "Body Text",
@@ -229,6 +231,16 @@ user to stop typing.
    out. Use it after layout changes, equations and lists; reading the text
    back cannot show a layout that broke.
 6. Save with `word_save_document`.
+
+## Fixing an existing document
+
+Read it first (`word_get_paragraphs` with `detail` shows each paragraph's
+style, fonts, bold and color). Paragraphs made to look like headings by
+formatting alone: `word_apply_style` with a heading style and
+`clear_direct_formatting`. Typed bullets ("・", "-", "•"): take the typed
+mark out of the text (`word_find_replace`), then `word_apply_list`. Insert a
+table of contents last; a paragraph that holds its end cannot be deleted
+while it is there.
 
 ## Paragraph numbers
 
@@ -383,8 +395,19 @@ def catalog_lines():
         if here and here != area:
             lines.append(f"\n# {here}")
             area = here
-        lines.append(f"{tool.name}: {summary(tool.description)}")
+        lines.append(f"{tool.name}{_argument_names(tool)}: {summary(tool.description)}")
     return "\n".join(lines).strip()
+
+
+def _argument_names(tool) -> str:
+    """"(a, b, c)" for the tool's arguments, so the list alone shows what each
+    takes (an agent called word_get_list with `paragraph` for `index`)."""
+    params = ((tool.parameters or {}).get("properties") or {}).get("params") or {}
+    names = list((params.get("properties") or {}).keys())
+    if not names:
+        return "()"
+    shown = names[:6]
+    return "(" + ", ".join(shown) + (", …" if len(names) > 6 else "") + ")"
 
 
 def content_of(result):

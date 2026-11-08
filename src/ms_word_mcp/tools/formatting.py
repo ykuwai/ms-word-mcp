@@ -455,6 +455,10 @@ def register(mcp) -> None:
     @mcp.tool(name="word_apply_style", annotations=annotations("Apply a style", WRITES))
     async def word_apply_style(params: ApplyStyleInput) -> str:
         """Apply a paragraph style to paragraphs, and read the style back.
+        As in Word, the paragraphs' own paragraph formatting (spacing,
+        indents, line spacing set directly) gives way to the style;
+        clear_direct_formatting also removes their own character formatting
+        (bold, size, fonts set directly).
 
         Prefer styles to manual formatting: headings with heading styles make
         the outline, the navigation pane and the table of contents work.

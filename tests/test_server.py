@@ -172,7 +172,8 @@ def test_describe_lists_every_tool_a_line_each():
     lines = [line for line in asyncio.run(go()).splitlines()
              if line.startswith("word_")]
     names = {t.name for t in server.mcp.all_tools()} - server.CATALOG_TOOLS
-    assert {line.split(":")[0] for line in lines} == names
+    assert {line.split("(")[0] for line in lines} == names
+    assert any(line.startswith("word_get_list(index)") for line in lines)
 
 
 def test_describe_takes_the_document_argument_every_call_carries(word):

@@ -270,6 +270,14 @@ def paragraph_info(index: int, p, detail: bool = False) -> dict:
         fmt = p.Format
         info["alignment"] = ALIGNMENT_NAMES.get(fmt.Alignment, fmt.Alignment)
         info["fonts"] = fonts_of(rng)
+        font = rng.Font
+        # Bold, italic and color too: a paragraph made to look like a heading
+        # with direct formatting is found by these (asked for in a trial).
+        color = undefined(font.Color)
+        info["fonts"].update({
+            "bold": flag(font.Bold), "italic": flag(font.Italic),
+            "color": (None if color is None or color < 0 or color > 0xFFFFFF else
+                      f"#{color & 0xFF:02X}{(color >> 8) & 0xFF:02X}{(color >> 16) & 0xFF:02X}")})
         rule = fmt.LineSpacingRule
         info["line_spacing_rule"] = LINE_SPACING_NAMES.get(rule, rule)
         lines = spacing_in_lines(rule, fmt.LineSpacing)

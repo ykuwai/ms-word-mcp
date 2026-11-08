@@ -144,10 +144,12 @@ def _info(doc, index: int, detail: bool = False) -> dict:
         rule = _from_k(LINE_K, fmt.line_spacing_rule.get())
         spacing = fmt.line_spacing.get()
         out["alignment"] = _from_k(ALIGN_K, fmt.alignment.get())
+        flags = P.mac_read(font, [p for p in P.FONT_PROPS
+                                  if p.name in ("bold", "italic", "color")])
         out["fonts"] = {"latin": _font_name(font.ascii_name.get()),
                         "east_asian": _font_name(font.east_asian_name.get()),
                         "complex_script": _font_name(font.complex_script_name.get()),
-                        "size": font.font_size.get()}
+                        "size": font.font_size.get(), **flags}
         out["line_spacing_rule"] = rule
         lines = spacing_in_lines(LINE_CODES.get(rule), spacing)
         if lines is not None:
@@ -358,14 +360,21 @@ def insert_paragraphs(paragraphs, after, before):
             # Measured on Word 16.114: text set at the start of a paragraph that
             # holds an equation is refused (-1708). The new paragraphs go in
             # at the end of the paragraph before instead; they then take that
-            # paragraph's formatting, so a style is set on each below.
-            if at == 1:
+            # paragraph's formatting, so a style is set on each below. Word
+            # can also answer an error and insert all the same (a Sonnet run
+            # got its paragraph twice), so the fallback runs only when nothing
+            # was inserted.
+            now = _count(doc)
+            if now == count + len(texts):
+                pass  # inserted all the same: nothing more to do
+            elif now != count or at == 1:
                 raise
-            _, prev_end = _bounds(doc, at - 1)
-            doc.create_range(start=prev_end - 1, end_=prev_end - 1).content.set(
-                "\r" + "\r".join(texts))
-            paragraphs = [{**item, "style": item.get("style") or "Normal"}
-                          for item in paragraphs]
+            else:
+                _, prev_end = _bounds(doc, at - 1)
+                doc.create_range(start=prev_end - 1, end_=prev_end - 1).content.set(
+                    "\r" + "\r".join(texts))
+                paragraphs = [{**item, "style": item.get("style") or "Normal"}
+                              for item in paragraphs]
     written, warnings = [], []
     for offset, item in enumerate(paragraphs):
         index = first + offset
@@ -415,7 +424,15 @@ def delete_paragraphs(start, end):
         first -= 1
     if end == before and start == 1:
         last -= 1  # the document's last paragraph mark stays
-    doc.create_range(start=first, end_=last).content.set("")
+    try:
+        doc.create_range(start=first, end_=last).content.set("")
+    except Exception as exc:  # noqa: BLE001 - said in words below
+        raise ValueError(
+            f"Word refused to delete paragraphs {start} to {end} "
+            f"({str(exc).splitlines()[0].strip()}). A paragraph that holds the end of a "
+            "field, such as a table of contents, cannot be deleted while the field is "
+            "there: delete the whole table of contents first (or leave that "
+            "paragraph). Nothing was deleted.") from None
     after = _count(doc)
     out = {"success": True, "deleted": end - start + 1, "texts": removed,
            "paragraphs": after}
