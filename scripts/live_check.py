@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from ms_word_mcp import backend  # noqa: E402
 from ms_word_mcp.backend import call_document  # noqa: E402
-from ms_word_mcp.tools import _common, documents, edit, formatting, lists, text  # noqa: E402
+from ms_word_mcp.tools import _common, documents, edit, equations, formatting, lists, text  # noqa: E402
 
 results: list[tuple[str, bool]] = []
 
@@ -157,6 +157,22 @@ def run_steps(path: str) -> None:
     step("remove the list", lists._remove_list_impl, 6, 8, undo="Remove list",
          check=lambda o: all(p["list"] == "none" for p in o["paragraphs"]))
     step("delete the list items", text._delete_paragraphs_impl, 6, 8,
+         undo="Delete paragraphs", check=lambda o: o.get("paragraphs") == 5)
+    step("numbered equation from LaTeX", equations._insert_equation_impl,
+         r"\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}", "latex", True, "Equation",
+         5, None, undo="Insert equation",
+         check=lambda o: o.get("number") == "1" and "▒" in o.get("word_reads_it_as", ""))
+    step("second numbered equation, from UnicodeMath", equations._insert_equation_impl,
+         "a^2+b^2=c^2", "unicodemath", True, "Equation", 6, None, undo="Insert equation",
+         check=lambda o: o.get("number") == "2")
+    step("a numbered equation above renumbers", equations._insert_equation_impl,
+         r"E=mc^2", "latex", True, "Equation", 5, None, undo="Insert equation",
+         check=lambda o: o.get("number") == "1")
+    step("list the equations", equations._list_equations_impl,
+         check=lambda o: len(o.get("equations", [])) == 3)
+    step("read an equation back", equations._get_equation_impl, 7,
+         check=lambda o: "√" in o.get("unicodemath", ""))
+    step("delete the equations", text._delete_paragraphs_impl, 6, 8,
          undo="Delete paragraphs", check=lambda o: o.get("paragraphs") == 5)
     step("apply Heading 2", formatting._apply_style_impl, 5, None, "Heading 2", True,
          undo="Apply style", check=lambda o: "warnings" not in o)

@@ -31,6 +31,7 @@ Measured 2026-11-08 with `appscript.app(id="com.microsoft.Word", terms="sdef")`.
 | Spacing in lines | Setting `line_unit_before` to 0.5 made `space_before` read 9.0: the measure in lines wins while it is set (the same for indents in characters). |
 | Creating a style | `make new Word style` answers -1708 and makes nothing, with or without a type, whatever the name. Changing an existing style (base style, next style, font, paragraph format) works. A built-in style is reached with `Word_styles[k.style_heading1]`; `Word_styles["Heading 1"]` fails in a Japanese Word. |
 | Normal's base style | Answers a style named `""`. |
+| Text before an equation | Setting `content` of an empty range at the start of a paragraph that holds an equation is refused (-1708). Text set at the end of the paragraph before, as "\r" + text, works. |
 | List templates | `make new list template at` the document works (without `at`, -1708). Changing its levels leaves the bullet gallery and the document's other lists as they were. `apply list format template` on a range's `list format` applies it. |
 | A level's number style and format | Setting `number style` to bullet is refused until `number format` is already the bullet character; a `number format` holding `%1` is refused until the style is a numbering one. |
 | Decoding, again | Patching appscript's decoder class is not enough: each codecs object keeps its own table, made when it is created, so `get list gallery` still failed until the tables of the existing objects were patched too. |
@@ -114,7 +115,8 @@ what Microsoft documents is in [reference/equations.md](reference/equations.md).
 | Making an equation | `OMaths.Add(range)` then `OMath.BuildUp()` | `create new equation from range r in document d`: both arguments are needed (`from range` alone, `in range`, `in selection` and `make new math object` answer -1708). Then `build up` of the document's `math object`. |
 | UnicodeMath | `a/b`, `E=mc^2+√(x^2+1)`, `∫_0^∞ e^(-x^2) dx=√π/2` build up as they should | The same |
 | TeX control words | `\alpha`, `\frac{a}{b}`, `\sqrt{x}` stay as text (Math AutoCorrect does not act on text put in by code) | The same |
-| `#(1)` | Builds up into an equation array holding `#(1)`; no number | The same |
+| `#(1)` | Builds up into an equation array holding `#(1)` (its text has no visible number; to be checked on the page) | Builds up into an equation array, and **on the page** the equation is centred at display size with (1) at the right margin: the text read back does not show it, a PDF of the page does. |
+| A SEQ field as the number | To be measured | `create new field` over the `1` of `#(1)` after building up, with `field sequence` "Equation", numbers three equations (1), (2), (3), right-aligned, display size ([picture](images/equation-numbers-mac.png)). |
 | Reading back | `Range.Text` of a built-up equation is its pieces split by `\r`; after `Linearize`, `Range.Text` is UnicodeMath (`∫_0^∞▒〖𝑒^(−𝑥^2 ) 𝑑𝑥〗=√𝜋/2`), letters in math italic | The same, through the paragraph's content |
 | Display or inline | `Type` 0 (display) for an equation alone in its paragraph | `display type` = `equation display professional` |
 | Numbering | A three-cell table, equation in the middle cell, `(` SEQ Equation `)` in the right cell: (1), then (2) | `create new field` with `field type field sequence` gives (1) |

@@ -40,6 +40,11 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
   template of its own so no other list changes. Read a list back, change
   levels, remove a list.
 
+- Equations: display equations from LaTeX (converted with Word's own Math
+  AutoCorrect symbols) or UnicodeMath, built by Word, numbered (1), (2)... at
+  the right margin by a SEQ field in the UnicodeMath `#` number, so they
+  renumber themselves; listed, and read back as UnicodeMath.
+
 ## Next
 
 First, a fix to what is there: **read in bulk.** word_get_outline and
@@ -53,9 +58,9 @@ Then, ordered roughly by what the owner stressed.
    language of a style; creating a style on the Mac (through VBA).
 2. **Lists, the rest.** Numbered headings (levels linked to heading styles),
    restarting numbering in the middle of a list, picture bullets.
-3. **Equations.** Insert from UnicodeMath and LaTeX (Word converts both),
-   display and inline, equation numbering with SEQ fields and right-aligned
-   numbers, read back as linear text.
+3. **Equations, the rest.** Inline equations inside a paragraph,
+   chapter-style numbers (2.1) with STYLEREF, cross-references to equations,
+   editing an equation in place.
 4. **Figures and tables.** Pictures, tables with styles, captions with
    numbering, cross-references, list of figures.
 5. **Fields.** SEQ, REF, PAGE, TOC and the rest; insert, update, read codes

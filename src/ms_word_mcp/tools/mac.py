@@ -330,7 +330,20 @@ def insert_paragraphs(paragraphs, after, before):
     else:
         first = at
         start, _ = _bounds(doc, at)
-        doc.create_range(start=start, end_=start).content.set("\r".join(texts) + "\r")
+        try:
+            doc.create_range(start=start, end_=start).content.set("\r".join(texts) + "\r")
+        except Exception:  # noqa: BLE001 - measured below
+            # Measured on Word 16.114: text set at the start of a paragraph that
+            # holds an equation is refused (-1708). The new paragraphs go in
+            # at the end of the paragraph before instead; they then take that
+            # paragraph's formatting, so a style is set on each below.
+            if at == 1:
+                raise
+            _, prev_end = _bounds(doc, at - 1)
+            doc.create_range(start=prev_end - 1, end_=prev_end - 1).content.set(
+                "\r" + "\r".join(texts))
+            paragraphs = [{**item, "style": item.get("style") or "Normal"}
+                          for item in paragraphs]
     written, warnings = [], []
     for offset, item in enumerate(paragraphs):
         index = first + offset
