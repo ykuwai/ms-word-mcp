@@ -747,3 +747,192 @@ def set_style(style, create, base_style, next_style, font, paragraph, quick_styl
     if warnings:
         out["warnings"] = warnings
     return out
+
+
+# -- lists -------------------------------------------------------------------------
+
+from . import lists  # noqa: E402
+
+NUMBER_STYLES_K = {
+    "bullet": "bullet", "arabic": "arabic", "upper_roman": "uppercase_roman",
+    "lower_roman": "lowercase_roman", "upper_letter": "uppercase_letter",
+    "lower_letter": "lowercase_letter", "ordinal": "ordinal",
+    "cardinal_text": "cardinal_text", "ordinal_text": "ordinal_text",
+    "arabic_full_width": "arabic_full_width", "arabic_leading_zero": "arabic_lz",
+    "number_in_circle": "number_in_circle", "kanji": "kanji", "kanji_digit": "kanji_digit",
+    "kanji_traditional": "kanji_traditional", "aiueo": "aiueo",
+    "aiueo_half_width": "aiueo_half_width", "iroha": "iroha",
+    "iroha_half_width": "iroha_half_width", "legal": "legal", "none": "none",
+}
+LIST_TYPES_K = {"list_no_numbering": "none", "list_listnum_only": "listnum_field",
+                "list_bullet": "bullet", "list_simple_numbering": "simple_numbering",
+                "list_outline_numbering": "outline_numbering",
+                "list_mixed_numbering": "mixed_numbering",
+                "list_picture_bullet": "picture_bullet"}
+
+
+def _mac_paragraph_list(doc, index) -> dict:
+    fmt = doc.paragraphs[index].text_object.list_format
+    kind = LIST_TYPES_K.get(_name(fmt.list_type.get()), _name(fmt.list_type.get()))
+    out = {"index": index,
+           "text": _clean(doc.paragraphs[index].text_object.content.get())[:80],
+           "list": kind}
+    if kind != "none":
+        out["level"] = fmt.list_level_number.get()
+        out["list_string"] = fmt.list_string.get()
+    return out
+
+
+def _mac_describe_level(lv, index) -> dict:
+    raw = _name(lv.number_style.get()).removeprefix("list_number_style_")
+    style = next((k for k, v in NUMBER_STYLES_K.items() if v == raw), raw)
+    out = {"level": index, "number_style": style, "number_format": lv.number_format.get()}
+    if style == "bullet":
+        out["bullet"] = out["number_format"]
+    font = P.mac_read(lv.font_object, P.FONT_PROPS)
+    out["font"] = {"name": font.get("latin_font"), "color": font.get("color"),
+                   "size": font.get("size"), "bold": font.get("bold")}
+    out["number_position"] = lv.number_position.get()
+    out["text_position"] = lv.text_position.get()
+    out["start_at"] = lv.start_at.get()
+    tab = lv.tab_position.get()
+    out["tab_position"] = None if tab in (999999, P.WD_UNDEFINED) else tab
+    out["trailing"] = _name(lv.trailing_character.get()).removeprefix("trailing_")
+    out["alignment"] = _name(lv.list_level_alignment.get()).removeprefix("list_level_align_")
+    out["linked_style"] = lv.linked_style.get() or None
+    return out
+
+
+def _mac_set_level(doc, lv, spec, refused) -> None:
+    k = _k()
+
+    def put(key, prop, value):
+        try:
+            getattr(lv, prop).set(value)
+        except Exception as exc:  # noqa: BLE001 - reported to the caller
+            refused[f"level {spec['level']} {key}"] = str(exc).splitlines()[0]
+
+    # Measured on Word 16.114: setting a level's number style to bullet is
+    # refused (-1708) until its number format is the bullet character, and a
+    # number format holding %1 is refused until the style is a numbering one.
+    # So a bullet's format goes first, and a number's style.
+    style = spec.get("number_style")
+    steps = [("number_format", "number_format", spec.get("number_format")),
+             ("number_style", "number_style",
+              None if style is None
+              else getattr(k, "list_number_style_" + NUMBER_STYLES_K[style]))]
+    if style not in (None, "bullet"):
+        steps.reverse()
+    for key, prop, value in steps:
+        if value is not None:
+            put(key, prop, value)
+    for key in ("number_position", "text_position", "tab_position", "start_at"):
+        if spec.get(key) is not None:
+            put(key, key, spec[key])
+    if spec.get("trailing") is not None:
+        put("trailing", "trailing_character", getattr(k, "trailing_" + spec["trailing"]))
+    if spec.get("alignment") is not None:
+        put("alignment", "list_level_alignment",
+            getattr(k, "list_level_align_" + spec["alignment"]))
+    if spec.get("linked_style") is not None:
+        put("linked_style", "linked_style",
+            _mac_style_name(_style_object(doc, spec["linked_style"])))
+    font = spec.get("font") or {}
+    font_spec = {k_: v for k_, v in {"latin_font": font.get("name"),
+                                     "latin_font_extended": font.get("name"),
+                                     "color": font.get("color"), "size": font.get("size"),
+                                     "bold": font.get("bold")}.items() if v is not None}
+    for name, why in P.mac_apply(lv.font_object, P.FONT_PROPS, font_spec).items():
+        refused[f"level {spec['level']} font {name}"] = why
+
+
+@mac_impl(lists._apply_list_impl)
+def apply_list(start, end, levels, level, continue_previous):
+    k = _k()
+    doc = backend.word.document()
+    start, end = _span(doc, start, end)
+    specs = [lists._level_spec_defaults(dict(s)) for s in levels]
+    outline = len(specs) > 1 or any(s["level"] > 1 for s in specs) or level not in (None, 1)
+    # Measured on Word 16.114: `make new list template at` the document works
+    # (without `at` it is -1708); changing its levels leaves the galleries and
+    # the document's other lists as they were.
+    template = doc.make(new=k.list_template, at=doc,
+                        with_properties={k.outline_numbered: outline})
+    refused: dict = {}
+    for spec in specs:
+        _mac_set_level(doc, template.list_levels[spec["level"]], spec, refused)
+    first, _ = _bounds(doc, start)
+    _, last = _bounds(doc, end)
+    doc.create_range(start=first, end_=last).list_format.apply_list_format_template(
+        list_template=template, continue_previous_list=continue_previous,
+        apply_to=k.list_apply_to_whole_list, default_list_behavior=k.word10_list_behavior)
+    if level is not None:
+        for i in range(start, end + 1):
+            doc.paragraphs[i].text_object.list_format.list_level_number.set(level)
+    out = [_mac_paragraph_list(doc, i) for i in range(start, end + 1)]
+    used = doc.paragraphs[start].text_object.list_format.list_template
+    described = [_mac_describe_level(used.list_levels[s["level"]], s["level"]) for s in specs]
+    warnings = [f"{key} was refused: {why}" for key, why in refused.items()]
+    for spec, got in zip(specs, described):
+        for key in ("bullet", "number_format", "number_position", "text_position",
+                    "start_at"):
+            if spec.get(key) is not None and got.get(key) != spec[key]:
+                warnings.append(f"Level {spec['level']} {key} reads back as "
+                                f"{got.get(key)!r}, not {spec[key]!r}.")
+        wanted_color = (spec.get("font") or {}).get("color")
+        if wanted_color and (got["font"].get("color") or "").upper() != \
+                "#" + wanted_color.lstrip("#").upper():
+            warnings.append(f"Level {spec['level']} font color reads back as "
+                            f"{got['font'].get('color')!r}, not {wanted_color!r}.")
+    off = [p["index"] for p in out if p["list"] == "none"]
+    if off:
+        warnings.append(f"Paragraphs {off} read back without a list.")
+    _scroll(doc, first, last)
+    result = {"success": True, "paragraphs": out, "levels": described}
+    if warnings:
+        result["warnings"] = warnings
+    return result
+
+
+@mac_impl(lists._set_list_level_impl)
+def set_list_level(start, end, level):
+    doc = backend.word.document()
+    start, end = _span(doc, start, end)
+    for i in range(start, end + 1):
+        if _mac_paragraph_list(doc, i)["list"] == "none":
+            raise ValueError(f"Paragraph {i} is not in a list. Make it one with "
+                             "word_apply_list first.")
+    for i in range(start, end + 1):
+        doc.paragraphs[i].text_object.list_format.list_level_number.set(level)
+    out = [_mac_paragraph_list(doc, i) for i in range(start, end + 1)]
+    result = {"success": True, "paragraphs": out}
+    off = [p["index"] for p in out if p.get("level") != level]
+    if off:
+        result["warnings"] = [f"Paragraphs {off} read back at another level."]
+    return result
+
+
+@mac_impl(lists._remove_list_impl)
+def remove_list(start, end):
+    doc = backend.word.document()
+    start, end = _span(doc, start, end)
+    for i in range(start, end + 1):
+        doc.paragraphs[i].text_object.list_format.remove_numbers()
+    out = [_mac_paragraph_list(doc, i) for i in range(start, end + 1)]
+    result = {"success": True, "paragraphs": out}
+    left = [p["index"] for p in out if p["list"] != "none"]
+    if left:
+        result["warnings"] = [f"Paragraphs {left} are still in a list."]
+    return result
+
+
+@mac_impl(lists._get_list_impl)
+def get_list(index):
+    doc = backend.word.document()
+    _para(doc, index)
+    info = _mac_paragraph_list(doc, index)
+    if info["list"] == "none":
+        return {"success": True, "paragraph": info}
+    template = doc.paragraphs[index].text_object.list_format.list_template
+    return {"success": True, "paragraph": info,
+            "levels": [_mac_describe_level(template.list_levels[i], i) for i in range(1, 10)]}

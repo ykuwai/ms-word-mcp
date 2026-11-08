@@ -34,6 +34,11 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
   paragraph property of tools/_props.py, which word_format_text and
   word_set_paragraph_format share. On the Mac a style can be changed but not
   created.
+- Lists: bulleted and numbered lists with each level's bullet character or
+  number format (full-width digits, circled numbers, kanji, aiueo, iroha...),
+  the bullet's own font, color and size, positions, levels; each list gets a
+  template of its own so no other list changes. Read a list back, change
+  levels, remove a list.
 
 ## Next
 
@@ -46,9 +51,8 @@ Then, ordered roughly by what the owner stressed.
 
 1. **Styles, the rest.** Borders and shading, tab stops, list linkage, the
    language of a style; creating a style on the Mac (through VBA).
-2. **Lists and bullets.** Bullet character, its font and color, numbering
-   format and style, indents per level, linking levels to heading styles,
-   multilevel lists, restart and continue.
+2. **Lists, the rest.** Numbered headings (levels linked to heading styles),
+   restarting numbering in the middle of a list, picture bullets.
 3. **Equations.** Insert from UnicodeMath and LaTeX (Word converts both),
    display and inline, equation numbering with SEQ fields and right-aligned
    numbers, read back as linear text.

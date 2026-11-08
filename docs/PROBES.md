@@ -31,6 +31,9 @@ Measured 2026-11-08 with `appscript.app(id="com.microsoft.Word", terms="sdef")`.
 | Spacing in lines | Setting `line_unit_before` to 0.5 made `space_before` read 9.0: the measure in lines wins while it is set (the same for indents in characters). |
 | Creating a style | `make new Word style` answers -1708 and makes nothing, with or without a type, whatever the name. Changing an existing style (base style, next style, font, paragraph format) works. A built-in style is reached with `Word_styles[k.style_heading1]`; `Word_styles["Heading 1"]` fails in a Japanese Word. |
 | Normal's base style | Answers a style named `""`. |
+| List templates | `make new list template at` the document works (without `at`, -1708). Changing its levels leaves the bullet gallery and the document's other lists as they were. `apply list format template` on a range's `list format` applies it. |
+| A level's number style and format | Setting `number style` to bullet is refused until `number format` is already the bullet character; a `number format` holding `%1` is refused until the style is a numbering one. |
+| Decoding, again | Patching appscript's decoder class is not enough: each codecs object keeps its own table, made when it is created, so `get list gallery` still failed until the tables of the existing objects were patched too. |
 | Style | `paragraphs[1].style.get()` answers a `Word_styles['標準']` reference; `style.name_local.get()` answers `標準` in a Japanese Word. |
 | End of the text | `text_object.end_of_content` answered 28 for 27 characters of text (the last paragraph mark counts). |
 | Closing | `close(saving=k.no)` closes without asking. |
@@ -65,6 +68,7 @@ What the documentation leaves unstated, measured with `scripts/probes/windows_ch
 | Mixed ranges | SpaceBefore, Alignment, SizeBi and Color all read 9999999 (wdUndefined) over two paragraphs that differ. |
 | `Font.Bold` | Reads as the Python int 0 or -1. |
 | `Document.Path` | An unsaved document's is `''`. |
+| `Styles.Add` | Takes the paragraph style and the manual formatting of wherever the user's cursor is: a style added with the cursor in a bold Title paragraph came out based on Title, 28 pt, bold, condensed 0.5 pt, kerning from 14 pt. A character style took the bold too. `Font.Reset` on the new style raised 0x800A174B. Setting its base style and assigning the base style's `Font.Duplicate` and `ParagraphFormat.Duplicate` gives a style that differs from its base in nothing. |
 | `Style.Linked` | Readable on paragraph styles only (40 of 93 linked); character, table and list styles raise "this property cannot be used for this object". |
 | `Font.Name` again | Set to 游ゴシック, `NameOther` read back as Times New Roman in one run and as 游ゴシック in the next, with the same code. Not reliable: set each slot by name. |
 | `Document.Undo(50)` | With one edit to undo, answers False rather than raising. |

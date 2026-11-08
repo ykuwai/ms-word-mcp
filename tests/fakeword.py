@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 UNDEFINED = 9999999
 
-BUILTIN_NAMES = {-1: "Normal", -2: "Heading 1", -3: "Heading 2", -4: "Heading 3",
+BUILTIN_NAMES = {-1: "Normal", -66: "Default Paragraph Font", -2: "Heading 1", -3: "Heading 2", -4: "Heading 3",
                  -5: "Heading 4", -63: "Title", -75: "Subtitle", -180: "List Paragraph"}
 
 DEFAULT_ATTRS = {
@@ -67,6 +67,8 @@ class AttrProxy:
         object.__setattr__(self, "_keys", keys)
 
     def __getattr__(self, name):
+        if name == "Duplicate":
+            return AttrProxy(dict(self._data), self._keys)
         if name not in self._keys:
             raise AttributeError(name)
         return self._data[name]
@@ -139,8 +141,14 @@ class FakeStyles:
     def Add(self, name, type_=1):
         if name in self.defs:
             raise Exception("That style name already exists.")
-        self.defs[name] = FakeStyle(name, type_)
-        return self.defs[name]
+        style = FakeStyle(name, type_)
+        # Word takes the style and manual formatting of where the cursor is
+        # (measured); the fake's cursor is at the start of the document.
+        at = self.doc.attrs[0]
+        style._data.update({k: at[k] for k in CHAR_KEYS + PARA_KEYS})
+        style.BaseStyle = at["style"]
+        self.defs[name] = style
+        return style
 
 
 def outline_of(style_name):
@@ -436,3 +444,109 @@ class FakeWord:
 
     def document(self):
         return self.doc
+
+
+# -- lists ---------------------------------------------------------------------
+
+LEVEL_KEYS = ("NumberStyle", "NumberFormat", "NumberPosition", "TextPosition",
+              "TabPosition", "TrailingCharacter", "Alignment", "StartAt", "LinkedStyle")
+
+
+class FakeListLevel:
+    def __init__(self, index):
+        object.__setattr__(self, "Index", index)
+        object.__setattr__(self, "_data", {
+            "NumberStyle": 0, "NumberFormat": f"%{index}.", "NumberPosition": 18.0 * (index - 1),
+            "TextPosition": 18.0 * index, "TabPosition": 999999, "TrailingCharacter": 0,
+            "Alignment": 0, "StartAt": 1, "LinkedStyle": ""})
+        object.__setattr__(self, "Font", AttrProxy(dict(DEFAULT_ATTRS), CHAR_KEYS))
+
+    def __getattr__(self, name):
+        if name in LEVEL_KEYS:
+            return self._data[name]
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        if name not in LEVEL_KEYS:
+            raise AttributeError(name)
+        if name == "NumberFormat" and self._data["NumberStyle"] == 23 and len(value) != 1:
+            raise Exception("A bullet's format is one character.")
+        self._data[name] = value
+
+
+class FakeListTemplate:
+    def __init__(self, outline):
+        self.OutlineNumbered = outline
+        levels = [FakeListLevel(i) for i in range(1, 10)]
+        self.ListLevels = SimpleNamespace(Count=9, Item=lambda i: levels[i - 1])
+
+
+class FakeListTemplates:
+    def __init__(self):
+        self.items = []
+
+    def Add(self, outline=False, name=None):
+        template = FakeListTemplate(outline)
+        self.items.append(template)
+        return template
+
+
+class FakeListFormat:
+    """A paragraph's list membership, kept on its mark as (template, level)."""
+
+    def __init__(self, rng):
+        self.rng = rng
+
+    def _marks(self):
+        return [self.rng.doc.attrs[p.Range.End - 1] for p in self.rng.paragraph_list()]
+
+    @property
+    def ListType(self):
+        mark = self._marks()[0]
+        if mark.get("list") is None:
+            return 0
+        template, level = mark["list"]
+        return 2 if template.ListLevels.Item(level).NumberStyle == 23 else 3
+
+    @property
+    def ListTemplate(self):
+        mark = self._marks()[0]
+        return mark["list"][0] if mark.get("list") else None
+
+    @property
+    def ListLevelNumber(self):
+        mark = self._marks()[0]
+        return mark["list"][1] if mark.get("list") else 1
+
+    @ListLevelNumber.setter
+    def ListLevelNumber(self, level):
+        for mark in self._marks():
+            if mark.get("list"):
+                mark["list"] = (mark["list"][0], level)
+
+    @property
+    def ListString(self):
+        mark = self._marks()[0]
+        if not mark.get("list"):
+            return ""
+        template, level = mark["list"]
+        lv = template.ListLevels.Item(level)
+        if lv.NumberStyle == 23:
+            return lv.NumberFormat
+        same = [m for m in self.rng.doc.attrs if m.get("list") == mark["list"]]
+        number = lv.StartAt + next(i for i, m in enumerate(same) if m is mark)
+        return lv.NumberFormat.replace(f"%{level}", str(number))
+
+    def ApplyListTemplate(self, ListTemplate, ContinuePreviousList=False, ApplyTo=0,
+                          DefaultListBehavior=2):
+        for mark in self._marks():
+            mark["list"] = (ListTemplate, 1)
+
+    def RemoveNumbers(self, NumberType=None):
+        for mark in self._marks():
+            mark["list"] = None
+
+
+FakeRange.ListFormat = property(lambda self: FakeListFormat(self))
+FakeDocument.ListTemplates = property(
+    lambda self: self.__dict__.setdefault("_list_templates", FakeListTemplates()))

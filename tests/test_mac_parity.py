@@ -2,11 +2,11 @@
 
 import inspect
 
-from ms_word_mcp.tools import _common, documents, edit, formatting, mac, text  # noqa: F401
+from ms_word_mcp.tools import _common, documents, edit, formatting, lists, mac, text  # noqa: F401
 
 
 def _com_impls():
-    for module in (documents, edit, formatting, text):
+    for module in (documents, edit, formatting, lists, text):
         for name, value in vars(module).items():
             if name.startswith("_") and name.endswith("_impl") and callable(value):
                 yield name, value

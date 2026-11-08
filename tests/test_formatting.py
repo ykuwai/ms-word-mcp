@@ -195,3 +195,13 @@ def test_get_style_answers_in_set_style_names(make_doc):
     assert style["name"] == "Normal" and style["base_style"] is None
     assert set(style["font"]) <= set(_props.FONT_NAMES)
     assert "line_spacing_rule" in style["paragraph"]
+
+
+def test_a_new_style_does_not_take_the_formatting_where_the_cursor_is(make_doc):
+    doc = make_doc(("Big bold title", "Title"), "body")
+    doc.attrs[0]["Bold"] = -1
+    doc.attrs[0]["Size"] = 28
+    out = set_style("Plain", create="paragraph", font={"color": "#333333"})
+    style = out["style"]
+    assert style["base_style"] == "Normal"
+    assert style["font"]["bold"] is False and style["font"]["size"] == 10.5

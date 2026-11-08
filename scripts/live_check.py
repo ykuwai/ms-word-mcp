@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from ms_word_mcp import backend  # noqa: E402
 from ms_word_mcp.backend import call_document  # noqa: E402
-from ms_word_mcp.tools import _common, documents, edit, formatting, text  # noqa: E402
+from ms_word_mcp.tools import _common, documents, edit, formatting, lists, text  # noqa: E402
 
 results: list[tuple[str, bool]] = []
 
@@ -126,6 +126,28 @@ def run_steps(path: str) -> None:
          undo="Define style", check=lambda o: "warnings" not in o)
     step("apply the style", formatting._apply_style_impl, 3, None, style, False,
          undo="Apply style", check=lambda o: "error" not in o and "warnings" not in o)
+    step("insert list items", text._insert_paragraphs_impl, [
+        {"text": "First point", "style": None}, {"text": "Second point", "style": None},
+        {"text": "A sub-point", "style": None}], None, None, undo="Insert paragraphs",
+        check=lambda o: len(o.get("inserted", [])) == 3)
+    step("red square bullets, own positions", lists._apply_list_impl, 6, 8, [
+        {"level": 1, "bullet": "■", "font": {"color": "#C00000", "size": 9},
+         "number_position": 0, "text_position": 14},
+        {"level": 2, "bullet": "・", "font": {"color": "#1F4E79"},
+         "number_position": 14, "text_position": 28}], None, False, undo="Apply list",
+        check=lambda o: "warnings" not in o and o["paragraphs"][0]["list_string"] == "■")
+    step("sub-point to level 2", lists._set_list_level_impl, 8, None, 2, undo="List level",
+         check=lambda o: o["paragraphs"][0].get("list_string") == "・")
+    step("read the list back", lists._get_list_impl, 6,
+         check=lambda o: o["levels"][0]["font"]["color"] == "#C00000")
+    step("numbered list in full-width digits", lists._apply_list_impl, 6, 7, [
+        {"level": 1, "number_style": "arabic_full_width", "number_format": "（%1）"}],
+        None, False, undo="Apply list",
+        check=lambda o: [p.get("list_string") for p in o["paragraphs"]] == ["（１）", "（２）"])
+    step("remove the list", lists._remove_list_impl, 6, 8, undo="Remove list",
+         check=lambda o: all(p["list"] == "none" for p in o["paragraphs"]))
+    step("delete the list items", text._delete_paragraphs_impl, 6, 8,
+         undo="Delete paragraphs", check=lambda o: o.get("paragraphs") == 5)
     step("apply Heading 2", formatting._apply_style_impl, 5, None, "Heading 2", True,
          undo="Apply style", check=lambda o: "warnings" not in o)
     step("rewrite a paragraph", text._set_paragraph_text_impl, 4, "Rewritten heading",

@@ -317,6 +317,29 @@ def _find_style(doc, name):
         return None
 
 
+# wdStyleNormal and wdStyleDefaultParagraphFont (reference B.2).
+_PLAIN_BASE = {"paragraph": -1, "character": -66}
+
+
+def _start_plain(doc, s, kind, base_style) -> None:
+    """Make a style just added look like its base style and nothing else.
+
+    Measured on Word for Windows: Styles.Add takes the paragraph style and the
+    manual formatting of wherever the user's cursor is (a style added with
+    the cursor in a bold Title came out based on Title, 28 pt and bold), and
+    Font.Reset on a style raises 0x800A174B. Copying the base style's Font
+    and ParagraphFormat gives a style that differs from its base in nothing.
+    """
+    from ._word import resolve_style
+
+    base = (resolve_style(doc, base_style) if base_style
+            else doc.Styles.Item(_PLAIN_BASE[kind]))
+    s.BaseStyle = base
+    s.Font = base.Font.Duplicate
+    if kind == "paragraph":
+        s.ParagraphFormat = base.ParagraphFormat.Duplicate
+
+
 def _set_style_impl(style, create, base_style, next_style, font, paragraph, quick_style,
                     priority, automatically_update, no_space_between_same_style):
     doc = backend.word.document()
@@ -326,6 +349,7 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
             raise ValueError(f"A style called '{style}' already exists. Leave out "
                              "`create` to change it.")
         s = doc.Styles.Add(style, _NEW_STYLE_TYPES[create])
+        _start_plain(doc, s, create, base_style)
     else:
         if existing is None:
             resolve_style(doc, style)  # raises with the names that exist

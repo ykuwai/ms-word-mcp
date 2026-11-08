@@ -34,22 +34,31 @@ def _decode_wide_integers() -> None:
     Measured on Word 16.114: the answers to `count each paragraph` and
     `compute statistics` are typed as 32-bit integers but carry 8 bytes, and
     appscript fails on them with "unpack requires a buffer of 4 bytes".
+
+    Each codecs object copies its decoders into a table when it is made, and
+    appscript makes some at import, so the table of every one that exists is
+    patched as well as the class (measured: patching the class alone left
+    `get list gallery` failing).
     """
+    import gc
     import struct
 
-    from aem import aemcodecs
+    from aem import aemcodecs, kae
 
     original = aemcodecs.Codecs.unpacksint32
-    if getattr(original, "_word_wide", False):
-        return
+    if not getattr(original, "_word_wide", False):
+        def unpacksint32(self, desc):
+            if len(desc.data) == 8:
+                return struct.unpack("q", desc.data)[0]
+            return original(self, desc)
 
-    def unpacksint32(self, desc):
-        if len(desc.data) == 8:
-            return struct.unpack("q", desc.data)[0]
-        return original(self, desc)
-
-    unpacksint32._word_wide = True
-    aemcodecs.Codecs.unpacksint32 = unpacksint32
+        unpacksint32._word_wide = True
+        aemcodecs.Codecs.unpacksint32 = unpacksint32
+    for obj in gc.get_objects():
+        if isinstance(obj, aemcodecs.Codecs):
+            decoders = getattr(obj, "decoders", None)
+            if isinstance(decoders, dict) and kae.typeSInt32 in decoders:
+                decoders[kae.typeSInt32] = obj.unpacksint32
 
 
 def _ae_number(exc: BaseException) -> int | None:
