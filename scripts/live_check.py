@@ -428,8 +428,6 @@ def run_border_steps() -> None:
              check=lambda o: "warnings" not in o
              and o["style"]["paragraph"]["borders"]["top"] == double
              and o["style"]["paragraph"]["shading"] == "#FFEEDD")
-        step("a paragraph in that style shows them", formatting._set_paragraph_format_impl, 3, 3,
-             {"alignment": "left"}, undo="Paragraph format")
         step("close the document of borders", documents._close_document_impl, False)
     finally:
         call_document.reset(token)

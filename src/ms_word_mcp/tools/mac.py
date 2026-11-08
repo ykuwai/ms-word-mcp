@@ -1157,7 +1157,7 @@ def restart_numbering(index):
     # that changed from one identical run to the next (docs/PROBES.md).
     raise ValueError("Restarting the numbering is not available on macOS: Word for Mac's "
                      "scripting renumbers the list unpredictably, sometimes the paragraphs "
-                     "before this one too. Nothing was changed.")
+                     "before this one too. Nothing was changed. Use Word for Windows for this.")
 
 
 @mac_impl(lists._get_list_impl)
