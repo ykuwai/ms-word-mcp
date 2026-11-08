@@ -425,16 +425,40 @@ def delete_paragraphs(start, end):
 
 
 def _matches(doc, find, match_case, whole_word):
-    """(start, end) of each match, in Word positions, found in Python."""
+    """(start, end) of each match, in Word positions.
+
+    Found in the document's text in Python, then checked with Word: an
+    equation holds characters the text does not show, so after one the
+    positions in the text fall behind Word's (measured: 46 characters of
+    text, 49 in Word, with one equation; a replacement went into a heading).
+    Each match is read back at its place and looked for a little further on
+    when it is not there; one that cannot be found is left out.
+    """
     import re
 
     content = doc.text_object.content.get() or ""
+    # Word's characters the text does not show, in all: no match is further
+    # off than this.
+    hidden = max(0, doc.text_object.end_of_content.get() - _u16(content, len(content)))
     pattern = re.escape(find)
     if whole_word:
         pattern = rf"(?<!\w){pattern}(?!\w)"
     flags = 0 if match_case else re.IGNORECASE
-    return [(_u16(content, m.start()), _u16(content, m.end()))
-            for m in re.finditer(pattern, content, flags)]
+    found, drift = [], 0
+    for m in re.finditer(pattern, content, flags):
+        start = _u16(content, m.start()) + drift
+        length = _u16(m.group(0), len(m.group(0)))
+        for shift in range(0, hidden - drift + 1):
+            at = start + shift
+            try:
+                text = doc.create_range(start=at, end_=at + length).content.get() or ""
+            except Exception:  # noqa: BLE001 - half of a math character: not here
+                continue
+            if (text == m.group(0)) if match_case else (text.lower() == m.group(0).lower()):
+                found.append((at, at + length))
+                drift += shift
+                break
+    return found
 
 
 def _index_at(doc, position: int) -> int:

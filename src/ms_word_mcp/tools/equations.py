@@ -208,8 +208,11 @@ def _mac_insert_equation(equation, fmt, numbered, sequence, after, before):
     count = int(doc.count(each=k.math_object))
     target = None
     for j in range(1, count + 1):
+        # Inside this paragraph only: an equation starting at `end` is the next
+        # paragraph's, and building that one up left this one in its linear
+        # form (seen in a Sonnet run).
         rng = doc.math_objects[j].text_range
-        if start <= rng.start_of_content.get() <= end:
+        if start <= rng.start_of_content.get() < end:
             target = doc.math_objects[j]
     if target is None:
         raise RuntimeError("Word answered without error, but no equation is in paragraph "

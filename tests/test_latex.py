@@ -41,3 +41,7 @@ def test_symbols_come_from_words_own_list():
 def test_what_it_cannot_read_is_named(bad):
     with pytest.raises(LatexError):
         convert(bad)
+
+
+def test_a_control_space_is_a_space():
+    assert convert(r"x = \frac{1}{2},\ -2") == "x=1/2, -2"

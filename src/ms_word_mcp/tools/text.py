@@ -253,7 +253,13 @@ class FindReplaceInput(Input):
 
 
 def _find_all(doc, find, match_case, whole_word, wildcards, limit=500):
-    """(start, end, paragraph index, matched text) of each match, in order."""
+    """(start, end, paragraph index, matched text) of each match, in order.
+
+    Outside wildcard searches Word reads ^ as the start of a special code
+    (^p, ^t, ^2...), so a caret is doubled to find itself: "x^2" finds x^2.
+    """
+    if not wildcards:
+        find = find.replace("^", "^^")
     rng = doc.Content
     f = rng.Find
     f.ClearFormatting()

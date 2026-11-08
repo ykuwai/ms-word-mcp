@@ -172,10 +172,13 @@ def _mac_get_page_image(page, paragraph_index):
     page = int(page or 1)
     if page > int(total):
         raise ValueError(f"There is no page {page}: the document has {total} pages.")
-    folder = os.path.expanduser("~/Library/Containers/com.microsoft.Word/Data/Documents")
+    folder = os.environ.get("WORD_MAC_FILES_DIR") or os.path.expanduser(
+        "~/Library/Containers/com.microsoft.Word/Data/Documents")
     pdf = os.path.join(folder, f"ms-word-mcp-page-{os.getpid()}.pdf")
-    # Word for Mac is sandboxed and writes here without asking; saving as PDF
-    # does not change the document's own file (measured on the reference branch).
+    # Word for Mac is sandboxed and writes in its own folder without asking;
+    # WORD_MAC_FILES_DIR names another folder Word has been allowed into, so
+    # the server does not read Word's container. Saving as PDF does not change
+    # the document's own file (measured on the reference branch).
     doc.save_as(file_name=pdf, file_format=k.format_PDF)
     try:
         url = NSURL.fileURLWithPath_(pdf)

@@ -89,6 +89,7 @@ Other clients (Claude Desktop, Cursor, `.mcp.json`):
 | Variable | Default | What it does |
 |---|---|---|
 | `WORD_TOOL_MODE` | `catalog` | `catalog` lists three tools that reach the rest; `full` lists every tool. |
+| `WORD_MAC_FILES_DIR` | Word's own folder | macOS: where Word writes the PDF a page picture is drawn from. Another folder works once Word has been allowed into it; then the server does not read Word's container, and macOS does not ask about it. |
 | `WORD_FOLLOW_EDITS` | `on` | Scroll the document's window to each change. With a second window open on the document (View > New Window), the last one follows and the first stays where you are. |
 
 ## On macOS

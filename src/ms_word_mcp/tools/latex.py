@@ -177,6 +177,8 @@ class _Parser:
 
     def command(self, name: str) -> str:
         table = symbols()
+        if name == " ":
+            return " "  # "\ ", a space in math
         if name == "frac" or name == "dfrac" or name == "tfrac":
             num, den = self.argument(), self.argument()
             return f"{_group(num)}/{_group(den)}"

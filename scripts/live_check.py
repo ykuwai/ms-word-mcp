@@ -45,10 +45,12 @@ def step(label, impl, *args, undo=None, check=lambda out: "error" not in out):
 
 def main() -> int:
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    # Word for Mac is sandboxed: it writes to its own container without asking,
-    # and anywhere else only after the user grants access in a dialog.
-    folder = (Path.home() / "Library/Containers/com.microsoft.Word/Data/Documents"
-              if sys.platform == "darwin" else Path(tempfile.gettempdir()))
+    # Inside the repository (.word-test/, ignored by git), so nothing outside
+    # the project is read or written. Word for Mac, being sandboxed, asks once
+    # to be allowed into the folder. The pictures of pages go there too.
+    folder = Path(__file__).resolve().parent.parent / ".word-test"
+    folder.mkdir(exist_ok=True)
+    os.environ.setdefault("WORD_MAC_FILES_DIR", str(folder))
     path = str(folder / f"ms-word-mcp-live-{stamp}.docx")
     backend.word.start()
     try:
@@ -220,6 +222,14 @@ def run_steps(path: str) -> None:
          check=lambda o: o.get("updated") == 2)
     step("update every field", fields._update_fields_impl, "all", None, None,
          undo="Update fields", check=lambda o: o.get("updated", 0) >= 6)
+    step("text with a caret after the equations", text._insert_paragraphs_impl,
+         [{"text": "Then x^2 grows.", "style": None}], None, None,
+         undo="Insert paragraphs", check=lambda o: "error" not in o)
+    step("replace text that follows equations", text._find_replace_impl, "x^2",
+         "x squared", True, False, False, undo="Replace",
+         check=lambda o: o.get("replaced") == 1 and "warnings" not in o)
+    step("the replacement landed where it was found", text._get_outline_impl,
+         check=lambda o: all("squared" not in h["text"] for h in o["headings"]))
     step("picture of page 1", screen._get_page_image_impl, 1, None,
          check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)
     step("picture of the page a paragraph is on", screen._get_page_image_impl, None, 5,

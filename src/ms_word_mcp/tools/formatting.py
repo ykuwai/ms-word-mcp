@@ -44,7 +44,9 @@ def _target_ranges(doc, start: int, end: int | None, match: str | None):
     rng = doc.Range(whole.Start, whole.End)
     f = rng.Find
     f.ClearFormatting()
-    while f.Execute(FindText=match, MatchCase=True, Forward=True, Wrap=WD_FIND_STOP,
+    # A caret is doubled to find itself (Word reads ^ as a special code).
+    while f.Execute(FindText=match.replace("^", "^^"), MatchCase=True, Forward=True,
+                    Wrap=WD_FIND_STOP,
                     Format=False):
         if rng.End > whole.End:
             break
