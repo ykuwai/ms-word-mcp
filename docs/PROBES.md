@@ -122,6 +122,16 @@ Measured with `scripts/probes/mac_bulk_reads.py` and
 | word_get_paragraphs, 200 of 1,000 paragraphs (`scripts/probes/paragraph_read_speed.py`) | 8.7 s and 12.9 s; with `detail` 19.8 s and 22.0 s | 11.9 s and 11.3 s; with `detail` 55.1 s and 55.3 s, close to the 69 s a call may run, so a read stops itself after 40 s |
 | word_insert_paragraphs, 1,000 paragraphs | 48.6 s, a style set and read back a paragraph at a time; 4.5 s by runs of a style, read back in one call | 57 s the same way; 6.5 s with a style set on each run of paragraphs that share it and the text read back in one call |
 
+## Paragraph borders and background color (Word for Mac 16)
+
+| What | Measured |
+|---|---|
+| `get border` of a paragraph or a style | Works: line style, line width and color can be read and set |
+| `get border` of a paragraph format | Answers a reference, and every read or write of it fails with -1728 |
+| Color | 16-bit channels, as for fonts: `[200, 220, 255]` is black, `[51400, 56540, 65535]` is #C8DCFF |
+| `shading` of a paragraph, its format, its text, or a style | All work and agree |
+| A background taken off | `background pattern color index` set to `no highlight`; the color then reads `[0, 0, 0]`, so the index is what tells |
+
 ## Numbered headings (Word 16, both platforms)
 
 `scripts/probes/numbered_headings.py`: `word_apply_list` on the first heading

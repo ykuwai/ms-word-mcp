@@ -260,6 +260,7 @@ def run_steps(path: str) -> None:
     run_picture_and_page_steps(Path(path).parent)
     run_review_steps()
     run_heading_number_steps()
+    run_border_steps()
     step("picture of page 1", screen._get_page_image_impl, 1, None,
          check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)
     step("picture of the page a paragraph is on", screen._get_page_image_impl, None, 5,
@@ -372,6 +373,46 @@ def run_heading_number_steps() -> None:
         finally:
             text.READ_SECONDS = limit
         step("close the document of numbered headings", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_border_steps() -> None:
+    """Paragraph borders and background colors, directly and through a style."""
+    other = step("a document for borders", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("three paragraphs", text._insert_paragraphs_impl,
+                    [{"text": "ruled", "style": None}, {"text": "plain", "style": None},
+                     {"text": "styled", "style": "Heading 1"}], None, None)
+        if "error" in made:
+            return
+        rule = {"style": "single", "width": 1.5, "color": "#1F4E79"}
+        step("a rule under a paragraph, and a background", formatting._set_paragraph_format_impl,
+             1, 1, {"borders": {"bottom": rule}, "shading": "#DDEEFF"}, undo="Paragraph format",
+             check=lambda o: "warnings" not in o and o["paragraphs"][0]["borders"]["bottom"] == rule
+             and o["paragraphs"][0]["shading"] == "#DDEEFF")
+        step("the next paragraph is untouched", formatting._set_paragraph_format_impl, 2, 2,
+             {"borders": {"bottom": {"style": "none"}}, "shading": "none"}, undo="Paragraph format",
+             check=lambda o: "warnings" not in o and o["paragraphs"][0]["borders"] == {}
+             and o["paragraphs"][0]["shading"] is None)
+        step("a border and a background come off", formatting._set_paragraph_format_impl, 1, 1,
+             {"borders": {"bottom": {"style": "none"}}, "shading": "none"}, undo="Paragraph format",
+             check=lambda o: "warnings" not in o and o["paragraphs"][0]["borders"] == {}
+             and o["paragraphs"][0]["shading"] is None)
+        double = {"style": "double", "width": 0.75, "color": "#C00000"}
+        step("a style holds a border and a background", formatting._set_style_impl,
+             "Heading 1", False, None, None, None,
+             {"borders": {"top": double}, "shading": "#FFEEDD"}, None, None, None, None,
+             undo="Set style",
+             check=lambda o: "warnings" not in o
+             and o["style"]["paragraph"]["borders"]["top"] == double
+             and o["style"]["paragraph"]["shading"] == "#FFEEDD")
+        step("a paragraph in that style shows them", formatting._set_paragraph_format_impl, 3, 3,
+             {"alignment": "left"}, undo="Paragraph format")
+        step("close the document of borders", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
 

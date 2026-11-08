@@ -32,7 +32,8 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
 - Styles: read a style whole (word_get_style) and define one (word_set_style):
   type, base and next style, gallery settings, and every character and
   paragraph property of tools/_props.py, which word_format_text and
-  word_set_paragraph_format share. On the Mac a style can be changed but not
+  word_set_paragraph_format share, paragraph borders and background color
+  among them. On the Mac a style can be changed but not
   created.
 - Lists: bulleted and numbered lists with each level's bullet character or
   number format (full-width digits, circled numbers, kanji, aiueo, iroha...),
@@ -84,8 +85,8 @@ First, fixes to what is there, for long documents (PROBES.md, Reading):
 
 Then, ordered roughly by what the owner stressed.
 
-1. **Styles, the rest.** Borders and shading, tab stops, list linkage, the
-   language of a style; creating a style on the Mac (through VBA).
+1. **Styles, the rest.** Tab stops on the Mac, list linkage, the language
+   of a style; creating a style on the Mac (through VBA).
 2. **Lists, the rest.** Restarting numbering in the middle of a list,
    picture bullets.
 3. **Equations, the rest.** Inline equations inside a paragraph,

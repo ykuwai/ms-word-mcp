@@ -60,6 +60,45 @@ PARA_KEYS = ("Alignment", "LineSpacingRule", "LineSpacing", "SpaceBefore", "Spac
 LATIN_ONLY_FONTS = {"Segoe UI", "Arial", "Calibri", "Helvetica Neue"}
 
 
+class FakeBorder:
+    """One side's line, held flat in each paragraph mark or style it covers."""
+
+    DEFAULTS = {"LineStyle": 0, "LineWidth": 8, "Color": -16777216}
+
+    def __init__(self, stores, side):
+        object.__setattr__(self, "_stores", stores)
+        object.__setattr__(self, "_side", side)
+
+    def __getattr__(self, name):
+        return self._stores[0].get(f"border {self._side} {name}", self.DEFAULTS[name])
+
+    def __setattr__(self, name, value):
+        for store in self._stores:
+            store[f"border {self._side} {name}"] = value
+
+
+class FakeBorders:
+    def __init__(self, stores):
+        self._stores = stores
+
+    def Item(self, side):
+        return FakeBorder(self._stores, side)
+
+
+class FakeShading:
+    def __init__(self, stores):
+        object.__setattr__(self, "_stores", stores)
+
+    @property
+    def BackgroundPatternColor(self):
+        return self._stores[0].get("shading", -16777216)
+
+    @BackgroundPatternColor.setter
+    def BackgroundPatternColor(self, value):
+        for store in self._stores:
+            store["shading"] = value
+
+
 class AttrProxy:
     """A Font or ParagraphFormat over one dict, as a style holds them."""
 
@@ -70,6 +109,10 @@ class AttrProxy:
     def __getattr__(self, name):
         if name == "Duplicate":
             return AttrProxy(dict(self._data), self._keys)
+        if name == "Borders":
+            return FakeBorders([self._data])
+        if name == "Shading":
+            return FakeShading([self._data])
         if name not in self._keys:
             raise AttributeError(name)
         return self._data[name]
@@ -208,6 +251,14 @@ class FakeParagraphFormat:
 
     def _marks(self):
         return [self._rng.doc.attrs[p.Range.End - 1] for p in self._rng.paragraph_list()]
+
+    @property
+    def Borders(self):
+        return FakeBorders(self._marks())
+
+    @property
+    def Shading(self):
+        return FakeShading(self._marks())
 
     def __getattr__(self, name):
         if name not in PARA_KEYS:

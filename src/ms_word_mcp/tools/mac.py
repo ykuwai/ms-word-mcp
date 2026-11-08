@@ -659,12 +659,18 @@ def set_paragraph_format(start, end, paragraph):
         refused.update(P.mac_apply(fmt, P.PARAGRAPH_PROPS, spec))
         P.mac_apply_line_spacing(fmt, spec.get("line_spacing_rule"),
                                  spec.get("line_spacing"))
+        refused.update(P.mac_apply_borders(doc.paragraphs[i], spec.get("borders")))
+        P.mac_apply_shading(doc.paragraphs[i], spec.get("shading"))
     out, warnings = [], []
     for i in range(start, min(end, start + 49) + 1):
         fmt = doc.paragraphs[i].paragraph_format
         got = {**P.mac_read(fmt, P.PARAGRAPH_PROPS), **P.mac_read_line_spacing(fmt)}
+        if "borders" in spec:
+            got["borders"] = P.mac_read_borders(doc.paragraphs[i])
+        if "shading" in spec:
+            got["shading"] = P.mac_read_shading(doc.paragraphs[i])
         if not warnings:
-            warnings = P.mismatches(spec, got, refused)
+            warnings = P.mismatches(spec, got, refused) + P.border_mismatches(spec, got)
         info = _info(doc, i)
         out.append({"index": i, "text": info["text"][:80], "style": info["style"],
                     **formatting.paragraph_readback(got, spec)})
@@ -856,6 +862,11 @@ def _describe_mac_style(s) -> dict:
         fmt = s.paragraph_format
         out["paragraph"] = {**P.mac_read(fmt, P.PARAGRAPH_PROPS),
                             **P.mac_read_line_spacing(fmt)}
+        borders, shading = P.mac_read_borders(s), P.mac_read_shading(s)
+        if borders:
+            out["paragraph"]["borders"] = borders
+        if shading:
+            out["paragraph"]["shading"] = shading
     return out
 
 
@@ -925,6 +936,8 @@ def set_style(style, create, base_style, next_style, font, paragraph, quick_styl
         para_refused = P.mac_apply(fmt, P.PARAGRAPH_PROPS, para_spec)
         P.mac_apply_line_spacing(fmt, para_spec.get("line_spacing_rule"),
                                  para_spec.get("line_spacing"))
+        para_refused.update(P.mac_apply_borders(s, para_spec.get("borders")))
+        P.mac_apply_shading(s, para_spec.get("shading"))
 
     described = _describe_mac_style(s)
     warnings = [f"{key} was refused: {why}" for key, why in refused.items()]
@@ -939,6 +952,7 @@ def set_style(style, create, base_style, next_style, font, paragraph, quick_styl
             warnings.append(f"{key} reads back as {described.get(key)!r}, not {value!r}.")
     warnings += P.mismatches(font_spec, described.get("font", {}), font_refused)
     warnings += P.mismatches(para_spec, described.get("paragraph", {}), para_refused)
+    warnings += P.border_mismatches(para_spec, described.get("paragraph", {}))
     if "tab_stops" in para_spec:
         warnings.append(TABS_ON_MAC)
     out = {"success": True, "created": bool(create), "style": described}
