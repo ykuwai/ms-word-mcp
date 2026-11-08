@@ -17,24 +17,32 @@ def test_rows_of_merged_cells_hold_fewer_cells():
     assert tables._rows_from_tokens(text, [1, 2]) == [["Total"], ["a", "b"]]
 
 
-def _unheaded(heading_rows, after_row, n, total):
+def _settled(heading_rows, after_row, n, total, bold_rows=()):
     done = []
-    tables._unhead(lambda r: r in heading_rows, done.append, after_row, after_row + 1, n,
-                   total)
+    tables._settle_new_rows(lambda r: r in heading_rows, lambda r: r in bold_rows,
+                            lambda r, h, b: done.append((r, h, b)), after_row,
+                            after_row + 1, n, total)
     return done
 
 
-def test_rows_added_under_the_headings_are_data():
-    assert _unheaded({1}, 1, 2, 3) == [2, 3]
+def test_rows_added_under_the_headings_are_plain_data():
+    assert _settled({1}, 1, 2, 3) == [(2, False, False), (3, False, False)]
 
 
-def test_rows_added_inside_or_above_the_headings_stay_headings():
-    assert _unheaded({1, 2, 3}, 1, 1, 4) == []
-    assert _unheaded({1, 2}, 0, 1, 3) == []
+def test_rows_added_inside_or_above_the_headings_stay_as_they_came():
+    assert _settled({1, 2, 3}, 1, 1, 4) == []
+    assert _settled({1, 2}, 0, 1, 3) == []
 
 
-def test_rows_added_among_data_are_left_alone():
-    assert _unheaded({1}, 3, 1, 5) == []
+def test_rows_added_among_data_take_the_bold_of_the_row_above():
+    # Added before a bold total row (row 5), after a plain row 4.
+    assert _settled({1}, 4, 1, 6, bold_rows={6}) == [(5, None, False)]
+    assert _settled({1}, 3, 1, 5, bold_rows={3}) == [(4, None, True)]
+
+
+def test_columns_wider_than_the_text_warn():
+    assert tables._width_warning([200, 240], 424.0)
+    assert tables._width_warning([200, 224], 424.0) == []
 
 
 def test_insert_checks_its_shape():

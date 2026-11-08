@@ -186,8 +186,11 @@ def run_steps(path: str) -> None:
          undo="Replace", check=lambda o: o.get("replaced") == 1)
     step("delete a paragraph", text._delete_paragraphs_impl, 5, None,
          undo="Delete paragraphs", check=lambda o: o.get("paragraphs") == 4)
-    step("styles in use", formatting._list_styles_impl, True,
+    step("styles in use", formatting._list_styles_impl, True, "text",
          check=lambda o: len(o.get("styles", [])) >= 3)
+    step("every table style", formatting._list_styles_impl, False, "table",
+         check=lambda o: len(o.get("styles", [])) >= 20
+         and all(s["type"] == "table" for s in o["styles"]))
     step("document info", text._get_document_info_impl,
          check=lambda o: o.get("paragraphs") == 4)
     # Equations, fields and tables of contents last: they add paragraphs. The
@@ -321,6 +324,11 @@ def run_table_steps() -> None:
     step("widths, centred, Medium Shading 1 Accent 1", tables._set_table_impl, n,
          "Medium Shading 1 Accent 1", None, None, [120.0, 60.0, 60.0], None, "center",
          undo="Change table", check=lambda o: o["style"] and o["header_rows"] == 1)
+    step("columns wider than the text warn", tables._set_table_impl, n, None, None, None,
+         [300.0, 120.0, 120.0], None, None, undo="Change table",
+         check=lambda o: "right margin" in " ".join(o.get("warnings", [])))
+    step("and back", tables._set_table_impl, n, None, None, None, [120.0, 60.0, 60.0],
+         None, None, undo="Change table", check=lambda o: "warnings" not in o)
     step("merge the last row's first two cells", tables._merge_cells_impl, n, 4, 1, 4, 2,
          "Total", undo="Merge table cells",
          check=lambda o: o["merged_cell"] == "Total" and len(o["cells"][3]) == 2)

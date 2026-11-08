@@ -45,10 +45,13 @@ class TableLook(Input):
     """What a table looks like as a whole: shared by inserting and changing one."""
 
     style: str | None = Field(None, max_length=255, description=(
-        "A table style: a built-in English name that has a constant (Light Grid, Light "
-        "List, Light Shading, Medium Shading 1, Medium Grid 1, Colorful List, Medium "
-        "Shading 1 Accent 1...), or any table style's name as word_list_styles gives "
-        "it (\"Grid Table 4 - Accent 1\" and the like go by their local name)."))
+        "A table style. These English names work in every language of Word: Light "
+        "Shading, Light List, Light Grid, Medium Shading 1, Medium Shading 2, Medium "
+        "List 1, Medium List 2, Medium Grid 1-3, Dark List, Colorful Shading, Colorful "
+        "List, Colorful Grid, and Light Shading/List/Grid Accent 1, Medium Shading 1 "
+        "Accent 1... Any other table style (the newer \"Grid Table\" and \"List "
+        "Table\" ones too) goes by the name in this Word's language, as "
+        "word_list_styles gives it with kind \"table\" and in_use_only false."))
     header_rows: int | None = Field(None, ge=0, le=10, description=(
         "How many rows at the top are headings: repeated at the top of each page, "
         "and shown as headings by the style."))
@@ -158,7 +161,8 @@ class InsertRowsInput(TableInput):
     after_row: int | None = Field(None, ge=0, description=(
         "Put the rows after this row (0 = above the first). Default: at the bottom."))
     count: int | None = Field(None, ge=1, le=500, description=(
-        "How many empty rows. Not needed with `values`."))
+        "How many empty rows. Not needed with `values`. New rows take the bold of "
+        "the row above them (not of a heading row)."))
     values: list[list[str]] | None = Field(None, min_length=1, max_length=500, description=(
         "The new rows' cells, row by row."))
 
@@ -254,25 +258,42 @@ def _block(n_rows, n_cols, row, column, values):
                          f"{column + widest - 1}.")
 
 
-def _unhead(is_heading, unhead, after_row, first, n, total) -> None:
-    """Make rows added below the heading rows plain rows.
+def _settle_new_rows(is_heading, bold_of, settle, after_row, first, n, total) -> None:
+    """Make added rows look like the row above them.
 
-    A new row copies the row it is added from, heading format and bold
-    included; rows added under the headings are data, so they lose both.
-    Rows added inside the heading block, or above it, stay headings.
+    A new row copies a neighbouring row, heading format and bold included,
+    and which one differs (on the Mac rows added before a bold total row
+    came out bold, in a trial). Rows added under the headings are data:
+    not headings, not bold. Rows added among data take the bold of the row
+    above. Rows added inside the heading block, or above it, are left as
+    they came.
     """
     if after_row == 0:
         return
     try:
-        below = first + n
-        if below <= total and is_heading(below):
-            return
-        if not is_heading(after_row):
-            return
+        if is_heading(after_row):
+            below = first + n
+            if below <= total and is_heading(below):
+                return
+            heading, bold = False, False
+        else:
+            heading, bold = None, bold_of(after_row)
     except Exception:  # noqa: BLE001 - rows out of reach: the rows were added anyway
         return
     for r in range(first, first + n):
-        unhead(r)
+        settle(r, heading, bold)
+
+
+def _width_warning(column_widths, text_width) -> list[str]:
+    """A warning when the columns add up to more than the text is wide."""
+    if not column_widths or not text_width:
+        return []
+    total = sum(column_widths)
+    if total <= text_width + 1:
+        return []
+    return [f"The columns add up to {total:g} pt and the text is {text_width:g} pt wide, "
+            "so the table runs into the right margin. Narrow the columns with "
+            "word_set_table."]
 
 
 def _check_cells(n_rows, n_cols, to_row, to_column):
@@ -375,13 +396,28 @@ def _number_of(doc, tb) -> int:
     return doc.Range(0, tb.Range.Start + 1).Tables.Count
 
 
-def _set_style(doc, tb, name: str) -> list[str]:
-    style = resolve_style(doc, name)
+UNKNOWN_TABLE_STYLE = (
+    "No table style called '{name}' in this document. Use a built-in name that has a "
+    "constant (Light Grid, Light List, Medium Shading 1 Accent 1...), or a name "
+    "word_list_styles gives with kind \"table\" and in_use_only false (in the "
+    "language of this Word).")
+
+
+def _table_style(doc, name: str):
+    """What to set Table.Style to, checked before anything changes."""
+    try:
+        style = resolve_style(doc, name)
+    except ValueError:
+        raise ValueError(UNKNOWN_TABLE_STYLE.format(name=name)) from None
     if style.Type != WD_STYLE_TYPE_TABLE:
-        raise ValueError(f"'{name}' is not a table style. word_list_styles lists the "
-                         "table styles (type \"table\").")
+        raise ValueError(f"'{name}' is not a table style. word_list_styles with kind "
+                         "\"table\" lists the table styles.")
     key = " ".join(name.lower().split())
-    tb.Style = BUILTIN_STYLES[key] if key in BUILTIN_STYLES else style.NameLocal
+    return BUILTIN_STYLES[key] if key in BUILTIN_STYLES else style.NameLocal
+
+
+def _set_style(doc, tb, name: str) -> list[str]:
+    tb.Style = _table_style(doc, name)
     return []
 
 
@@ -417,6 +453,10 @@ def _apply_look(doc, tb, style, header_rows, borders, column_widths, autofit,
             col.Width = width
     if alignment is not None:
         tb.Rows.Alignment = ROW_ALIGNMENTS[alignment]
+    if column_widths is not None:
+        setup = tb.Range.Sections.Item(1).PageSetup
+        warnings += _width_warning(column_widths, round(
+            setup.PageWidth - setup.LeftMargin - setup.RightMargin - setup.Gutter, 1))
     return warnings
 
 
@@ -426,6 +466,8 @@ def _insert_table_impl(rows, after, before, header_rows, style, borders, column_
 
     doc = backend.word.document()
     n_rows, n_cols = len(rows), max(len(r) for r in rows)
+    if style is not None:
+        _table_style(doc, style)  # an unknown style refuses before anything changes
     count = doc.Paragraphs.Count
     at = _place(count, after, before)
     if at <= count and paragraph(doc, at).Range.Information(WD_WITHIN_TABLE):
@@ -619,10 +661,15 @@ def _insert_rows_impl(table, after_row, count, values):
                 tb.Rows.Add(tb.Rows.Item(after_row + i + 1))
             else:
                 tb.Rows.Add()
-        _unhead(lambda r: tb.Rows.Item(r).HeadingFormat in (True, -1),
-                lambda r: (setattr(tb.Rows.Item(r), "HeadingFormat", False),
-                           setattr(tb.Rows.Item(r).Range.Font, "Bold", False)),
-                after_row, first, n, tb.Rows.Count)
+        def settle(r, heading, bold):
+            if heading is not None:
+                tb.Rows.Item(r).HeadingFormat = heading
+            if bold is not None:
+                tb.Rows.Item(r).Range.Font.Bold = bold
+
+        _settle_new_rows(lambda r: tb.Rows.Item(r).HeadingFormat in (True, -1),
+                         lambda r: flag(tb.Rows.Item(r).Range.Font.Bold),
+                         settle, after_row, first, n, tb.Rows.Count)
     for r, line in enumerate(values or [], start=first):
         for c, value in enumerate(line, start=1):
             tb.Cell(r, c).Range.Text = _text(value)
@@ -842,13 +889,10 @@ def _mac_table_style(doc, name: str):
     try:
         kind = style.style_type.get()
     except Exception:  # noqa: BLE001
-        raise ValueError(
-            f"No table style called '{name}' in this document. Use a built-in name that "
-            "has a constant (Light Grid, Medium Shading 1 Accent 1...), or a table "
-            "style's name as word_list_styles gives it.") from None
+        raise ValueError(UNKNOWN_TABLE_STYLE.format(name=name)) from None
     if kind != k.style_type_table:
-        raise ValueError(f"'{name}' is not a table style. word_list_styles lists the "
-                         "table styles (type \"table\").")
+        raise ValueError(f"'{name}' is not a table style. word_list_styles with kind "
+                         "\"table\" lists the table styles.")
     return style
 
 
@@ -866,7 +910,7 @@ def _mac_set_style(doc, tb, name: str) -> None:
 
 
 def _mac_apply_look(doc, tb, style, header_rows, borders, column_widths, autofit,
-                    alignment) -> None:
+                    alignment) -> list[str]:
     from appscript import k
 
     if style is not None:
@@ -902,6 +946,12 @@ def _mac_apply_look(doc, tb, style, header_rows, borders, column_widths, autofit
             col.width.set(width)
     if alignment is not None:
         tb.row_options.alignment.set(getattr(k, "align_row_" + alignment))
+    if column_widths is None:
+        return []
+    setup = doc.page_setup
+    return _width_warning(column_widths, round(
+        setup.page_width.get() - setup.left_margin.get() - setup.right_margin.get()
+        - (setup.gutter.get() or 0), 1))
 
 
 def _mac_cell(tb, r, c):
@@ -982,7 +1032,8 @@ def _mac_insert_table(rows, after, before, header_rows, style, borders, column_w
         borders = True
     if autofit is None:
         autofit = "fixed" if column_widths else "window"
-    _mac_apply_look(doc, tb, style, header_rows, borders, column_widths, autofit, alignment)
+    warnings = _mac_apply_look(doc, tb, style, header_rows, borders, column_widths, autofit,
+                               alignment)
     if header_rows and style is None:
         for r in range(1, header_rows + 1):
             tb.rows[r].text_object.bold.set(True)
@@ -992,8 +1043,11 @@ def _mac_insert_table(rows, after, before, header_rows, style, borders, column_w
                 _mac_cell(tb, r, c).text_object.paragraph_format.alignment.set(
                     getattr(k, m.ALIGN_K[how]))
     m._scroll(doc, tb.text_object.start_of_content.get(), tb.text_object.end_of_content.get())
-    return {"success": True, **_mac_describe(doc, tb, number),
-            "document_paragraphs": m._count(doc)}
+    result = {"success": True, **_mac_describe(doc, tb, number),
+              "document_paragraphs": m._count(doc)}
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 def _mac_drop_paragraph_after(doc, tb) -> None:
@@ -1046,9 +1100,13 @@ def _mac_set_table(table, style, header_rows, borders, column_widths, autofit, a
 
     doc = backend.word.document()
     tb = _mac_table(doc, table)
-    _mac_apply_look(doc, tb, style, header_rows, borders, column_widths, autofit, alignment)
+    warnings = _mac_apply_look(doc, tb, style, header_rows, borders, column_widths, autofit,
+                               alignment)
     m._scroll(doc, tb.text_object.start_of_content.get(), tb.text_object.end_of_content.get())
-    return {"success": True, **_mac_describe(doc, tb, table, cells=False)}
+    result = {"success": True, **_mac_describe(doc, tb, table, cells=False)}
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 @mac_impl(_set_cells_impl)
@@ -1165,10 +1223,18 @@ def _mac_insert_rows(table, after_row, count, values):
                 doc.make(new=k.row, at=tb.rows[1].before)
             else:
                 doc.make(new=k.row, at=tb.rows[after_row + i].after)
-        _unhead(lambda r: tb.rows[r].heading_format.get() is True,
-                lambda r: (tb.rows[r].heading_format.set(False),
-                           tb.rows[r].text_object.bold.set(False)),
-                after_row, first, n, _mac_size(tb)[0])
+        def settle(r, heading, bold):
+            if heading is not None:
+                tb.rows[r].heading_format.set(heading)
+            if bold is not None:
+                tb.rows[r].text_object.bold.set(bold)
+
+        def bold_of(r):
+            value = tb.rows[r].text_object.bold.get()
+            return value if isinstance(value, bool) else None
+
+        _settle_new_rows(lambda r: tb.rows[r].heading_format.get() is True, bold_of,
+                         settle, after_row, first, n, _mac_size(tb)[0])
     for r, line in enumerate(values or [], start=first):
         for c, value in enumerate(line, start=1):
             _mac_cell(tb, r, c).text_object.content.set(_text(value))
@@ -1265,7 +1331,9 @@ def register(mcp) -> None:
         """Insert a table filled with the given cells, after or before a
         paragraph (default: at the end). It spans the text width with grid
         lines and a bold heading row unless a style, widths or autofit say
-        otherwise. Answers its number, its cells and the paragraphs it covers."""
+        otherwise. Answers its number, its cells and the paragraphs it covers.
+        Tables are numbered in document order, so a table inserted above
+        another renumbers it: take the number from each answer."""
         p = params
         return await call(_insert_table_impl, p.rows, p.after, p.before, p.header_rows,
                           p.style, p.borders, p.column_widths, p.autofit, p.alignment,

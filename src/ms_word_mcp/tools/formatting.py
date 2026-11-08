@@ -192,6 +192,10 @@ class ListStylesInput(Input):
     in_use_only: bool = Field(True, description=(
         "Only the styles the document uses, or has changed. False lists every "
         "style, which is slow."))
+    kind: Literal["text", "table"] = Field("text", description=(
+        "text: paragraph and character styles. table: table styles (with "
+        "in_use_only false, every one Word has), by the names word_insert_table "
+        "and word_set_table take."))
 
 
 # WdStyleType: 1 to 4 are documented for VBA; the interop reference adds 5
@@ -210,7 +214,7 @@ def _linked(style) -> bool:
         return False
 
 
-def _list_styles_impl(in_use_only):
+def _list_styles_impl(in_use_only, kind_wanted="text"):
     doc = backend.word.document()
     styles = doc.Styles
     out = []
@@ -219,6 +223,10 @@ def _list_styles_impl(in_use_only):
         if in_use_only and not s.InUse:
             continue
         kind = _STYLE_TYPES.get(s.Type, s.Type)
+        if kind_wanted == "table":
+            if kind == "table":
+                out.append({"name": s.NameLocal, "type": kind, "builtin": bool(s.BuiltIn)})
+            continue
         if kind in ("table", "list"):
             continue
         entry = {"name": s.NameLocal, "type": kind, "builtin": bool(s.BuiltIn)}
@@ -488,8 +496,9 @@ def register(mcp) -> None:
 
     @mcp.tool(name="word_list_styles", annotations=annotations("List styles", READ_ONLY))
     async def word_list_styles(params: ListStylesInput) -> str:
-        """The document's paragraph and character styles, with their fonts."""
-        return await call(_list_styles_impl, params.in_use_only)
+        """The document's paragraph and character styles with their fonts, or
+        (kind "table") its table styles."""
+        return await call(_list_styles_impl, params.in_use_only, params.kind)
 
     @mcp.tool(name="word_get_style", annotations=annotations("Read a style", READ_ONLY))
     async def word_get_style(params: GetStyleInput) -> str:

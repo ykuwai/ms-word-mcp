@@ -677,7 +677,7 @@ STYLE_TYPES = {"style_type_paragraph": "paragraph", "style_type_character": "cha
 
 
 @mac_impl(formatting._list_styles_impl)
-def list_styles(in_use_only):
+def list_styles(in_use_only, kind_wanted="text"):
     doc = backend.word.document()
     count = int(doc.count(each=_k().Word_style))
     out = []
@@ -687,6 +687,11 @@ def list_styles(in_use_only):
             continue
         raw = _name(s.style_type.get())
         kind = STYLE_TYPES.get(raw, raw)
+        if kind_wanted == "table":
+            if kind == "table":
+                out.append({"name": s.name_local.get(), "type": kind,
+                            "builtin": bool(s.built_in.get())})
+            continue
         if kind in ("table", "list"):
             continue
         entry = {"name": s.name_local.get(), "type": kind, "builtin": bool(s.built_in.get())}
