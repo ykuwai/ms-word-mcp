@@ -363,7 +363,10 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
         raise ValueError(f"'{style}' is a {kind} style, which has no paragraph formatting.")
 
     refused = {}
-    if base_style is not None:
+    # A style just created already has its base (_start_plain); setting it
+    # again is left out, since that is the one step the measured clean path
+    # (scripts/probes/windows_style_steps.py) does not take.
+    if base_style is not None and not create:
         try:
             s.BaseStyle = resolve_style(doc, base_style)
         except Exception as exc:  # noqa: BLE001
