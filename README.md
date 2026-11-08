@@ -89,7 +89,7 @@ Other clients (Claude Desktop, Cursor, `.mcp.json`):
 | Variable | Default | What it does |
 |---|---|---|
 | `WORD_TOOL_MODE` | `catalog` | `catalog` lists three tools that reach the rest; `full` lists every tool. |
-| `WORD_MAC_FILES_DIR` | Word's own folder | macOS: where Word writes the PDF a page picture is drawn from. Another folder works once Word has been allowed into it; then the server does not read Word's container, and macOS does not ask about it. |
+| `WORD_MAC_FILES_DIR` | the document's folder | macOS: where Word writes the PDF a page picture is drawn from, for a moment. By default the document's own folder (Word already has access there), or Word's own folder for a document never saved. |
 | `WORD_FOLLOW_EDITS` | `on` | Scroll the document's window to each change. With a second window open on the document (View > New Window), the last one follows and the first stays where you are. |
 
 ## On macOS
@@ -99,10 +99,11 @@ Other clients (Claude Desktop, Cursor, `.mcp.json`):
 - Word for Mac is sandboxed: it writes without asking only inside
   `~/Library/Containers/com.microsoft.Word/Data/Documents`; saving elsewhere
   may make Word ask for access.
-- `word_get_page_image` has Word save a PDF in its own folder for a moment and
-  draws the page from it; the first time, macOS may ask whether the app the
-  server runs in may read Word's data. On Windows the page comes from Word
-  directly. Neither captures the screen.
+- `word_get_page_image` has Word save a PDF next to the document for a moment
+  and draws the page from it. For a document never saved, the PDF goes in
+  Word's own folder, and macOS may ask once whether the app the server runs
+  in may read Word's data. On Windows the page comes from Word directly.
+  Neither captures the screen.
 - Each change is its own Undo step (Word for Mac's scripting cannot group
   them), and a style can be changed but not created. Tools say so in their
   results.

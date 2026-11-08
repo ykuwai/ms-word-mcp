@@ -153,6 +153,28 @@ def _get_page_image_impl(page, paragraph_index):
             "width": WIDTH, "height": height}
 
 
+CONTAINER = os.path.expanduser("~/Library/Containers/com.microsoft.Word/Data/Documents")
+
+
+def _mac_pdf_folder(doc) -> str:
+    """Where Word writes the PDF a page is drawn from.
+
+    WORD_MAC_FILES_DIR if set; else the document's own folder, which Word has
+    already been let into; else Word's container, which Word writes without
+    asking but which macOS may ask about when the server reads it.
+    """
+    chosen = os.environ.get("WORD_MAC_FILES_DIR")
+    if chosen:
+        return chosen
+    try:
+        full = doc.posix_full_name.get()
+    except Exception:  # noqa: BLE001
+        full = None
+    if isinstance(full, str) and os.path.isabs(full) and os.path.isdir(os.path.dirname(full)):
+        return os.path.dirname(full)
+    return CONTAINER
+
+
 @mac_impl(_get_page_image_impl)
 def _mac_get_page_image(page, paragraph_index):
     import Quartz
@@ -172,8 +194,7 @@ def _mac_get_page_image(page, paragraph_index):
     page = int(page or 1)
     if page > int(total):
         raise ValueError(f"There is no page {page}: the document has {total} pages.")
-    folder = os.environ.get("WORD_MAC_FILES_DIR") or os.path.expanduser(
-        "~/Library/Containers/com.microsoft.Word/Data/Documents")
+    folder = _mac_pdf_folder(doc)
     pdf = os.path.join(folder, f"ms-word-mcp-page-{os.getpid()}.pdf")
     # Word for Mac is sandboxed and writes in its own folder without asking;
     # WORD_MAC_FILES_DIR names another folder Word has been allowed into, so
