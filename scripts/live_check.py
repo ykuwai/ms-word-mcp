@@ -21,7 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from ms_word_mcp import backend  # noqa: E402
 from ms_word_mcp.backend import call_document  # noqa: E402
-from ms_word_mcp.tools import _common, documents, edit, equations, fields, formatting, lists, screen, text  # noqa: E402
+from ms_word_mcp.tools import (  # noqa: E402
+    _common, documents, edit, equations, fields, formatting, lists, screen, tables, text)
 
 results: list[tuple[str, bool]] = []
 
@@ -242,6 +243,7 @@ def run_steps(path: str) -> None:
          check=lambda o: o.get("replaced") == 1 and "warnings" not in o)
     step("the replacement landed where it was found", text._get_outline_impl,
          check=lambda o: all("squared" not in h["text"] for h in o["headings"]))
+    run_table_steps()
     step("picture of page 1", screen._get_page_image_impl, 1, None,
          check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)
     step("picture of the page a paragraph is on", screen._get_page_image_impl, None, 5,
@@ -250,6 +252,73 @@ def run_steps(path: str) -> None:
     pdf = os.path.splitext(path)[0] + ".pdf"
     step("export PDF", documents._save_document_as_impl, pdf, True,
          check=lambda o: o.get("bytes", 0) > 0)
+
+
+def run_table_steps() -> None:
+    t = step("table at the end, bold heading row, numbers on the right",
+             tables._insert_table_impl,
+             [["Item", "Qty", "Price"], ["Apple", "3", "1.20"], ["Pear", "10", "0.80"]],
+             None, None, 1, None, None, None, None, None, [None, "right", "right"],
+             undo="Insert table",
+             check=lambda o: (o["rows"], o["columns"], o["header_rows"]) == (3, 3, 1)
+             and o["cells"][1] == ["Apple", "3", "1.20"])
+    if "error" in t:
+        return
+    n = t["table"]
+    second = step("a table right after it stays a table of its own",
+                  tables._insert_table_impl, [["A", "B"], ["1", "2"]],
+                  t["paragraphs"]["last"], None, 0, None, None, None, None, None, None,
+                  undo="Insert table", check=lambda o: o["table"] == n + 1)
+    before = json.loads(_common.run(text._get_paragraphs_impl, 3, 3, False))
+    mid = step("a styled table before paragraph 3 leaves no empty paragraph",
+               tables._insert_table_impl, [["Key", "Value"], ["x", "1"]], None, 3, 1,
+               "Light Grid", None, [120.0, 80.0], None, "center", None,
+               undo="Insert table", check=lambda o: o["style"] and o["table"] == 1)
+    if "error" not in mid:
+        n += 1
+        after = json.loads(_common.run(text._get_paragraphs_impl,
+                                       mid["paragraphs"]["last"] + 1,
+                                       mid["paragraphs"]["last"] + 1, False))
+        results.append(("the paragraph after the table is the one it was put before",
+                         after["paragraphs"][0]["text"] == before["paragraphs"][0]["text"]))
+        print(f"{'PASS' if results[-1][1] else 'FAIL'}  {results[-1][0]}")
+        step("a table inside a cell is refused", tables._insert_table_impl, [["no"]], None,
+             mid["paragraphs"]["first"] + 1, 0, None, None, None, None, None, None,
+             undo="Insert table", check=lambda o: "inside a table" in o.get("error", ""))
+    step("write a block of cells", tables._set_cells_impl, n, 2, 2, [["4", None], ["12"]],
+         undo="Write table cells",
+         check=lambda o: o["written"] == 2 and o["cells"][0][1] == "4")
+    step("shade the heading row", tables._format_cells_impl, n, 1, 1, 1, None,
+         "#D9E2F3", None, None, None, None, "center", "center", undo="Format table cells",
+         check=lambda o: o["cells"] == 3 and o["first_cell_reads"]["shading"] == "#D9E2F3")
+    step("rows at the bottom are data, not headings", tables._insert_rows_impl, n, None,
+         None, [["Plum", "7", "0.50"], ["Fig", "2", "2.10"]], undo="Insert table rows",
+         check=lambda o: o["rows"] == 5 and o["cells"][1][0] == "Fig")
+    step("still one heading row", tables._get_table_impl, n, 1,
+         check=lambda o: o["header_rows"] == 1 and o["cells"][4][0] == "Fig")
+    step("delete a row", tables._delete_rows_impl, n, 4, None, undo="Delete table rows",
+         check=lambda o: o["rows"] == 4)
+    if backend.IS_MACOS:
+        step("adding a column is refused on the Mac", tables._insert_columns_impl, n, 1,
+             None, [["Unit", "kg", "kg", "kg"]], undo="Insert table columns",
+             check=lambda o: "cannot add a column" in o.get("error", ""))
+    else:
+        step("add a column", tables._insert_columns_impl, n, 1, None,
+             [["Unit", "kg", "kg", "kg"]], undo="Insert table columns",
+             check=lambda o: o["columns"] == 4 and o["cells"][0][1] == "Unit")
+        step("delete the column", tables._delete_columns_impl, n, 2, None,
+             undo="Delete table columns", check=lambda o: o["columns"] == 3)
+    step("widths, centred, Medium Shading 1 Accent 1", tables._set_table_impl, n,
+         "Medium Shading 1 Accent 1", None, None, [120.0, 60.0, 60.0], None, "center",
+         undo="Change table", check=lambda o: o["style"] and o["header_rows"] == 1)
+    step("merge the last row's first two cells", tables._merge_cells_impl, n, 4, 1, 4, 2,
+         "Total", undo="Merge table cells",
+         check=lambda o: o["merged_cell"] == "Total" and len(o["cells"][3]) == 2)
+    step("list the tables", tables._list_tables_impl,
+         check=lambda o: len(o["tables"]) == 3 and o["tables"][1]["first_row"][0] == "Item")
+    if "error" not in second:
+        step("delete a table", tables._delete_table_impl, n + 1, undo="Delete table",
+             check=lambda o: o["tables"] == 2)
 
 
 if __name__ == "__main__":

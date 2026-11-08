@@ -224,8 +224,9 @@ user to stop typing.
    as "Body Text", or headings, the title and the table of contents move too. Then write with `word_insert_paragraphs`,
    giving each paragraph its style. Formatting text directly
    (`word_format_text`, `word_set_paragraph_format`) is for the exceptions.
-4. Lists (`word_apply_list`), equations (`word_insert_equation`, LaTeX or
-   UnicodeMath, `numbered` for (1), (2)...), fields and tables of contents.
+4. Lists (`word_apply_list`), tables (`word_insert_table` with all the
+   cells at once), equations (`word_insert_equation`, LaTeX or UnicodeMath,
+   `numbered` for (1), (2)...), fields and tables of contents.
    Insert a table of contents last, since it adds paragraphs above the rest.
 5. Look at the result: `word_get_page_image` shows a page as Word lays it
    out. Use it after layout changes, equations and lists; reading the text
@@ -249,6 +250,11 @@ moves the paragraphs after it: every writing call answers the indices it
 used (`inserted`, `index`, `paragraphs`), so take the next index from the
 last answer rather than counting by hand. Several calls in one
 `word_run_steps` can pass results on ("$1.inserted.0.index").
+
+A table's cells are paragraphs too, and each row ends in an empty one (the
+row's end mark): a table result gives the paragraphs it covers
+(`paragraphs.first`, `paragraphs.last`). Work on a table's text with the
+table tools, by row and column.
 
 ## Answers
 
@@ -275,9 +281,10 @@ mainly Latin document. East Asian layouts measure spacing in grid lines
 
 mcp = WordServer("ms_word_mcp", lifespan=app_lifespan, instructions=INSTRUCTIONS)
 
-from .tools import documents, edit, equations, fields, formatting, lists, mac, screen, text, view  # noqa: E402,F401 - mac registers the Mac halves
+from .tools import (  # noqa: E402,F401 - mac registers the Mac halves
+    documents, edit, equations, fields, formatting, lists, mac, screen, tables, text, view)
 
-for module in (documents, text, formatting, lists, equations, fields, view, screen, edit):
+for module in (documents, text, formatting, lists, tables, equations, fields, view, screen, edit):
     module.register(mcp)
 
 
@@ -384,7 +391,7 @@ def summary(description):
 
 
 AREAS = {"documents": "Documents", "text": "Reading and writing text",
-         "formatting": "Formatting and styles", "lists": "Lists",
+         "formatting": "Formatting and styles", "lists": "Lists", "tables": "Tables",
          "equations": "Equations", "fields": "Fields and tables of contents",
          "view": "View", "screen": "Seeing a page", "edit": "Undo"}
 
@@ -490,9 +497,9 @@ async def word_describe(names: list[str] | None = None) -> str:
     with word_describe().
     """
     if not names:
-        return (catalog_lines() + "\n\nNot here yet: tables, pictures, headers and "
-                "footers, comments and tracked changes. Paragraph direction "
-                "(right to left) and tab stops work on Windows only."
+        return (catalog_lines() + "\n\nNot here yet: pictures, headers and footers, comments and "
+                "tracked changes. Paragraph direction (right to left), tab stops and "
+                "adding table columns work on Windows only."
                 "\n\nNext: word_describe(names=[...]) for the arguments of the tools "
                 "you will use, then word_run or word_run_steps.")
     found, missing = {}, []
