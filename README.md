@@ -13,10 +13,11 @@ can write and format a document while you work in it.
   and each tool call is one Undo in Word.
 - **Read back after every write.** A result says what Word actually holds now,
   and lists as `warnings` whatever did not take.
-- **Japanese typography.** Latin, East Asian and complex-script text each have
-  their own font. Spacing in lines (行) and indents in characters (字), East
-  Asian line breaking (禁則), hanging punctuation, emphasis dots (傍点), and
-  numbering in full-width digits, ①, 一, ア or イ.
+- **Every script.** Latin, East Asian (Chinese, Japanese, Korean) and
+  complex-script (Arabic, Hebrew...) text each have their own font. East Asian
+  layouts get spacing in grid lines and indents in character widths, line
+  breaking rules, hanging punctuation and emphasis marks; lists can be
+  numbered in full-width digits, ①, 一, ア, 가, א, α, а and more.
 - **Styles first.** Every character and paragraph property can be set on a
   style as well as on text, so a document's look is defined once.
 - **Equations.** From LaTeX or UnicodeMath, built by Word's own equation

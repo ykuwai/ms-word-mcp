@@ -25,8 +25,11 @@ NUMBER_STYLES = {
     "lower_letter": 4, "ordinal": 5, "cardinal_text": 6, "ordinal_text": 7,
     "arabic_full_width": 14, "arabic_leading_zero": 22, "number_in_circle": 18,
     "kanji": 10, "kanji_digit": 11, "kanji_traditional": 16, "aiueo": 20,
-    "aiueo_half_width": 12, "iroha": 21, "iroha_half_width": 13, "legal": 253,
-    "none": 255,
+    "aiueo_half_width": 12, "iroha": 21, "iroha_half_width": 13,
+    "chinese_simplified": 37, "chinese_traditional": 33, "korean_ganada": 24,
+    "korean_chosung": 25, "korean_hangul": 43, "hebrew": 45, "arabic_alpha": 46,
+    "hindi_letter": 49, "thai_letter": 53, "lower_russian": 58, "upper_russian": 59,
+    "lower_greek": 60, "upper_greek": 61, "legal": 253, "none": 255,
 }
 TRAILING = {"tab": 0, "space": 1, "none": 2}
 LEVEL_ALIGNMENT = {"left": 0, "center": 1, "right": 2}
@@ -53,13 +56,15 @@ class LevelSpec(Input):
         "The bullet character, one character: ●, ■, ◆, ・, ✓, –. Makes the level "
         "a bulleted one."))
     number_style: Literal[tuple(NUMBER_STYLES)] | None = Field(None, description=(  # type: ignore[valid-type]
-        "How the number is written: arabic (1), arabic_full_width (１), "
-        "number_in_circle (①), kanji (一), aiueo (ア), iroha (イ), upper_roman, "
-        "lower_letter and the rest."))
+        "How the number is written: arabic (1), upper_roman, lower_letter, "
+        "arabic_full_width (１), number_in_circle (①), kanji (一), aiueo (ア), "
+        "iroha (イ), chinese_simplified, korean_ganada (가), hebrew (א), "
+        "arabic_alpha (أ), lower_greek (α), lower_russian (а) and the rest."))
     number_format: str | None = Field(None, min_length=1, max_length=40, description=(
         "The text around the number: %1 is this level's number, %2 the second "
-        "level's and so on. \"%1.\" gives 1., \"(%1)\" gives (1), \"第%1章\" gives "
-        "第1章, \"%1.%2\" gives 1.1."))
+        "level's and so on. \"%1.\" gives 1., \"(%1)\" gives (1), \"%1.%2\" "
+        "gives 1.1, and words around it go in as they are (\"Chapter %1\", "
+        "\"第%1章\")."))
     font: BulletFont | None = None
     number_position: float | None = Field(None, ge=-1584, le=1584, description=(
         "Where the bullet or number sits, points from the margin."))

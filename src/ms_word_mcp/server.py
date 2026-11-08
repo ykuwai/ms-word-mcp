@@ -245,14 +245,15 @@ A result with `error` changed nothing unless it says otherwise. Each writing
 call is one undo step in Word on Windows when the document is Word's active
 one; otherwise the result says so in `undo`.
 
-## Japanese and other scripts
+## Scripts and languages
 
-Word keeps three fonts on all text: Latin, East Asian and complex script
-(right-to-left). Setting one leaves the others; set the ones you mean. An
-East Asian font must have East Asian glyphs: Word refuses Segoe UI or Arial
-there, and the warning says so. Spacing can be given in lines (行,
-`space_before_lines`) and indents in characters (字,
-`first_line_indent_chars`), as Japanese documents measure them.
+Word keeps three fonts on all text: Latin, East Asian (Chinese, Japanese,
+Korean) and complex script (Arabic, Hebrew and other right-to-left text).
+Setting one leaves the others; set the ones you mean. An East Asian font
+must have East Asian glyphs: Word refuses Segoe UI or Arial there, and the
+warning says so. East Asian layouts measure spacing in grid lines
+(`space_before_lines`) and indents in character widths
+(`first_line_indent_chars`); both are there as well as points.
 """
 
 mcp = WordServer("ms_word_mcp", lifespan=app_lifespan, instructions=INSTRUCTIONS)

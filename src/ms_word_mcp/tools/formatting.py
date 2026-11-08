@@ -443,8 +443,8 @@ def register(mcp) -> None:
               annotations=annotations("Paragraph format", WRITES))
     async def word_set_paragraph_format(params: ParagraphFormatInput) -> str:
         """Set paragraph formatting and read it back: alignment, line spacing,
-        spacing before and after in points or in lines (行), indents in points
-        or in characters (字), grid snapping, keep-with-next and page flow,
+        spacing before and after in points or in grid lines, indents in points
+        or in character widths, grid snapping, keep-with-next and page flow,
         outline level, and the East Asian options (line-breaking rules, hanging
         punctuation, space between Japanese and Latin text)."""
         p = params

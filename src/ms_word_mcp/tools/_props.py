@@ -192,7 +192,8 @@ class FontSpec(Input):
     position: float | None = Field(None, ge=-1584, le=1584, description=(
         "Raise (positive) or lower (negative) the text, points."))
     emphasis_mark: Literal[tuple(EMPHASIS)] | None = Field(None, description=(  # type: ignore[valid-type]
-        "Japanese emphasis dots (傍点): dot_above is the usual one."))
+        "East Asian emphasis marks, one on each character: dot_above, "
+        "dot_below, comma_above or circle_above."))
     ignore_character_grid: bool | None = Field(None, description=(
         "Ignore the document's characters-per-line grid."))
 
@@ -214,17 +215,19 @@ class ParagraphSpec(Input):
     space_before: float | None = Field(None, ge=0, le=1584, description="Points.")
     space_after: float | None = Field(None, ge=0, le=1584, description="Points.")
     space_before_lines: float | None = Field(None, ge=0, le=100, description=(
-        "Lines of the document grid (行). Japanese templates measure spacing this "
-        "way; it takes precedence over space_before while set."))
+        "Lines of the document grid, the way East Asian (Chinese, Japanese, "
+        "Korean) templates measure spacing; it takes precedence over "
+        "space_before while set."))
     space_after_lines: float | None = Field(None, ge=0, le=100, description=(
-        "Lines of the document grid (行); takes precedence over space_after."))
+        "Lines of the document grid; takes precedence over space_after."))
     space_before_auto: bool | None = None
     space_after_auto: bool | None = None
     first_line_indent: float | None = Field(None, **_PT, description=(
         "Points; negative for a hanging indent."))
     first_line_indent_chars: float | None = Field(None, ge=-100, le=100, description=(
-        "Characters (字); negative for a hanging indent. 1 = the usual Japanese "
-        "first-line indent."))
+        "Character widths, the unit East Asian layouts give indents in; "
+        "negative for a hanging indent. 1 = a one-character first-line indent, "
+        "usual in Chinese and Japanese body text."))
     left_indent: float | None = Field(None, **_PT, description="Points.")
     left_indent_chars: float | None = Field(None, ge=-100, le=100, description="Characters.")
     right_indent: float | None = Field(None, **_PT, description="Points.")
@@ -239,9 +242,10 @@ class ParagraphSpec(Input):
     outline_level: Literal[tuple(OUTLINE)] | None = Field(None, description=(  # type: ignore[valid-type]
         "\"1\"-\"9\" or \"body_text\". Paragraphs in Heading 1-9 keep their heading's level."))
     east_asian_line_breaking: bool | None = Field(None, description=(
-        "Apply the East Asian line-breaking rules (禁則処理)."))
+        "Apply East Asian line-breaking rules: no line starts with a closing "
+        "bracket or a small kana, none ends with an opening bracket."))
     hanging_punctuation: bool | None = Field(None, description=(
-        "Let punctuation hang past the margin (ぶら下げ)."))
+        "Let punctuation at the end of a line hang past the margin."))
     half_width_punctuation_at_line_start: bool | None = None
     space_between_east_asian_and_latin: bool | None = Field(None, description=(
         "Add space between Japanese and Latin text automatically."))
