@@ -75,3 +75,9 @@ def test_level_spec_checks():
         lists.LevelSpec(bullet="●●")
     with pytest.raises(ValueError):
         lists.ApplyListInput(start=1, levels=[{"level": 1}, {"level": 1}])
+
+
+def test_a_bulleted_level_of_a_multilevel_list_is_reported_as_a_bullet():
+    assert lists.list_kind("outline_numbering", True) == "bullet"
+    assert lists.list_kind("outline_numbering", False) == "outline_numbering"
+    assert lists.list_kind("simple_numbering", False) == "simple_numbering"

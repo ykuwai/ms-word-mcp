@@ -791,7 +791,14 @@ def _mac_paragraph_list(doc, index) -> dict:
            "text": _clean(doc.paragraphs[index].text_object.content.get())[:80],
            "list": kind}
     if kind != "none":
-        out["level"] = fmt.list_level_number.get()
+        level = fmt.list_level_number.get()
+        try:
+            bullet = _name(fmt.list_template.list_levels[level].number_style.get()) \
+                == "list_number_style_bullet"
+        except Exception:  # noqa: BLE001
+            bullet = False
+        out["list"] = lists.list_kind(kind, bullet)
+        out["level"] = level
         out["list_string"] = fmt.list_string.get()
     return out
 

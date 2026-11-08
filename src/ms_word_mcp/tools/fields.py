@@ -68,31 +68,48 @@ def _toc_summary(doc, field) -> dict:
             "first_entries": [re.sub(r"\s+", " ", x)[:80] for x in lines[:8]]}
 
 
+def _toc_place(count: int, after, before) -> int:
+    """The paragraph the table of contents goes in front of (count + 1: the end)."""
+    if before is not None:
+        if before > count:
+            raise ValueError(f"There is no paragraph {before}: the document has {count}.")
+        return before
+    if after is not None:
+        if after > count:
+            raise ValueError(f"There is no paragraph {after}: the document has {count}.")
+        return after + 1
+    return count + 1
+
+
 def _insert_toc_impl(after, before, upper_level, lower_level, hyperlinks, page_numbers,
                      from_paragraph, to_paragraph):
     from . import text
 
     doc = backend.word.document()
+    count = doc.Paragraphs.Count
+    at = _toc_place(count, after, before)
     bookmark = None
     if from_paragraph is not None:
-        check_span(doc, from_paragraph, to_paragraph)
-    written = text._insert_paragraphs_impl([{"text": "", "style": None}], after, before)
-    index = written["inserted"][0]["index"]
-    if from_paragraph is not None:
-        # The part's paragraphs moved down by one if the table went above them.
-        shift = 1 if index <= from_paragraph else 0
-        span = span_range(doc, from_paragraph + shift, to_paragraph + shift)
+        s, e = check_span(doc, from_paragraph, to_paragraph)
         bookmark = f"_McpToc{doc.Bookmarks.Count + 1}"
-        doc.Bookmarks.Add(bookmark, span)
-    p = paragraph(doc, index)
-    at = doc.Range(p.Range.Start, p.Range.Start)
-    field = doc.Fields.Add(at, WD_FIELD_EMPTY,
+        doc.Bookmarks.Add(bookmark, span_range(doc, s, e))
+    if at > count:
+        at = text._insert_paragraphs_impl([{"text": "", "style": "Normal"}], None,
+                                          None)["inserted"][0]["index"]
+    # The field goes at the start of the paragraph the table comes before; that
+    # paragraph's text and style stay after the entries. A field put in an
+    # empty paragraph of its own left that paragraph after the entries, and
+    # Word refuses to delete it ("the range cannot be edited", seen in a demo
+    # driven over MCP; measured on the Mac on the reference branch).
+    p = paragraph(doc, at)
+    field = doc.Fields.Add(doc.Range(p.Range.Start, p.Range.Start), WD_FIELD_EMPTY,
                            toc_code(upper_level, lower_level, hyperlinks, page_numbers,
                                     bookmark), False)
     field.Update()
     summary = _toc_summary(doc, field)
     follow(doc, field.Result)
-    result = {"success": True, "index": index, **summary}
+    result = {"success": True, "index": at, **summary,
+              "paragraphs": doc.Paragraphs.Count}
     if bookmark:
         result["bookmark"] = bookmark
     if summary["entries"] == 0:
@@ -267,28 +284,29 @@ def _mac_insert_toc(after, before, upper_level, lower_level, hyperlinks, page_nu
 
     word = backend.word
     doc = word.document()
-    if from_paragraph is not None:
-        m._span(doc, from_paragraph, to_paragraph)
-    written = MAC_IMPLS[text._insert_paragraphs_impl.__name__](
-        [{"text": "", "style": None}], after, before)
-    index = written["inserted"][0]["index"]
+    count = m._count(doc)
+    at = _toc_place(count, after, before)
     bookmark = None
     if from_paragraph is not None:
-        shift = 1 if index <= from_paragraph else 0
-        s, _ = m._bounds(doc, from_paragraph + shift)
-        _, e = m._bounds(doc, to_paragraph + shift)
+        s, e = m._span(doc, from_paragraph, to_paragraph)
+        start, _ = m._bounds(doc, s)
+        _, end = m._bounds(doc, e)
         bookmark = f"_McpToc{int(doc.count(each=k.bookmark)) + 1}"
         doc.make(new=k.bookmark, at=doc, with_properties={
-            k.name: bookmark, k.text_object: doc.create_range(start=s, end_=e)})
-    start, _ = m._bounds(doc, index)
+            k.name: bookmark, k.text_object: doc.create_range(start=start, end_=end)})
+    if at > count:
+        at = MAC_IMPLS[text._insert_paragraphs_impl.__name__](
+            [{"text": "", "style": "Normal"}], None, None)["inserted"][0]["index"]
+    start, _ = m._bounds(doc, at)
     f = _mac_new_field(word.get_app(), doc, start, start,
                        toc_code(upper_level, lower_level, hyperlinks, page_numbers, bookmark))
     f.update_field()
     lines = [m._clean(x) for x in (f.result_range.content.get() or "").split("\r")
              if x.strip()]
-    result = {"success": True, "index": index,
+    result = {"success": True, "index": at,
               "code": (f.field_code.content.get() or "").strip(), "entries": len(lines),
-              "first_entries": [re.sub(r"\s+", " ", x)[:80] for x in lines[:8]]}
+              "first_entries": [re.sub(r"\s+", " ", x)[:80] for x in lines[:8]],
+              "paragraphs": m._count(doc)}
     if bookmark:
         result["bookmark"] = bookmark
     if not lines:

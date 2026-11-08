@@ -91,10 +91,13 @@ class ApplyListInput(Input):
     start: int = Field(..., ge=1, description="First paragraph, numbered from 1.")
     end: int | None = Field(None, ge=1, description="Last paragraph. Leave out for one.")
     levels: list[LevelSpec] = Field(..., min_length=1, max_length=9, description=(
-        "How each level looks. A plain bulleted list is [{\"bullet\": \"●\"}]; a "
-        "numbered one [{\"number_style\": \"arabic\", \"number_format\": \"%1.\"}]."))
+        "How each level looks; this does not put any paragraph at a level. A plain "
+        "bulleted list is [{\"bullet\": \"●\"}]; a numbered one "
+        "[{\"number_style\": \"arabic\", \"number_format\": \"%1.\"}]. Every "
+        "paragraph starts at level 1: move some to level 2 with `level` here (all "
+        "of them) or word_set_list_level afterwards (some of them)."))
     level: int | None = Field(None, ge=1, le=9, description=(
-        "Put these paragraphs at this level of the list."))
+        "Put all these paragraphs at this level of the list (default 1)."))
     continue_previous: bool = Field(False, description=(
         "Continue the numbering of the list before, rather than start at 1."))
 
@@ -182,12 +185,27 @@ def describe_level(lv) -> dict:
     return out
 
 
+def list_kind(kind: str, level_is_bullet: bool) -> str:
+    """The paragraph's kind of list. A list with several levels is an outline
+    list to Word whatever its levels hold; a paragraph whose level draws a
+    bullet is reported as a bullet."""
+    if kind in ("outline_numbering", "mixed_numbering") and level_is_bullet:
+        return "bullet"
+    return kind
+
+
 def describe_paragraph_list(index, p) -> dict:
     fmt = p.Range.ListFormat
     kind = LIST_TYPES.get(fmt.ListType, fmt.ListType)
     out = {"index": index, "text": clean_text(p.Range.Text)[:80], "list": kind}
     if kind != "none":
-        out["level"] = fmt.ListLevelNumber
+        level = fmt.ListLevelNumber
+        try:
+            bullet = fmt.ListTemplate.ListLevels.Item(level).NumberStyle == 23
+        except Exception:  # noqa: BLE001
+            bullet = False
+        out["list"] = list_kind(kind, bullet)
+        out["level"] = level
         out["list_string"] = fmt.ListString
     return out
 
@@ -300,7 +318,9 @@ def register(mcp) -> None:
     async def word_apply_list(params: ApplyListInput) -> str:
         """Make paragraphs a bulleted or numbered list, with each level's bullet
         character or number format, the bullet's own font, color and size, and
-        the positions of the number and the text.
+        the positions of the number and the text. `levels` defines the look of
+        levels 1 to 9; paragraphs are at level 1 until `level` or
+        word_set_list_level moves them.
 
         The list gets a template of its own, so no other list in the document
         changes. Reads back each paragraph's list text (ListString) and each
