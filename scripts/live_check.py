@@ -28,7 +28,10 @@ results: list[tuple[str, bool]] = []
 
 def step(label, impl, *args, undo=None, check=lambda out: "error" not in out):
     out = json.loads(_common.run(impl, *args, undo=undo))
-    ok = bool(check(out))
+    try:
+        ok = bool(check(out))
+    except (KeyError, IndexError, TypeError):
+        ok = False
     results.append((label, ok))
     print(f"{'PASS' if ok else 'FAIL'}  {label}")
     print("      " + json.dumps(out, ensure_ascii=False)[:600])
@@ -37,7 +40,10 @@ def step(label, impl, *args, undo=None, check=lambda out: "error" not in out):
 
 def main() -> int:
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    folder = Path(tempfile.gettempdir())
+    # Word for Mac is sandboxed: it writes to its own container without asking,
+    # and anywhere else only after the user grants access in a dialog.
+    folder = (Path.home() / "Library/Containers/com.microsoft.Word/Data/Documents"
+              if sys.platform == "darwin" else Path(tempfile.gettempdir()))
     path = str(folder / f"ms-word-mcp-live-{stamp}.docx")
     backend.word.start()
     try:

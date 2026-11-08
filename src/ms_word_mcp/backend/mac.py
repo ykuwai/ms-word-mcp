@@ -103,10 +103,11 @@ class MacWord(Worker):
     def open_documents(self) -> list[OpenDocument]:
         """The open documents, found by asking for each index in turn.
 
-        Measured on Word 16.114: `documents.get()` answers missing value when
-        none is open, and asking for a document past the last one answers
-        missing value for its name rather than an error, so the walk stops at
-        the first missing name (and at MAX_DOCUMENTS whatever happens).
+        Measured on Word 16.114: with no document open, asking for one answers
+        missing value for its name; with some open, asking past the last one
+        is error -1728. The walk stops at either (and at MAX_DOCUMENTS
+        whatever happens). `full_name` is an HFS path ("Macintosh HD:Users:…"),
+        so the POSIX one is used.
         """
         from appscript import k
 
@@ -114,10 +115,16 @@ class MacWord(Worker):
         out = []
         for i in range(1, MAX_DOCUMENTS + 1):
             doc = app.documents[i]
-            name = doc.name.get()
+            try:
+                name = doc.name.get()
+            except Exception:  # noqa: BLE001 - -1728 past the last document
+                break
             if name == k.missing_value or not isinstance(name, str):
                 break
-            out.append(OpenDocument(i, name, doc.full_name.get()))
+            full = doc.posix_full_name.get()
+            if not isinstance(full, str) or not full:
+                full = name  # never saved
+            out.append(OpenDocument(i, name, full))
         return out
 
     def document(self):

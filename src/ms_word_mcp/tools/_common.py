@@ -73,6 +73,8 @@ def run(impl: Callable[..., Any], *args: Any, undo: str | None = None,
     `undo` names the undo step a writing call's changes are gathered under.
     """
     if backend.IS_MACOS:
+        from . import mac as _registers_the_mac_halves  # noqa: F401
+
         mac = MAC_IMPLS.get(impl.__name__)
         if mac is None:
             return json.dumps({
