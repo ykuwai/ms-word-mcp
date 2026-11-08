@@ -202,6 +202,36 @@ Fetched from the pages cited on 2026-11-08, the same way as the rest.
 What a new table looks like, and what Word for Mac accepts, is measured in
 [PROBES.md](../PROBES.md) (Tables).
 
+### A.9 Pictures, references, the page, ruby (members those tools use)
+
+Fetched from the pages cited on 2026-11-08, the same way as the rest.
+
+| Member | Type | What the page says | URL |
+|---|---|---|---|
+| InlineShapes.AddPicture(FileName, LinkToFile, SaveWithDocument, Range) | InlineShape | "If the range isn't collapsed, the picture replaces the range; otherwise, the picture is inserted." | https://learn.microsoft.com/en-us/office/vba/api/word.inlineshapes.addpicture |
+| InlineShape.LockAspectRatio | MsoTriState, R/W | Keeps the original proportions on resizing | https://learn.microsoft.com/en-us/office/vba/api/word.inlineshape.lockaspectratio |
+| InlineShape.Width | Long, R/W | Width in points | https://learn.microsoft.com/en-us/office/vba/api/word.inlineshape.width |
+| InlineShape.AlternativeText | String, R/W | Alternative text | https://learn.microsoft.com/en-us/office/vba/api/word.inlineshape.alternativetext |
+| Bookmarks.Add(Name, Range) | Bookmark | Name: "cannot be more than 40 characters or include more than one word" | https://learn.microsoft.com/en-us/office/vba/api/word.bookmarks.add |
+| Bookmarks.ShowHidden | Boolean, R/W | "Hidden bookmarks are automatically inserted when cross-references are inserted"; they begin with an underscore | https://learn.microsoft.com/en-us/office/vba/api/word.bookmarks.showhidden |
+| Range.InsertCaption, Range.InsertCrossReference, Document.GetCrossReferenceItems | methods | What Word's own dialogs call; a label must already be defined. The tools build the same fields instead | https://learn.microsoft.com/en-us/office/vba/api/word.range.insertcaption |
+| Section.Headers, Section.Footers | HeadersFooters | Item is a WdHeaderFooterIndex | https://learn.microsoft.com/en-us/office/vba/api/word.section.headers |
+| WdHeaderFooterIndex | enum | wdHeaderFooterPrimary 1, wdHeaderFooterFirstPage 2, wdHeaderFooterEvenPages 3 | https://learn.microsoft.com/en-us/office/vba/api/word.wdheaderfooterindex |
+| HeaderFooter.LinkToPrevious | Boolean, R/W | Linked by default: the contents are the previous section's | https://learn.microsoft.com/en-us/office/vba/api/word.headerfooter.linktoprevious |
+| PageSetup.DifferentFirstPageHeaderFooter, OddAndEvenPagesHeaderFooter | Long, R/W | Own header and footer for the first, or even, pages | https://learn.microsoft.com/en-us/office/vba/api/word.pagesetup.differentfirstpageheaderfooter |
+| PageNumbers.NumberStyle | WdPageNumberStyle, R/W | Arabic 0, ArabicFullWidth 14, Kanji 10, KanjiDigit 11, LowercaseLetter 4, LowercaseRoman 2, NumberInCircle 18, NumberInDash 57 (UppercaseRoman 1, UppercaseLetter 3 by the Mac dictionary's codes) | https://learn.microsoft.com/en-us/office/vba/api/word.wdpagenumberstyle |
+| PageNumbers.StartingNumber, RestartNumberingAtSection | R/W | RestartNumberingAtSection False overrides StartingNumber | https://learn.microsoft.com/en-us/office/vba/api/word.pagenumbers.startingnumber |
+| PageSetup.Orientation | WdOrientation, R/W | Portrait 0, Landscape 1 | https://learn.microsoft.com/en-us/office/vba/api/word.wdorientation |
+| PageSetup.PaperSize | WdPaperSize, R/W | Letter 2, Legal 4, A3 6, A4 7, A5 9, B4 10, B5 11 | https://learn.microsoft.com/en-us/office/vba/api/word.wdpapersize |
+| PageSetup.LayoutMode | WdLayoutMode, R/W | Default 0, Grid 1, LineGrid 2, Genko 3 | https://learn.microsoft.com/en-us/office/vba/api/word.wdlayoutmode |
+| PageSetup.CharsLine, LinesPage | Single, R/W | The document grid | https://learn.microsoft.com/en-us/office/vba/api/word.pagesetup.charsline |
+| TextColumns.SetCount(NumColumns) | method | Columns of equal width | https://learn.microsoft.com/en-us/office/vba/api/word.textcolumns.setcount |
+| Range.Orientation | WdTextOrientation, R/W | Horizontal 0, VerticalFarEast 1 (top to bottom, right to left), Upward 2, Downward 3, HorizontalRotatedFarEast 4, Vertical 5 | https://learn.microsoft.com/en-us/office/vba/api/word.wdtextorientation |
+| Range.PhoneticGuide(Text, Alignment, Raise, FontSize, FontName) | method | Ruby. FontSize default: 50 percent of the text's | https://learn.microsoft.com/en-us/office/vba/api/word.range.phoneticguide |
+| WdPhoneticGuideAlignmentType | enum | Center 0, ZeroOneZero 1, OneTwoOne 2, Left 3, Right 4, RightVertical 5 | https://learn.microsoft.com/en-us/office/vba/api/word.wdphoneticguidealignmenttype |
+
+What Word does beyond this is measured in [PROBES.md](../PROBES.md) (Pictures, captions, references, the page, ruby).
+
 ## B. Constants
 
 ### B.1 The code's constants against the documentation
