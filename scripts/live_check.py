@@ -265,6 +265,9 @@ def run_table_steps() -> None:
     if "error" in t:
         return
     n = t["table"]
+    step("paragraphs in a table carry its number", text._get_paragraphs_impl,
+         t["paragraphs"]["first"] + 1, t["paragraphs"]["first"] + 1, False,
+         check=lambda o: o["paragraphs"][0].get("table") == n)
     second = step("a table right after it stays a table of its own",
                   tables._insert_table_impl, [["A", "B"], ["1", "2"]],
                   t["paragraphs"]["last"], None, 0, None, None, None, None, None, None,

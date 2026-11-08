@@ -565,3 +565,5 @@ FakeDocument.ListTemplates = property(
 
 # The fake has no equations.
 FakeRange.OMaths = property(lambda self: SimpleNamespace(Count=0))
+# No tables in a fake document.
+FakeDocument.Tables = property(lambda self: SimpleNamespace(Count=0))

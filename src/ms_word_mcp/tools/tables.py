@@ -349,6 +349,20 @@ def _describe(doc, tb, number: int, cells: bool = True) -> dict:
     return out
 
 
+def mark_tables(doc, paragraphs: list[dict]) -> None:
+    """Give each paragraph that is in a table the table's number."""
+    if not paragraphs or not doc.Tables.Count:
+        return
+    hi = paragraphs[-1]["index"]
+    for n in range(1, doc.Tables.Count + 1):
+        span = _span(doc, doc.Tables.Item(n))
+        if span["first"] > hi:
+            break
+        for p in paragraphs:
+            if span["first"] <= p["index"] <= span["last"]:
+                p["table"] = n
+
+
 def _number_of(doc, tb) -> int:
     return doc.Range(0, tb.Range.Start + 1).Tables.Count
 
@@ -761,6 +775,22 @@ def _mac_describe(doc, tb, number: int, cells: bool = True) -> dict:
             out["more"] = (f"Rows {MAX_ROWS_PER_READ + 1} to {n_rows} follow; "
                            f"word_get_table with start_row={MAX_ROWS_PER_READ + 1}.")
     return out
+
+
+def mac_mark_tables(doc, paragraphs: list[dict]) -> None:
+    from appscript import k
+
+    count = int(doc.count(each=k.table))
+    if not paragraphs or not count:
+        return
+    hi = paragraphs[-1]["index"]
+    for n in range(1, count + 1):
+        span = _mac_span(doc, doc.tables[n])
+        if span["first"] > hi:
+            break
+        for p in paragraphs:
+            if span["first"] <= p["index"] <= span["last"]:
+                p["table"] = n
 
 
 def _mac_number_of(doc, tb) -> int:

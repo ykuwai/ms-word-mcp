@@ -296,9 +296,12 @@ def get_paragraphs(start, end, detail):
         raise ValueError(f"The document has {count} paragraphs; start is {start}.")
     last = min(count, end if end is not None else start + MAX_PARAGRAPHS_PER_READ - 1,
                start + MAX_PARAGRAPHS_PER_READ - 1)
+    from .tables import mac_mark_tables
+
     out = {"success": True,
            "paragraphs": [_info(doc, i, detail) for i in range(start, last + 1)],
            "count": count}
+    mac_mark_tables(doc, out["paragraphs"])
     if last < count:
         out["more"] = f"Paragraphs {last + 1} to {count} follow; pass start={last + 1}."
     return out

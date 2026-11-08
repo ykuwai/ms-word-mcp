@@ -75,7 +75,10 @@ def _get_paragraphs_impl(start: int, end: int | None, detail: bool):
     last = min(count, end if end is not None else start + MAX_PARAGRAPHS_PER_READ - 1)
     if last - start + 1 > MAX_PARAGRAPHS_PER_READ:
         last = start + MAX_PARAGRAPHS_PER_READ - 1
+    from .tables import mark_tables
+
     out = [paragraph_info(i, p, detail) for i, p in paragraphs_in(doc, start, last)]
+    mark_tables(doc, out)
     result = {"success": True, "paragraphs": out, "count": count}
     if last < count:
         result["more"] = f"Paragraphs {last + 1} to {count} follow; pass start={last + 1}."
@@ -321,7 +324,8 @@ def register(mcp) -> None:
     @mcp.tool(name="word_get_paragraphs", annotations=annotations("Read paragraphs", READ_ONLY))
     async def word_get_paragraphs(params: GetParagraphsInput) -> str:
         """Read paragraphs by index: text, style and outline level, and with
-        `detail` their formatting too."""
+        `detail` their formatting too. A paragraph in a table carries the
+        table's number (`table`): read those with word_get_table."""
         return await call(_get_paragraphs_impl, params.start, params.end,
                                    params.detail)
 
