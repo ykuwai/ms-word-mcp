@@ -71,6 +71,20 @@ def to_unicodemath(equation: str, fmt: str) -> str:
         raise ValueError(f"{exc}. Nothing was inserted.") from None
 
 
+def _last_one(char_at, start: int, end: int) -> int | None:
+    """Word's position of the last "1" in [start, end): the number of "#(1)".
+
+    Asked of Word one character at a time from the end, rather than worked
+    out from the paragraph's text: after a root is built up, positions in
+    the text and in Word no longer agree (seen: the number of an equation
+    holding √π lost its parentheses when the field went one place off).
+    """
+    for pos in range(end - 1, max(start, end - 40) - 1, -1):
+        if char_at(pos) == "1":
+            return pos
+    return None
+
+
 def _seq_fields(doc, sequence: str):
     """The document's SEQ fields counting in `sequence`, in order."""
     out = []
@@ -102,14 +116,12 @@ def _insert_equation_impl(equation, fmt, numbered, sequence, after, before):
     number = None
     warnings = []
     if numbered:
-        p = paragraph(doc, index)
-        content = p.Range.Text
-        at = content.rfind("1")
-        if at < 0:
+        rng = paragraph(doc, index).Range
+        start = _last_one(lambda pos: doc.Range(pos, pos + 1).Text, rng.Start, rng.End)
+        if start is None:
             warnings.append("The equation number could not be found to make it a field; "
                             "it stays (1).")
         else:
-            start = p.Range.Start + len(content[:at].encode("utf-16-le")) // 2
             field = doc.Fields.Add(doc.Range(start, start + 1), WD_FIELD_SEQUENCE,
                                    sequence, False)
             for f in _seq_fields(doc, sequence):
@@ -205,14 +217,14 @@ def _mac_insert_equation(equation, fmt, numbered, sequence, after, before):
     target.build_up()
     number, warnings = None, []
     if numbered:
+        pstart, pend = m._bounds(doc, index)
         content = doc.paragraphs[index].text_object.content.get()
-        at = content.rfind("1")
-        if at < 0:
+        pos = _last_one(lambda at: doc.create_range(start=at, end_=at + 1).content.get(),
+                        pstart, pend)
+        if pos is None:
             warnings.append("The equation number could not be found to make it a field; "
                             "it stays (1).")
         else:
-            pstart, _ = m._bounds(doc, index)
-            pos = pstart + m._u16(content, at)
             app.create_new_field(text_range=doc.create_range(start=pos, end_=pos + 1),
                                  field_type=k.field_sequence, field_text=sequence,
                                  preserve_formatting=False)

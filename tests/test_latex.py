@@ -12,7 +12,7 @@ from ms_word_mcp.tools.latex import LatexError, latex_to_unicodemath as convert
     (r"E=mc^2", "E=mc^2"),
     (r"\sqrt{x^2+1}", "√(x^2+1)"),
     (r"\sqrt[3]{x}", "√(3&x)"),
-    (r"\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}", "∫_0^∞▒(e^(-x^2)\u2009dx)=(√π)/2"),
+    (r"\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}", "∫_0^∞▒〖e^(-x^2)\u2009dx〗=(√π)/2"),
     (r"\sum_{i=1}^{n} i = \frac{n(n+1)}{2}", "∑_(i=1)^n▒i=(n(n+1))/2"),
     (r"\alpha+\beta\le\gamma", "α+β≤γ"),
     (r"\left(\frac{a}{b}\right)^2", "〖(a/b)〗^2"),

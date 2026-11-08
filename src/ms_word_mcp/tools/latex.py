@@ -227,7 +227,12 @@ class _Parser:
             limits = self.scripts()
             self.skip_space()
             operand = self.operand()
-            return f"{symbol}{limits}▒{_group(operand) if operand else ''}"
+            # The operand is grouped with 〖 〗, which Word does not draw; ( )
+            # would show as parentheses (seen on the page).
+            body = operand.strip()
+            if len(body) > 1:
+                body = f"〖{body}〗"
+            return f"{symbol}{limits}▒{body}"
         if name in _FUNCTIONS:
             return name + self.scripts() + "⁡"
         if name in table:
