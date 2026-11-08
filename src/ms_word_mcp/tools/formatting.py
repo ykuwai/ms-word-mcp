@@ -109,6 +109,16 @@ class ParagraphFormatInput(P.ParagraphSpec):
         return _needs_something(self, P.PARAGRAPH_NAMES, "paragraph setting")
 
 
+def _tab_mismatch(spec: dict, got: dict) -> list[str]:
+    wanted = spec.get("tab_stops")
+    if wanted is None:
+        return []
+    have = [round(t["position"], 1) for t in got.get("tab_stops", [])]
+    asked = [round(t["position"], 1) for t in wanted]
+    return [] if sorted(have) == sorted(asked) else [
+        f"Tab stops read back at {have} points, not {asked}."]
+
+
 def paragraph_readback(got: dict, spec: dict) -> dict:
     keep = set(spec) | {"alignment", "space_before", "space_after", "line_spacing_rule",
                         "line_spacing_lines", "line_spacing_pt"}
@@ -123,13 +133,16 @@ def _set_paragraph_format_impl(start, end, paragraph):
     fmt = rng.ParagraphFormat
     refused = P.com_apply(fmt, P.PARAGRAPH_PROPS, spec)
     P.com_apply_line_spacing(fmt, spec.get("line_spacing_rule"), spec.get("line_spacing"))
+    P.com_apply_tab_stops(fmt, spec.get("tab_stops"))
     out = []
     warnings = []
     for index, p in paragraphs_in(doc, start, min(end, start + 49)):
         got = {**P.com_read(p.Format, P.PARAGRAPH_PROPS),
                **P.com_read_line_spacing(p.Format)}
+        if "tab_stops" in spec:
+            got["tab_stops"] = P.com_read_tab_stops(p.Format)
         if not warnings:
-            warnings = P.mismatches(spec, got, refused)
+            warnings = P.mismatches(spec, got, refused) + _tab_mismatch(spec, got)
         out.append({"index": index, "text": clean_text(p.Range.Text)[:80],
                     "style": style_name(p.Style), **paragraph_readback(got, spec)})
     follow(doc, rng)
@@ -267,6 +280,10 @@ def _describe_style(s) -> dict:
         fmt = s.ParagraphFormat
         out["paragraph"] = {**P.com_read(fmt, P.PARAGRAPH_PROPS),
                             **P.com_read_line_spacing(fmt)}
+        try:
+            out["paragraph"]["tab_stops"] = P.com_read_tab_stops(fmt)
+        except Exception:  # noqa: BLE001
+            pass
     return out
 
 
@@ -399,6 +416,7 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
         para_refused = P.com_apply(fmt, P.PARAGRAPH_PROPS, para_spec)
         P.com_apply_line_spacing(fmt, para_spec.get("line_spacing_rule"),
                                  para_spec.get("line_spacing"))
+        P.com_apply_tab_stops(fmt, para_spec.get("tab_stops"))
 
     described = _describe_style(s)
     warnings = [f"{k} was refused: {v}" for k, v in refused.items()]
@@ -415,6 +433,7 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
             warnings.append(f"{key} reads back as {described[key]!r}, not {value!r}.")
     warnings += P.mismatches(font_spec, described.get("font", {}), font_refused)
     warnings += P.mismatches(para_spec, described.get("paragraph", {}), para_refused)
+    warnings += _tab_mismatch(para_spec, described.get("paragraph", {}))
     result = {"success": True, "created": bool(create), "style": described}
     if warnings:
         result["warnings"] = warnings

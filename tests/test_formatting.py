@@ -224,3 +224,18 @@ def test_a_style_set_to_zero_characters_also_gets_zero_points(make_doc):
     style.ParagraphFormat.FirstLineIndent = 10.5
     set_style("Heading 1", paragraph={"first_line_indent_chars": 0})
     assert style.ParagraphFormat.FirstLineIndent == 0
+
+
+def test_a_paragraph_can_run_right_to_left(make_doc):
+    doc = make_doc("مرحبا")
+    out = para(1, direction="right_to_left", alignment="right")
+    assert "warnings" not in out, out.get("warnings")
+    assert doc.attrs[-1]["ReadingOrder"] == 0
+
+
+def test_bold_and_size_reach_right_to_left_text(make_doc):
+    doc = make_doc("abc")
+    fmt(1, bold=True, size=14)
+    assert doc.attrs[0]["BoldBi"] == -1 and doc.attrs[0]["SizeBi"] == 14
+    fmt(1, size=12, size_complex_script=16)
+    assert doc.attrs[0]["SizeBi"] == 16

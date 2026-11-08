@@ -35,7 +35,7 @@ DEFAULT_ATTRS = {
     "FarEastLineBreakControl": -1, "HangingPunctuation": -1,
     "HalfWidthPunctuationOnTopOfLine": 0, "AddSpaceBetweenFarEastAndAlpha": -1,
     "AddSpaceBetweenFarEastAndDigit": -1, "AutoAdjustRightIndent": -1, "WordWrap": -1,
-    "BaseLineAlignment": 4,
+    "BaseLineAlignment": 4, "ReadingOrder": 1,
 }
 
 CHAR_KEYS = ("NameAscii", "NameOther", "NameFarEast", "NameBi", "Size", "SizeBi", "Bold",
@@ -51,7 +51,7 @@ PARA_KEYS = ("Alignment", "LineSpacingRule", "LineSpacing", "SpaceBefore", "Spac
              "WidowControl", "FarEastLineBreakControl", "HangingPunctuation",
              "HalfWidthPunctuationOnTopOfLine", "AddSpaceBetweenFarEastAndAlpha",
              "AddSpaceBetweenFarEastAndDigit", "AutoAdjustRightIndent", "WordWrap",
-             "BaseLineAlignment")
+             "BaseLineAlignment", "ReadingOrder")
 
 # Fonts this fake refuses as an East Asian font. Word refuses a font without
 # East Asian glyphs there and keeps the old one: 0x800A16D4 on Windows, -1708

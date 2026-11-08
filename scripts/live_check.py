@@ -117,6 +117,18 @@ def run_steps(path: str) -> None:
         step("creating a style is refused on the Mac", formatting._set_style_impl,
              "MCP 本文", "paragraph", None, None, None, None, None, None, None, None,
              check=lambda o: "Styles pane" in o.get("error", ""))
+    step("right-to-left paragraph and tab stops", formatting._set_paragraph_format_impl,
+         5, None, {"direction": "right_to_left",
+                   "tab_stops": [{"position": 72, "alignment": "left", "leader": "none"},
+                                 {"position": 200, "alignment": "right",
+                                  "leader": "dots"}]},
+         undo="Paragraph format",
+         check=lambda o: (o["paragraphs"][0].get("direction") == "right_to_left"
+                          and len(o["paragraphs"][0].get("tab_stops", [])) == 2)
+         if sys.platform != "darwin" else len(o.get("warnings", [])) == 2)
+    step("back to left-to-right, no tab stops", formatting._set_paragraph_format_impl,
+         5, None, {"direction": "left_to_right", "tab_stops": []}, undo="Paragraph format",
+         check=lambda o: "error" not in o)
     step("define a paragraph style", formatting._set_style_impl, style,
          None if sys.platform == "darwin" else "paragraph", "Normal", None, {"east_asian_font": "BIZ UDPゴシック", "size": 10.5,
                           "color": "#333333"},

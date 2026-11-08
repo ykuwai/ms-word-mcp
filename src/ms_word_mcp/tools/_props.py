@@ -54,6 +54,9 @@ BASELINES = {"top": 0, "center": 1, "baseline": 2, "east_asian_50": 3, "auto": 4
 BASELINES_MAC = {"top": "baseline_align_top", "center": "baseline_align_center",
                  "baseline": "baseline_align_baseline",
                  "east_asian_50": "baseline_align_east_asian50", "auto": "baseline_align_auto"}
+DIRECTIONS = {"left_to_right": 1, "right_to_left": 0}  # WdReadingOrder
+TAB_ALIGNMENTS = {"left": 0, "center": 1, "right": 2, "decimal": 3, "bar": 4}
+TAB_LEADERS = {"none": 0, "dots": 1, "dashes": 2, "lines": 3, "heavy": 4, "middle_dot": 5}
 OUTLINE = {**{str(i): i for i in range(1, 10)}, "body_text": 10}
 OUTLINE_MAC = {**{str(i): f"outline_level{i}" for i in range(1, 10)},
                "body_text": "outline_level_body_text"}
@@ -91,6 +94,9 @@ FONT_PROPS = (
 
 PARAGRAPH_PROPS = (
     Prop("alignment", "Alignment", "alignment", "enum", ALIGNMENTS, ALIGNMENTS_MAC),
+    # ParagraphFormat.ReadingOrder (WdReadingOrder); Word for Mac's dictionary
+    # has no reading order.
+    Prop("direction", "ReadingOrder", None, "enum", DIRECTIONS),
     Prop("space_before", "SpaceBefore", "space_before", "pt"),
     Prop("space_after", "SpaceAfter", "space_after", "pt"),
     Prop("space_before_lines", "LineUnitBefore", "line_unit_before", "lines"),
@@ -140,7 +146,7 @@ PAIRED_UNITS = {"space_before": "space_before_lines", "space_after": "space_afte
 
 FONT_NAMES = tuple(p.name for p in FONT_PROPS)
 PARAGRAPH_NAMES = tuple(p.name for p in PARAGRAPH_PROPS) + ("line_spacing_rule",
-                                                            "line_spacing")
+                                                            "line_spacing", "tab_stops")
 LINE_SPACING = {"single": 0, "one_and_half": 1, "double": 2, "at_least": 3, "exactly": 4,
                 "multiple": 5}
 LINE_SPACING_MAC = {"single": "line_space_single", "one_and_half": "line_space1_pt5",
@@ -204,10 +210,25 @@ class FontSpec(Input):
         return self
 
 
+class TabStop(Input):
+    position: float = Field(..., ge=0, le=1584, description="Points from the left margin.")
+    alignment: Literal[tuple(TAB_ALIGNMENTS)] = "left"  # type: ignore[valid-type]
+    leader: Literal[tuple(TAB_LEADERS)] = Field("none", description=(  # type: ignore[valid-type]
+        "What fills the space before the tab stop: dots for a table of contents "
+        "look."))
+
+
 class ParagraphSpec(Input):
     """Paragraph formatting. Every field is optional; leave out what stays."""
 
     alignment: Literal[tuple(ALIGNMENTS)] | None = None  # type: ignore[valid-type]
+    direction: Literal[tuple(DIRECTIONS)] | None = Field(None, description=(  # type: ignore[valid-type]
+        "right_to_left for Arabic, Hebrew and other right-to-left paragraphs: "
+        "punctuation and numbers then sit where those languages put them. "
+        "Windows only; Word for Mac's scripting has no reading order."))
+    tab_stops: list[TabStop] | None = Field(None, max_length=20, description=(
+        "The paragraphs' own tab stops, replacing the ones they have; [] clears "
+        "them. Windows only for now."))
     line_spacing_rule: Literal[tuple(LINE_SPACING)] | None = Field(None, description=(
         "single / one_and_half / double, or at_least / exactly (line_spacing in "
         "points) or multiple (line_spacing in lines, 1.2 = 1.2 lines)."))
@@ -381,6 +402,29 @@ def com_apply_line_spacing(fmt, rule, value) -> None:
         fmt.LineSpacing = value * 12.0 if rule == "multiple" else value
 
 
+def com_apply_tab_stops(fmt, tab_stops) -> None:
+    if tab_stops is None:
+        return
+    stops = fmt.TabStops
+    stops.ClearAll()
+    for stop in tab_stops:
+        stops.Add(stop["position"], TAB_ALIGNMENTS[stop["alignment"]],
+                  TAB_LEADERS[stop["leader"]])
+
+
+def com_read_tab_stops(fmt) -> list:
+    stops = fmt.TabStops
+    out = []
+    for i in range(1, stops.Count + 1):
+        t = stops.Item(i)
+        out.append({"position": round(t.Position, 2),
+                    "alignment": next((k for k, v in TAB_ALIGNMENTS.items()
+                                       if v == t.Alignment), t.Alignment),
+                    "leader": next((k for k, v in TAB_LEADERS.items() if v == t.Leader),
+                                   t.Leader)})
+    return out
+
+
 def com_read_line_spacing(fmt) -> dict:
     code, points = fmt.LineSpacingRule, fmt.LineSpacing
     rule = next((k for k, v in LINE_SPACING.items() if v == code), None)
@@ -416,7 +460,7 @@ def mismatches(spec: dict, got: dict, refused: dict) -> list[str]:
     """A sentence for each asked property that reads back otherwise."""
     out = []
     for name, wanted in spec.items():
-        if name in ("line_spacing_rule", "line_spacing") or name not in got:
+        if name in ("line_spacing_rule", "line_spacing", "tab_stops") or name not in got:
             continue
         have = got[name]
         if isinstance(wanted, str) and isinstance(have, str) and name in ("color",
@@ -450,10 +494,18 @@ def mismatches(spec: dict, got: dict, refused: dict) -> list[str]:
 
 
 def with_latin_extended(spec: dict) -> dict:
-    """latin_font also sets latin_font_extended unless that is given."""
-    if "latin_font" in spec and "latin_font_extended" not in spec:
-        return {**spec, "latin_font_extended": spec["latin_font"]}
-    return spec
+    """Fill the paired properties a caller expects one argument to cover.
+
+    latin_font also sets latin_font_extended, and bold, italic and size also
+    set their complex-script twins, unless those are given: an agent set
+    bold on a heading and its Arabic stayed regular.
+    """
+    out = dict(spec)
+    for one, twin in (("latin_font", "latin_font_extended"), ("bold", "bold_complex_script"),
+                      ("italic", "italic_complex_script"), ("size", "size_complex_script")):
+        if one in out and twin not in out:
+            out[twin] = out[one]
+    return out
 
 
 # -- Mac (appscript) ---------------------------------------------------------------
@@ -512,6 +564,15 @@ def _mac_read(prop: Prop, raw):
     return raw
 
 
+_TWINS = {"latin_font_extended": "latin_font", "bold_complex_script": "bold",
+          "italic_complex_script": "italic", "size_complex_script": "size"}
+
+
+def _filled_twin(spec: dict, name: str) -> bool:
+    one = _TWINS.get(name)
+    return one is not None and one in spec and spec[one] == spec[name]
+
+
 def mac_apply(obj, props, spec: dict) -> dict:
     """Set each given property on a Word for Mac font or paragraph format."""
     refused = {}
@@ -521,7 +582,9 @@ def mac_apply(obj, props, spec: dict) -> dict:
             if prop.name not in step:
                 continue
             if prop.mac is None:
-                if step is spec:
+                # A twin filled in from its pair (size -> size_complex_script)
+                # is left out quietly; one the caller asked for is refused.
+                if step is spec and not _filled_twin(spec, prop.name):
                     refused[prop.name] = ("Word for Mac has no such property; it works "
                                           "on Windows.")
                 continue

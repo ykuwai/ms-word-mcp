@@ -505,6 +505,9 @@ def find_replace(find, replace, match_case, whole_word, wildcards):
 
 # -- formatting ------------------------------------------------------------------
 
+TABS_ON_MAC = ("tab_stops was not applied: Word for Mac's scripting cannot make tab "
+               "stops (measured: -1708). It works on Windows.")
+
 @mac_impl(formatting._format_text_impl)
 def format_text(start, end, match, font):
     doc = backend.word.document()
@@ -555,6 +558,8 @@ def set_paragraph_format(start, end, paragraph):
         info = _info(doc, i)
         out.append({"index": i, "text": info["text"][:80], "style": info["style"],
                     **formatting.paragraph_readback(got, spec)})
+    if "tab_stops" in spec:
+        warnings = warnings + [TABS_ON_MAC]
     result = {"success": True, "paragraphs": out}
     if warnings:
         result["warnings"] = warnings
@@ -819,6 +824,8 @@ def set_style(style, create, base_style, next_style, font, paragraph, quick_styl
             warnings.append(f"{key} reads back as {described.get(key)!r}, not {value!r}.")
     warnings += P.mismatches(font_spec, described.get("font", {}), font_refused)
     warnings += P.mismatches(para_spec, described.get("paragraph", {}), para_refused)
+    if "tab_stops" in para_spec:
+        warnings.append(TABS_ON_MAC)
     out = {"success": True, "created": bool(create), "style": described}
     if warnings:
         out["warnings"] = warnings

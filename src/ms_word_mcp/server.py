@@ -263,7 +263,12 @@ Word keeps three fonts on all text: Latin, East Asian (Chinese, Japanese,
 Korean) and complex script (Arabic, Hebrew and other right-to-left text).
 Setting one leaves the others; set the ones you mean. An East Asian font
 must have East Asian glyphs: Word refuses Segoe UI or Arial there, and the
-warning says so. East Asian layouts measure spacing in grid lines
+warning says so. bold, italic and size cover right-to-left text too unless
+its own value is given. A right-to-left paragraph also needs
+`direction: "right_to_left"` (Windows). A document from a Japanese or
+Chinese template justifies Normal and fits it to a grid, which stretches
+Latin text: give Normal `alignment: "left"` and `snap_to_grid: false` for a
+mainly Latin document. East Asian layouts measure spacing in grid lines
 (`space_before_lines`) and indents in character widths
 (`first_line_indent_chars`); both are there as well as points.
 """
@@ -485,8 +490,11 @@ async def word_describe(names: list[str] | None = None) -> str:
     with word_describe().
     """
     if not names:
-        return (catalog_lines() + "\n\nNext: word_describe(names=[...]) for the "
-                "arguments of the tools you will use, then word_run or word_run_steps.")
+        return (catalog_lines() + "\n\nNot here yet: tables, pictures, headers and "
+                "footers, comments and tracked changes. Paragraph direction "
+                "(right to left) and tab stops work on Windows only."
+                "\n\nNext: word_describe(names=[...]) for the arguments of the tools "
+                "you will use, then word_run or word_run_steps.")
     found, missing = {}, []
     for name in names:
         tool = mcp.registered_tool(name)
