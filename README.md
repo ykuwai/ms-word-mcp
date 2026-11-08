@@ -117,6 +117,10 @@ The live check creates a document, runs the tools on it, prints PASS or FAIL
 for each step, exports a PDF and closes the document. It touches no other
 document.
 
+On Windows, while a client has the server running, `uv sync` cannot replace
+`.venv\Scripts\ms-word-mcp.exe`; run the tests with `uv run --no-sync`, or
+stop the server first.
+
 ## Credits
 
 Built with [ppt-mcp](https://github.com/ykuwai/ppt-mcp)'s design. AlonSoko
