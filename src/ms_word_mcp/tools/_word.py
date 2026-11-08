@@ -7,6 +7,8 @@ back from Word after the change.
 
 from __future__ import annotations
 
+import re
+
 # Values Word uses, written out here so nothing depends on makepy constants.
 WD_UNDEFINED = 9999999
 WD_CHARACTER = 1
@@ -160,6 +162,56 @@ ALIGNMENTS = {"left": 0, "center": 1, "right": 2, "justify": 3, "distribute": 4}
 ALIGNMENT_NAMES = {v: k for k, v in ALIGNMENTS.items()}
 
 
+_RUBY_CODE = re.compile(r"\\s\\up\s*\d+\((.*?)\),(.*)\)\s*$", re.S)
+
+
+def ruby_of(code: str) -> tuple[str, str] | None:
+    """(text, reading) from the EQ field Word stores ruby in, or None."""
+    m = _RUBY_CODE.search(code or "")
+    return (m.group(2), m.group(1)) if m else None
+
+
+def with_ruby(text: str, codes: list[str]) -> tuple[str, list[dict]]:
+    """A paragraph's text with its ruby fields' words in place of their \\x15 marks.
+
+    Word answers a single \\x15 for text that has ruby (measured on both
+    platforms). `codes` are the field codes of the paragraph, in order.
+    """
+    found = [r for r in (ruby_of(c) for c in codes) if r]
+    rubies = [{"text": base, "ruby": reading} for base, reading in found]
+    for base, _ in found:
+        text = text.replace("\x15", base, 1)
+    return text.replace("\x15", ""), rubies
+
+
+def locate_spans(raw: str, spans: list[str], read, start: int, hidden: int) -> list[tuple[int, int]]:
+    """Word's (start, end) of each span, in order, each read back from Word.
+
+    `raw` is the paragraph's text; Word's positions run ahead of it by up to
+    `hidden` after ruby or another field that hides its characters.
+    """
+    def u16(text):
+        return len(text.encode("utf-16-le")) // 2
+
+    out, cursor, drift = [], 0, 0
+    for span in spans:
+        at = raw.find(span, cursor)
+        if at < 0:
+            raise ValueError(f"'{span}' is not in the paragraph after what comes before it. "
+                             "Give the spans in the order they come. Nothing was changed.")
+        base, n = start + u16(raw[:at]), u16(span)
+        for shift in range(drift, hidden + 1):
+            if read(base + shift, base + shift + n) == span:
+                out.append((base + shift, base + shift + n))
+                drift = shift
+                break
+        else:
+            raise ValueError(f"'{span}' could not be found in Word at its place. Nothing "
+                             "was changed.")
+        cursor = at + len(span)
+    return out
+
+
 def clean_text(text: str) -> str:
     """A range's text without its paragraph mark or cell marker."""
     return (text or "").rstrip("\r\x07")
@@ -263,6 +315,12 @@ def fonts_of(rng) -> dict:
 def paragraph_info(index: int, p, detail: bool = False) -> dict:
     rng = p.Range
     info = {"index": index, "text": clean_text(rng.Text), "style": style_name(p.Style)}
+    if "\x15" in info["text"]:
+        fields = rng.Fields
+        info["text"], rubies = with_ruby(
+            info["text"], [fields.Item(i).Code.Text for i in range(1, fields.Count + 1)])
+        if rubies:
+            info["ruby"] = rubies
     level = p.OutlineLevel
     if level != WD_OUTLINE_BODY:
         info["outline_level"] = level

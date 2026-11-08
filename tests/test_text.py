@@ -109,3 +109,11 @@ def test_paragraph_models_refuse_paragraph_marks():
         text.NewParagraph(text="a\rb")
     with pytest.raises(ValueError):
         text.InsertParagraphsInput(paragraphs=[{"text": "a"}], after=1, before=2)
+
+
+def test_styles_go_on_runs_of_paragraphs():
+    items = [{"text": "a", "style": "Heading 1"}, {"text": "b", "style": None},
+             {"text": "c", "style": "Normal"}, {"text": "d", "style": "Normal"},
+             {"text": "e", "style": "Heading 1"}]
+    assert text.style_runs(items) == [("Heading 1", 0, 0), ("Normal", 2, 3),
+                                      ("Heading 1", 4, 4)]

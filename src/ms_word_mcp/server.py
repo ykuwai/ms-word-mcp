@@ -282,9 +282,11 @@ mainly Latin document. East Asian layouts measure spacing in grid lines
 mcp = WordServer("ms_word_mcp", lifespan=app_lifespan, instructions=INSTRUCTIONS)
 
 from .tools import (  # noqa: E402,F401 - mac registers the Mac halves
-    documents, edit, equations, fields, formatting, lists, mac, screen, tables, text, view)
+    documents, edit, equations, fields, formatting, lists, mac, page, references, screen, tables,
+    text, view)
 
-for module in (documents, text, formatting, lists, tables, equations, fields, view, screen, edit):
+for module in (documents, text, formatting, lists, tables, references, equations, fields, page,
+               view, screen, edit):
     module.register(mcp)
 
 
@@ -392,6 +394,8 @@ def summary(description):
 
 AREAS = {"documents": "Documents", "text": "Reading and writing text",
          "formatting": "Formatting and styles", "lists": "Lists", "tables": "Tables",
+         "references": "Pictures, captions and cross-references",
+         "page": "The page: setup, vertical text, headers, footers, ruby",
          "equations": "Equations", "fields": "Fields and tables of contents",
          "view": "View", "screen": "Seeing a page", "edit": "Undo"}
 
@@ -497,8 +501,8 @@ async def word_describe(names: list[str] | None = None) -> str:
     with word_describe().
     """
     if not names:
-        return (catalog_lines() + "\n\nNot here yet: pictures, headers and footers, comments and "
-                "tracked changes. Paragraph direction (right to left), tab stops and "
+        return (catalog_lines() + "\n\nNot here yet: comments and tracked changes, footnotes. "
+                "Paragraph direction (right to left), tab stops and "
                 "adding table columns work on Windows only."
                 "\n\nNext: word_describe(names=[...]) for the arguments of the tools "
                 "you will use, then word_run or word_run_steps.")

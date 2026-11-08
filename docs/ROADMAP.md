@@ -51,6 +51,11 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
   fields, the tables of contents (whole or page numbers only) or the SEQ
   numbers, in the whole document or in some paragraphs.
 
+- Pictures in line with the text, numbered captions under any label in any
+  language, live cross-references to captions, equations and headings.
+- The page: paper, margins, columns, document grid, vertical text; headers,
+  footers and page numbers; ruby.
+
 - Tables: insert one filled with its cells (style, heading rows, grid
   lines, column widths and alignments, autofit, position), list and read
   them, write and format blocks of cells (shading, bold, color, alignment),
@@ -59,10 +64,17 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
 
 ## Next
 
-First, a fix to what is there: **read in bulk.** word_get_outline and
-word_get_paragraphs ask Word one paragraph at a time, which the reference
-branch measured at 15-20 s for 1,000 paragraphs. Read the whole text in one
-call and the styles from the document's XML instead (see PROBES.md).
+First, fixes to what is there, for long documents (PROBES.md, Reading):
+
+- **word_get_outline** now reads Word's heading list and checks each
+  heading (1,000 paragraphs: 2.5 s instead of 28 s on Windows, 3.4 s
+  instead of 20 s on the Mac).
+- **word_get_paragraphs** still asks Word three or more times a paragraph
+  (up to 200 a call). The styles could come from the document's XML on
+  Windows (Content.WordOpenXML) and through VBA on the Mac.
+- **word_insert_paragraphs** now sets a style on each run of paragraphs
+  that share it and reads the text back in one call (1,000 paragraphs:
+  4.5 s instead of 49 s on Windows, 6.5 s instead of 57 s on the Mac).
 
 Then, ordered roughly by what the owner stressed.
 
@@ -73,19 +85,15 @@ Then, ordered roughly by what the owner stressed.
 3. **Equations, the rest.** Inline equations inside a paragraph,
    chapter-style numbers (2.1) with STYLEREF, cross-references to equations,
    editing an equation in place.
-4. **Figures and tables.** Pictures; captions with numbering for figures
-   and tables, cross-references, list of figures; the cells of a table
-   marked as such in word_get_paragraphs; splitting cells, sorting, table
+4. **Figures and tables, the rest.** Floating pictures, cropping, a list of
+   figures, numbers with the chapter (2.1); splitting cells, sorting, table
    borders one side at a time.
-5. **Cross-references.** Bookmarks, REF fields to headings, figures, tables and
-   equations.
-6. **Japanese typography.** Vertical text (section text direction, document
-   grid), ruby (phonetic guide), emphasis marks, East Asian line breaking
-   rules, character-unit indents, mixed-script spacing.
+5. **Footnotes and endnotes**, hyperlinks, bookmarks of the user's own.
+6. **Japanese typography, the rest.** Removing ruby outright, vertical text
+   in part of a page (text boxes), tate-chu-yoko.
 7. **View.** Zoom (percentage, page width, whole page), view type, follow
    edits in a second window.
-8. Headers, footers and page numbers; page setup; sections; table of
-   contents.
+8. Adding sections (section breaks); a header of several paragraphs.
 9. Comments and tracked changes; spelling and a document health check.
 10. Page previews.
 

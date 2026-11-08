@@ -15,10 +15,11 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from .. import backend
-from ._common import READ_ONLY, WRITES, Input, annotations, call, follow, mac_impl
-from ._word import check_span, clean_text, paragraph, span_range
+from ._common import READ_ONLY, WRITES, Input, annotations, call, follow, mac_impl, mac_with_active
+from ._word import check_span, clean_text, locate_spans, paragraph, span_range
 
 WD_FIELD_EMPTY = -1
+REFERENCE_KINDS = ("REF", "PAGEREF")
 
 
 def toc_code(upper: int, lower: int, hyperlinks: bool, page_numbers: bool,
@@ -119,12 +120,13 @@ def _insert_toc_impl(after, before, upper_level, lower_level, hyperlinks, page_n
 
 
 class UpdateFieldsInput(Input):
-    what: Literal["all", "tables_of_contents", "page_numbers", "numbers"] = Field(
+    what: Literal["all", "tables_of_contents", "page_numbers", "numbers", "references"] = Field(
         "all", description=(
             "all: every field in the main text. tables_of_contents: rebuild the tables "
             "of contents (entries and page numbers). page_numbers: only the page numbers "
             "of the tables of contents, leaving their entries. numbers: SEQ fields "
-            "(equation, figure and table numbers)."))
+            "(equation, figure and table numbers). references: cross-references (REF and "
+            "PAGEREF fields)."))
     start: int | None = Field(None, ge=1, description=(
         "Only the fields in these paragraphs: first paragraph..."))
     end: int | None = Field(None, ge=1, description="...last paragraph.")
@@ -186,6 +188,8 @@ def _update_fields_impl(what, start, end):
             kind = _kind(f.Code.Text)
             if what == "numbers" and kind != "SEQ":
                 continue
+            if what == "references" and kind not in REFERENCE_KINDS:
+                continue
             if what in ("tables_of_contents", "page_numbers") and kind != "TOC":
                 continue
             # Field.Update answers True when the update worked (the page's own
@@ -235,11 +239,14 @@ def _insert_field_impl(index, code, position, match):
     rng = p.Range
     text = rng.Text
     if match is not None:
-        at = text.find(match)
-        if at < 0:
+        if text.find(match) < 0:
             raise ValueError(f"'{match}' is not in paragraph {index}. Nothing was inserted.")
-        s = rng.Start + len(text[:at].encode("utf-16-le")) // 2
-        target = doc.Range(s, s + len(match.encode("utf-16-le")) // 2)
+        # Read back at its place: a field already in the paragraph hides its
+        # code from the text, and a position counted from the text landed
+        # inside that code (seen in a Sonnet trial).
+        hidden = max(0, rng.End - rng.Start - len(text.encode("utf-16-le")) // 2)
+        s, e = locate_spans(text, [match], lambda a, b: doc.Range(a, b).Text, rng.Start, hidden)[0]
+        target = doc.Range(s, e)
     elif position == "start":
         target = doc.Range(rng.Start, rng.Start)
     else:
@@ -263,9 +270,9 @@ def _mac_new_field(app, doc, start, end, code):
     """Make a field over [start, end) and find it again by its position."""
     from appscript import k
 
-    app.create_new_field(text_range=doc.create_range(start=start, end_=end),
-                         field_type=k.field_empty, field_text=code,
-                         preserve_formatting=False)
+    mac_with_active(app, doc, lambda: app.create_new_field(
+        text_range=doc.create_range(start=start, end_=end), field_type=k.field_empty,
+        field_text=code, preserve_formatting=False))
     for f in _mac_fields(doc):
         s = f.field_code.start_of_content.get()
         if start - 1 <= s <= start + 2:
@@ -331,6 +338,8 @@ def _mac_update_fields(what, start, end):
             continue
         if what == "numbers" and kind != "SEQ":
             continue
+        if what == "references" and kind not in REFERENCE_KINDS:
+            continue
         if what in ("tables_of_contents", "page_numbers") and kind != "TOC":
             continue
         try:
@@ -383,11 +392,17 @@ def _mac_insert_field(index, code, position, match):
     start, end = m._bounds(doc, index)
     if match is not None:
         content = doc.paragraphs[index].text_object.content.get()
-        at = content.find(match)
-        if at < 0:
+        if content.find(match) < 0:
             raise ValueError(f"'{match}' is not in paragraph {index}. Nothing was inserted.")
-        s = start + m._u16(content, at)
-        e = s + m._u16(match, len(match))
+
+        def read(a, b):
+            try:
+                return doc.create_range(start=a, end_=b).content.get()
+            except Exception:  # noqa: BLE001 - half a character: not here
+                return None
+
+        hidden = max(0, end - start - m._u16(content, len(content)))
+        s, e = locate_spans(content, [match], read, start, hidden)[0]
     elif position == "start":
         s = e = start
     else:

@@ -17,7 +17,8 @@ can write and format a document while you work in it.
   complex-script (Arabic, Hebrew...) text each have their own font. East Asian
   layouts get spacing in grid lines and indents in character widths, line
   breaking rules, hanging punctuation and emphasis marks; lists can be
-  numbered in full-width digits, ①, 一, ア, 가, א, α, а and more.
+  numbered in full-width digits, ①, 一, ア, 가, א, α, а and more. Vertical
+  text and ruby (furigana) too.
 - **Styles first.** Every character and paragraph property can be set on a
   style as well as on text, so a document's look is defined once.
 - **Equations.** From LaTeX or UnicodeMath, built by Word's own equation
@@ -44,6 +45,8 @@ every tool instead.
 | Styles | `word_apply_style`, `word_list_styles`, `word_get_style`, `word_set_style` |
 | Lists | `word_apply_list`, `word_set_list_level`, `word_remove_list`, `word_get_list` |
 | Tables | `word_insert_table`, `word_list_tables`, `word_get_table`, `word_set_table`, `word_set_table_cells`, `word_format_table_cells`, `word_insert_table_rows`, `word_delete_table_rows`, `word_insert_table_columns` (Windows), `word_delete_table_columns`, `word_merge_table_cells`, `word_delete_table` |
+| Pictures, captions, cross-references | `word_insert_picture`, `word_list_pictures`, `word_set_picture`, `word_insert_caption`, `word_list_captions`, `word_insert_cross_reference` |
+| The page | `word_get_page_setup`, `word_set_page_setup` (paper, margins, columns, document grid, vertical text), `word_get_headers_footers`, `word_set_header_footer`, `word_set_page_numbers`, `word_add_ruby` (furigana) |
 | Equations | `word_insert_equation`, `word_list_equations`, `word_get_equation` |
 | Fields and tables of contents | `word_insert_table_of_contents`, `word_insert_field`, `word_list_fields`, `word_update_fields` |
 | View | `word_get_view`, `word_set_view` |
@@ -109,6 +112,9 @@ Other clients (Claude Desktop, Cursor, `.mcp.json`):
 - Each change is its own Undo step (Word for Mac's scripting cannot group
   them), and a style can be changed but not created. Tools say so in their
   results.
+- Word asks you about each file outside its own folder, so `word_insert_picture`
+  puts a copy in Word's folder for a moment and reads it there. The first time,
+  macOS may ask once whether the app the server runs in may use Word's data.
 - Word for Mac makes a table only in the active document, so inserting a
   table brings its document forward for a moment and then gives the
   previously active one back. Columns cannot be added to a table there.

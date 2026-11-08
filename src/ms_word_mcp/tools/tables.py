@@ -23,7 +23,8 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from .. import backend
-from ._common import DESTRUCTIVE, READ_ONLY, WRITES, Input, annotations, call, follow, mac_impl
+from ._common import (
+    DESTRUCTIVE, READ_ONLY, WRITES, Input, annotations, call, follow, mac_impl, mac_with_active)
 from ._props import bgr, hex_of
 from ._word import ALIGNMENTS, BUILTIN_STYLES, flag, index_of, paragraph, resolve_style
 
@@ -233,8 +234,8 @@ def _place(count: int, after, before) -> int:
 def _in_table_error(index: int) -> ValueError:
     return ValueError(
         f"Paragraph {index} is inside a table, and a table there would be a table in a "
-        "cell. Put the new table before the table's first paragraph or after its last "
-        "(word_list_tables gives them).")
+        "cell. Put the new table after a paragraph outside the table, or after the "
+        "table's last paragraph (word_list_tables gives them).")
 
 
 def _rows_from_tokens(text: str, cells_per_row: list[int]) -> list[list[str]]:
@@ -259,14 +260,14 @@ def _block(n_rows, n_cols, row, column, values):
 
 
 def _settle_new_rows(is_heading, bold_of, settle, after_row, first, n, total) -> None:
-    """Make added rows look like the row above them.
+    """Make added rows plain, or bold like the row above them.
 
-    A new row copies a neighbouring row, heading format and bold included,
-    and which one differs (on the Mac rows added before a bold total row
-    came out bold, in a trial). Rows added under the headings are data:
-    not headings, not bold. Rows added among data take the bold of the row
-    above. Rows added inside the heading block, or above it, are left as
-    they came.
+    A new row copies a neighbouring row, heading format, bold, color and
+    italic included, and which row differs (on the Mac rows added before a
+    bold total row came out bold, in a trial). Rows added under the headings
+    are data: not headings, not bold. Rows added among data lose what they
+    copied and take the bold of the row above. Rows added inside the heading
+    block, or above it, are left as they came.
     """
     if after_row == 0:
         return
@@ -470,9 +471,10 @@ def _insert_table_impl(rows, after, before, header_rows, style, borders, column_
         _table_style(doc, style)  # an unknown style refuses before anything changes
     count = doc.Paragraphs.Count
     at = _place(count, after, before)
-    if at <= count and paragraph(doc, at).Range.Information(WD_WITHIN_TABLE):
-        raise _in_table_error(at)
     after_table = at > 1 and bool(paragraph(doc, at - 1).Range.Information(WD_WITHIN_TABLE))
+    if at <= count and paragraph(doc, at).Range.Information(WD_WITHIN_TABLE) and (
+            at == 1 or after_table):
+        raise _in_table_error(at)
     # The table goes into an empty paragraph of its own: made in a paragraph
     # with text, it would take that text into its first cell. Right after
     # another table, one more empty paragraph keeps the two apart; two
@@ -664,8 +666,9 @@ def _insert_rows_impl(table, after_row, count, values):
         def settle(r, heading, bold):
             if heading is not None:
                 tb.Rows.Item(r).HeadingFormat = heading
-            if bold is not None:
-                tb.Rows.Item(r).Range.Font.Bold = bold
+            tb.Rows.Item(r).Range.Font.Reset()
+            if bold:
+                tb.Rows.Item(r).Range.Font.Bold = True
 
         _settle_new_rows(lambda r: tb.Rows.Item(r).HeadingFormat in (True, -1),
                          lambda r: flag(tb.Rows.Item(r).Range.Font.Bold),
@@ -958,30 +961,6 @@ def _mac_cell(tb, r, c):
     return tb.get_cell_from_table(row=r, column=c)
 
 
-def _mac_with_active(app, doc, make):
-    """Run `make` with `doc` the active document, then give the user's back.
-
-    Word for Mac makes a table only in the active document (-1708 in any
-    other, measured), so the target is made active for the moment.
-    """
-    try:
-        before = app.active_document.name.get()
-    except Exception:  # noqa: BLE001 - no document active
-        before = None
-    name = doc.name.get()
-    if before == name:
-        return make()
-    doc.activate_object()
-    try:
-        return make()
-    finally:
-        if before:
-            try:
-                app.documents[before].activate_object()
-            except Exception:  # noqa: BLE001 - the table landed either way
-                pass
-
-
 @mac_impl(_insert_table_impl)
 def _mac_insert_table(rows, after, before, header_rows, style, borders, column_widths,
                       autofit, alignment, column_alignments):
@@ -1003,14 +982,15 @@ def _mac_insert_table(rows, after, before, header_rows, style, borders, column_w
         return _mac_true(doc.paragraphs[i].text_object.get_range_information(
             information_type=k.with_in_table))
 
-    if at <= count and in_table(at):
+    after_table = at > 1 and in_table(at - 1)
+    if at <= count and in_table(at) and (at == 1 or after_table):
         raise _in_table_error(at)
-    blank = [{"text": "", "style": "Normal"}] * (2 if at > 1 and in_table(at - 1) else 1)
+    blank = [{"text": "", "style": "Normal"}] * (2 if after_table else 1)
     index = MAC_IMPLS[text._insert_paragraphs_impl.__name__](
         blank, None, at if at <= count else None)["inserted"][-1]["index"]
     start, _ = m._bounds(doc, index)
     tables_before = int(doc.count(each=k.table))
-    _mac_with_active(app, doc, lambda: doc.make(
+    mac_with_active(app, doc, lambda: doc.make(
         new=k.table, at=doc.create_range(start=start, end_=start),
         with_properties={k.number_of_rows: n_rows, k.number_of_columns: n_cols}))
     if int(doc.count(each=k.table)) != tables_before + 1:
@@ -1226,8 +1206,9 @@ def _mac_insert_rows(table, after_row, count, values):
         def settle(r, heading, bold):
             if heading is not None:
                 tb.rows[r].heading_format.set(heading)
-            if bold is not None:
-                tb.rows[r].text_object.bold.set(bold)
+            tb.rows[r].text_object.font_object.reset()
+            if bold:
+                tb.rows[r].text_object.bold.set(True)
 
         def bold_of(r):
             value = tb.rows[r].text_object.bold.get()
@@ -1298,7 +1279,7 @@ def _mac_merge_cells(table, from_row, from_column, to_row, to_column, text):
     _check_cells(*_mac_size(tb), to_row, to_column)
     # Merging makes the document the active one (measured), so the user's
     # active document is given back afterwards.
-    _mac_with_active(backend.word.get_app(), doc, lambda: _mac_cell(
+    mac_with_active(backend.word.get_app(), doc, lambda: _mac_cell(
         tb, from_row, from_column).merge_cell(with_=_mac_cell(tb, to_row, to_column)))
     cell = _mac_cell(tb, from_row, from_column)
     if text is not None:

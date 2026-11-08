@@ -24,7 +24,7 @@ from . import documents, edit, formatting
 from . import text as text_tools
 from ._common import mac_impl
 from . import _props as P
-from ._word import BUILTIN_STYLES, spacing_in_lines
+from ._word import BUILTIN_STYLES, spacing_in_lines, with_ruby
 
 MAX_PARAGRAPHS_PER_READ = text_tools.MAX_PARAGRAPHS_PER_READ
 
@@ -135,6 +135,14 @@ def _info(doc, index: int, detail: bool = False) -> dict:
     p = doc.paragraphs[index]
     out = {"index": index, "text": _clean(p.text_object.content.get()),
            "style": p.style.name_local.get()}
+    if "\x15" in out["text"]:
+        k = _k()
+        rng = p.text_object
+        out["text"], rubies = with_ruby(out["text"], [
+            rng.fields[i].field_code.content.get()
+            for i in range(1, int(rng.count(each=k.field)) + 1)])
+        if rubies:
+            out["ruby"] = rubies
     level = _name(p.outline_level.get())
     if level != "outline_level_body_text":
         out["outline_level"] = int(level.rsplit("level", 1)[1])
@@ -274,10 +282,48 @@ def get_document_info():
             "track_revisions": bool(doc.track_revisions.get())}
 
 
+def _fast_outline(doc, count: int):
+    """text_tools._fast_outline on the Mac: Word's heading list, each read back."""
+    from ._outline import locate_headings, split_texts
+
+    k = _k()
+    items = list(doc.get_cross_reference_items(reference_type=k.reference_type_heading)
+                 or [])
+    if not items:
+        return []
+
+    texts, levels = {}, {}
+
+    def read_text(i):
+        if i not in texts:
+            texts[i] = (doc.paragraphs[i].text_object.content.get()
+                        if 1 <= i <= count else None)
+        return texts[i]
+
+    def read_level(i):
+        if i not in levels:
+            level = _name(doc.paragraphs[i].outline_level.get())
+            levels[i] = (None if level == "outline_level_body_text"
+                         else int(level.rsplit("level", 1)[1]))
+        return levels[i]
+
+    found = locate_headings(items, split_texts(doc.text_object.content.get() or ""),
+                            read_text, read_level)
+    if found is None:
+        return None
+    # The text and level were read to place each heading; only the style is new.
+    return [{"index": i, "level": levels[i], "text": _clean(texts[i]),
+             "style": doc.paragraphs[i].style.name_local.get()} for i in found]
+
+
 @mac_impl(text_tools._get_outline_impl)
-def get_outline():
+def get_outline(every_paragraph=False):
     doc = backend.word.document()
     count = _count(doc)
+    if not every_paragraph:
+        headings = _fast_outline(doc, count)
+        if headings is not None:
+            return {"success": True, "paragraphs": count, "headings": headings}
     headings = []
     for i in range(1, count + 1):
         level = _name(doc.paragraphs[i].outline_level.get())
@@ -308,6 +354,12 @@ def get_paragraphs(start, end, detail):
 
 
 # -- writing ---------------------------------------------------------------------
+
+def _in_table(doc, index: int) -> bool:
+    """`get range information` answers text: 'true' or 'false' (measured)."""
+    return str(doc.paragraphs[index].text_object.get_range_information(
+        information_type=_k().with_in_table)).lower() == "true"
+
 
 def _scroll(doc, start: int, end: int) -> None:
     """Scroll the document's window to about where [start, end) is.
@@ -358,6 +410,10 @@ def insert_paragraphs(paragraphs, after, before):
         first = at
         start, _ = _bounds(doc, at)
         try:
+            if at > 1 and _in_table(doc, at) and not _in_table(doc, at - 1):
+                # At the start of a table's first cell the text would go into
+                # the cell, so it takes the way round below.
+                raise LookupError
             doc.create_range(start=start, end_=start).content.set("\r".join(texts) + "\r")
         except Exception:  # noqa: BLE001 - measured below
             # Measured on Word 16.114: text set at the start of a paragraph that
@@ -378,20 +434,32 @@ def insert_paragraphs(paragraphs, after, before):
                     "\r" + "\r".join(texts))
                 paragraphs = [{**item, "style": item.get("style") or "Normal"}
                               for item in paragraphs]
+    # A style goes on each run of paragraphs that share it, and the text is
+    # read back in one call: a call or more a paragraph took 57 s for 1,000
+    # paragraphs (docs/PROBES.md, Reading).
+    for style, a, b in text_tools.style_runs(paragraphs):
+        rng = doc.create_range(start=_bounds(doc, first + a)[0],
+                               end_=_bounds(doc, first + b)[1])
+        rng.style.set(_style_value(doc, style))
+        rng.font_object.reset()
+    last = first + len(texts) - 1
+    span = doc.create_range(start=_bounds(doc, first)[0], end_=_bounds(doc, last)[1])
+    got = (span.content.get() or "").split("\r")
+    looks: dict = {}
     written, warnings = [], []
     for offset, item in enumerate(paragraphs):
         index = first + offset
-        if item.get("style"):
-            p = doc.paragraphs[index]
-            p.style.set(_style_value(doc, item["style"]))
-            p.text_object.font_object.reset()
-        info = _info(doc, index)
-        if info["text"] != texts[offset]:
-            warnings.append(f"Paragraph {index} reads back as {info['text']!r}, not "
+        key = item.get("style")
+        if key not in looks:  # the style and level, read once for each style given
+            info = _info(doc, index)
+            looks[key] = {k: info[k] for k in ("style", "outline_level") if k in info}
+        now = _clean(got[offset]) if offset < len(got) else ""
+        if now != texts[offset]:
+            warnings.append(f"Paragraph {index} reads back as {now!r}, not "
                             f"{texts[offset]!r}.")
-        written.append(info)
+        written.append({"index": index, "text": now, **looks[key]})
     if written:
-        _scroll(doc, *_bounds(doc, written[-1]["index"]))
+        _scroll(doc, *_bounds(doc, last))
     out = {"success": True, "inserted": written, "paragraphs": _count(doc)}
     if warnings:
         out["warnings"] = warnings
@@ -402,10 +470,12 @@ def insert_paragraphs(paragraphs, after, before):
 def set_paragraph_text(index, text):
     doc = backend.word.document()
     _para(doc, index)
-    start, _ = _bounds(doc, index)
+    start, end = _bounds(doc, index)
     old = _clean(doc.paragraphs[index].text_object.content.get())
     value = text.replace("\n", "\v")
-    doc.create_range(start=start, end_=start + _u16(old, len(old))).content.set(value)
+    # To the paragraph's real end: a field hides its code from the text, and
+    # a range that stopped inside one was refused (-1708, seen in a trial).
+    doc.create_range(start=start, end_=end - 1).content.set(value)
     info = _info(doc, index)
     _scroll(doc, *_bounds(doc, index))
     out = {"success": True, "paragraph": info, "was": old}

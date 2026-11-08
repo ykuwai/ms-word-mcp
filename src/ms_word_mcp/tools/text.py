@@ -19,6 +19,7 @@ from ._word import (
 )
 
 MAX_PARAGRAPHS_PER_READ = 200
+WD_WITHIN_TABLE = 12  # WdInformation
 
 
 # -- reading -------------------------------------------------------------------
@@ -45,10 +46,56 @@ def _get_document_info_impl():
     }
 
 
-def _get_outline_impl():
+WD_REF_TYPE_HEADING = 1  # WdReferenceType
+
+
+class OutlineInput(Input):
+    every_paragraph: bool = Field(False, description=(
+        "Also find paragraphs given an outline level without a heading style, by "
+        "reading every paragraph: seconds on a long document."))
+
+
+def _fast_outline(doc, count: int) -> list[dict] | None:
+    """The headings from Word's heading list, each read back; None if one is not found."""
+    from ._outline import locate_headings, split_texts
+
+    items = list(doc.GetCrossReferenceItems(WD_REF_TYPE_HEADING) or ())
+    if not items:
+        return []
+    paragraphs, texts, levels = {}, {}, {}
+
+    def para(i):
+        if i not in paragraphs:
+            paragraphs[i] = doc.Paragraphs.Item(i)
+        return paragraphs[i]
+
+    def read_text(i):
+        if i not in texts:
+            texts[i] = para(i).Range.Text if 1 <= i <= count else None
+        return texts[i]
+
+    def read_level(i):
+        if i not in levels:
+            level = para(i).OutlineLevel
+            levels[i] = None if level == WD_OUTLINE_BODY else int(level)
+        return levels[i]
+
+    found = locate_headings(items, split_texts(doc.Content.Text), read_text, read_level)
+    if found is None:
+        return None
+    # The text and level were read to place each heading; only the style is new.
+    return [{"index": i, "level": levels[i], "text": clean_text(texts[i]),
+             "style": style_name(para(i).Style)} for i in found]
+
+
+def _get_outline_impl(every_paragraph=False):
     doc = backend.word.document()
-    headings = []
     count = doc.Paragraphs.Count
+    if not every_paragraph:
+        headings = _fast_outline(doc, count)
+        if headings is not None:
+            return {"success": True, "paragraphs": count, "headings": headings}
+    headings = []
     for index, p in paragraphs_in(doc, 1, count):
         level = p.OutlineLevel
         if level != WD_OUTLINE_BODY:
@@ -118,6 +165,26 @@ class InsertParagraphsInput(Input):
         return self
 
 
+def _starts_table(doc, at: int) -> bool:
+    """Whether paragraph `at` is the first of a table (the one before is not in it)."""
+    return bool(paragraph(doc, at).Range.Information(WD_WITHIN_TABLE)
+                and not paragraph(doc, at - 1).Range.Information(WD_WITHIN_TABLE))
+
+
+def style_runs(paragraphs: list[dict]) -> list[tuple[str, int, int]]:
+    """(style, first offset, last offset) of each run of paragraphs given one style."""
+    runs: list[list] = []
+    for offset, item in enumerate(paragraphs):
+        style = item.get("style")
+        if not style:
+            continue
+        if runs and runs[-1][0] == style and runs[-1][2] == offset - 1:
+            runs[-1][2] = offset
+        else:
+            runs.append([style, offset, offset])
+    return [tuple(r) for r in runs]
+
+
 def _insert_paragraphs_impl(paragraphs: list[dict], after: int | None,
                             before: int | None):
     doc = backend.word.document()
@@ -150,10 +217,11 @@ def _insert_paragraphs_impl(paragraphs: list[dict], after: int | None,
     else:
         first_index = at
         target = paragraph(doc, at)
-        if at > 1 and target.Range.OMaths.Count:
+        if at > 1 and (target.Range.OMaths.Count or _starts_table(doc, at)):
             # Text put at the start of a paragraph that holds an equation goes
             # into the equation, which refuses a paragraph mark (measured on
-            # Word for Windows; the Mac refuses it too). The new paragraphs go
+            # Word for Windows; the Mac refuses it too), and at the start of a
+            # table's first cell it goes into the cell. The new paragraphs go
             # in at the end of the paragraph before instead, and take its
             # formatting, so each gets a style below.
             end = paragraph(doc, at - 1).Range.End - 1
@@ -165,20 +233,32 @@ def _insert_paragraphs_impl(paragraphs: list[dict], after: int | None,
             rng = doc.Range(start, start)
             rng.InsertAfter("\r".join(texts) + "\r")
 
+    # A style goes on each run of paragraphs that share it, and the text is
+    # read back in one call, rather than several calls a paragraph.
+    last_index = first_index + len(texts) - 1
+    for style, a, b in style_runs(paragraphs):
+        rng = doc.Range(paragraph(doc, first_index + a).Range.Start,
+                        paragraph(doc, first_index + b).Range.End)
+        rng.Style = resolve_style(doc, style)
+        rng.Font.Reset()
+    span = doc.Range(paragraph(doc, first_index).Range.Start,
+                     paragraph(doc, last_index).Range.End)
+    got = (span.Text or "").split("\r")
+    looks: dict = {}
     written, warnings = [], []
-    for offset, (index, p) in enumerate(
-            paragraphs_in(doc, first_index, first_index + len(texts) - 1)):
-        wanted = paragraphs[offset].get("style")
-        if wanted:
-            p.Style = resolve_style(doc, wanted)
-            p.Range.Font.Reset()
-        info = paragraph_info(index, p)
-        if info["text"] != texts[offset].replace("\v", "\v"):
-            warnings.append(f"Paragraph {index} reads back as {info['text']!r}, not "
+    for offset, item in enumerate(paragraphs):
+        index = first_index + offset
+        key = item.get("style")
+        if key not in looks:  # the style and level, read once for each style given
+            info = paragraph_info(index, paragraph(doc, index))
+            looks[key] = {k: info[k] for k in ("style", "outline_level") if k in info}
+        now = clean_text(got[offset]) if offset < len(got) else ""
+        if now != texts[offset]:
+            warnings.append(f"Paragraph {index} reads back as {now!r}, not "
                             f"{texts[offset]!r}.")
-        written.append(info)
+        written.append({"index": index, "text": now, **looks[key]})
     if written:
-        follow(doc, paragraph(doc, written[-1]["index"]).Range)
+        follow(doc, paragraph(doc, last_index).Range)
     result = {"success": True, "inserted": written, "paragraphs": doc.Paragraphs.Count}
     if warnings:
         result["warnings"] = warnings
@@ -205,8 +285,7 @@ def _set_paragraph_text_impl(index: int, text: str):
     p = paragraph(doc, index)
     rng = p.Range
     old = clean_text(rng.Text)
-    end = rng.Start + len(old)
-    target = doc.Range(rng.Start, end)
+    target = doc.Range(rng.Start, rng.End - 1)  # a field hides its code from the text
     target.Text = text.replace("\n", "\v")
     p = paragraph(doc, index)
     info = paragraph_info(index, p)
@@ -313,13 +392,15 @@ def register(mcp) -> None:
         return await call(_get_document_info_impl)
 
     @mcp.tool(name="word_get_outline", annotations=annotations("Outline", READ_ONLY))
-    async def word_get_outline() -> str:
+    async def word_get_outline(params: OutlineInput) -> str:
         """The document's headings, with their level and paragraph index.
 
         Start here to find your way around a document; then read the parts
-        you need with word_get_paragraphs.
+        you need with word_get_paragraphs. Headings are the paragraphs Word
+        lists as headings (heading styles); `every_paragraph` also finds
+        paragraphs given an outline level directly.
         """
-        return await call(_get_outline_impl)
+        return await call(_get_outline_impl, params.every_paragraph)
 
     @mcp.tool(name="word_get_paragraphs", annotations=annotations("Read paragraphs", READ_ONLY))
     async def word_get_paragraphs(params: GetParagraphsInput) -> str:

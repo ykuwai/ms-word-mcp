@@ -134,7 +134,7 @@ def test_unknown_tool_gets_a_suggestion(word):
 
 def test_writing_calls_name_an_undo_step_and_reads_do_not(word, make_doc):
     make_doc("one")
-    call("word_get_outline", {})
+    call("word_get_outline", {"params": {}})
     call("word_insert_paragraphs", {"params": {"paragraphs": [{"text": "x"}]}})
     assert word.calls == [("_get_outline_impl", None),
                           ("_insert_paragraphs_impl", "Insert paragraphs")]

@@ -105,6 +105,45 @@ pushed it with the measurements to the `reference` branch of this repository
 - **Tables of contents:** a `TOC` field made with `create new field` gives the
   same table as Word's own command, on both platforms.
 
+## Reading a long document (Word 16, both platforms)
+
+Measured with `scripts/probes/mac_bulk_reads.py` and
+`scripts/probes/outline_speed.py` on 2026-11-08 (1,000 paragraphs).
+
+| What | Windows | Mac |
+|---|---|---|
+| One paragraph's outline level | | 17 ms a paragraph (200 in 3.4 s) |
+| A property of every paragraph in one Apple Event (`outline level of every paragraph`, `content`, `style`) | | 22-25 s each: slower than one at a time. Paragraph formatting, fonts, a slice of paragraphs, or their starts: no answer within 60 s (-1712). |
+| The whole text | | One call, 0.00-0.02 s |
+| The whole text split at `\r` | | 31 pieces for 19 paragraphs with two equations (each equation's text holds marks of its own) and a table of contents: the split cannot number paragraphs by itself |
+| Word's heading list (`get cross reference items` with `reference type heading`) | | One call, 9 ms. Paragraphs in a heading style only: a Normal paragraph given outline level 2 directly is not in it. Each item is the heading's text indented two spaces a level; a tab or line break becomes a space, the heading's own leading spaces are dropped, and a long heading is cut at about 100 characters. |
+| `go to next` a heading item from the start | | Stopped moving after three headings: not used |
+| word_get_outline, 1,000 paragraphs, 40 headings, 10 numbered equations | Every paragraph: 28.2 s and 37.0 s in two runs. Heading list, each heading read back: 2.5 s and 6.7 s, the same 40 headings | Every paragraph: 19.9 s. Heading list, each heading read back: 3.4 s, the same 40 headings |
+| word_insert_paragraphs, 1,000 paragraphs | 48.6 s, a style set and read back a paragraph at a time; 4.5 s by runs of a style, read back in one call | 57 s the same way; 6.5 s with a style set on each run of paragraphs that share it and the text read back in one call |
+
+## Pictures, captions, references, the page, ruby (Word 16, both platforms)
+
+Measured with `scripts/probes/windows_layout.py` and `scripts/probes/mac_layout.py`
+on 2026-11-08, then through the live check.
+
+| What | Windows | Mac |
+|---|---|---|
+| A picture from a file | `InlineShapes.AddPicture(path, False, True, range)`, no prompt; in a document that is not active | `make new inline picture` in a document that is not active. **A file outside Word's container makes Word ask the user, and the call times out (-1712) while it waits**, per file, even in a folder where Word has saved documents. From a copy inside the container: no prompt. |
+| Its natural size, 40 x 20 pixels | 30 x 15 pt | 40 x 20 pt |
+| Setting one side | Width alone leaves the height; with `LockAspectRatio` on the height follows | The width alone leaves the height, so both are set |
+| A caption | Paragraph in Caption, `SEQ Figure \* ARABIC` over a placeholder: "Figure 1: A red box". `GetCrossReferenceItems("Figure")` lists it. | The same. `get cross reference items` takes only the enumerated types (-1708 for a label). |
+| A cross-reference | Hidden bookmark `_Ref100000001` over "Figure 1" (start of the paragraph to the field's result end + 1) and `REF _Ref100000001 \h`: "Figure 1". Not in `Bookmarks` unless `ShowHidden` | The same, `make new bookmark` `at` the document. A bookmark round a numbered equation's SEQ field works. |
+| Which calls change the active document | `Range.PhoneticGuide` | `create new field`, `merge cell`, `phonetic guide`: the target is made active and the user's document given back |
+| Headers and footers | `Sections(n).Headers(i).Range.Text`; `doc.Fields.Add(range.Characters(n), -1, "PAGE", False)` | `get header`/`get footer` of a section; `create new field` over `characters n` of its `text object`; `create range` is the main text's |
+| Page numbers | `PageNumbers.NumberStyle`, `RestartNumberingAtSection`, `StartingNumber` | `page number options` of the footer: the same |
+| Vertical text | `Section.Range.Orientation = 1` (wdTextOrientationVerticalFarEast): the page turns (595 x 842 becomes 842 x 595) | `orientation` of the section's `text object`, `text orientation vertical east asian`: the same |
+| Tables when the direction changes | Not measured apart from the live check, which passes | They float (`wrap around text` true) and go left; in vertical text `wrap around text` cannot be turned off. Back in horizontal text, wrap off first: setting it resets a table's alignment. |
+| Ruby | `Range.PhoneticGuide(text)` makes an EQ field (`\o\ad(\s\up 10(かんじ),漢字)`), and the text it covers reads as one `\x15` | `phonetic guide` with every parameter (`raise` 0 places it): the same field, `\x15` too |
+| A position counted from a paragraph's text | Runs behind Word's once a field is in the paragraph: the text shows a field's result and hides its code | The same. A second cross-reference placed that way went inside the first's code (-1708, and the first was damaged; seen in a Sonnet trial), so places are read back from Word. |
+| Changing text that has a field or ruby | A range that stops inside a field | The same: `content` of a range stopping inside one is refused (-1708). To the paragraph's real end it is taken. |
+| Changing ruby | `Field.Delete`, then the words inserted at the field's place | `delete` of the field, the same |
+| Document grid | `LinesPage = 30` or `CharsLine = 40` refused in vertical text ("the value is out of range") | Taken |
+
 ## Tables (Word 16, both platforms)
 
 Measured with `scripts/probes/windows_tables.py` (Microsoft 365 16.0.20527,
