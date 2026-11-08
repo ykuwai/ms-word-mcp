@@ -32,7 +32,12 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
 
 ## Next
 
-Ordered roughly by what the owner stressed.
+First, a fix to what is there: **read in bulk.** word_get_outline and
+word_get_paragraphs ask Word one paragraph at a time, which the reference
+branch measured at 15-20 s for 1,000 paragraphs. Read the whole text in one
+call and the styles from the document's XML instead (see PROBES.md).
+
+Then, ordered roughly by what the owner stressed.
 
 1. **Styles, every property.** Create and modify styles: base and next
    style, font (all three scripts and every character property), paragraph
@@ -61,5 +66,6 @@ Ordered roughly by what the owner stressed.
 
 ## Platforms
 
-The Mac half of each tool is written and measured after its Windows half.
-Until then the tool refuses on macOS and says so.
+Every tool has a Mac half, measured on Word for Mac (`scripts/live_check.py`
+passes on both platforms). A tool added later gets its Mac half in the same
+change, or refuses on macOS and says so until it has one.

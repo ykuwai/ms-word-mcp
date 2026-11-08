@@ -47,3 +47,32 @@ the first run; the three failures are below and were fixed).
 | Undo record | One `UndoRecord` custom record per call: a single `Document.Undo(1)` took back a whole rewrite. |
 | Font.Bold | Reads back -1 for bold. |
 | Page | A new document from Normal: A4 (595.3 × 841.9 pt), margins 99.25 / 85.05 / 85.05 / 85.05 pt. |
+
+## From the reference branch
+
+AlonSoko measured Word 16 on both platforms before writing his own version, and
+pushed it with the measurements to the `reference` branch of this repository
+(`docs/PROBES.md` there, with the probe scripts and their output under
+`probes/`). What bears on this server, in short:
+
+- **Reading one paragraph at a time is slow.** 1,000 paragraphs with their
+  outline level took 20 s through COM and 15 s through Apple Events. The whole
+  text comes in one call (13 ms), the headings in one call
+  (`GetCrossReferenceItems`), and styles with the document's XML
+  (`Content.WordOpenXML`, 84 ms). word_get_outline and word_get_paragraphs
+  here still walk paragraph by paragraph; see ROADMAP.
+- **Starting Word for Mac:** with `open -g -j` (hidden) Word loses track of
+  its documents once the front one closes; `open -g` does not.
+- **Commands that make their document the active one on the Mac:**
+  `make new table` (fails once, then works) and `create new field`. The
+  user's active document has to be put back afterwards.
+- **The Mac sandbox:** saving outside Word's container raises an access
+  prompt; inside it, none. Files are written in the container and moved.
+- **Undo on the Mac** is one step per Apple Event. VBA's `UndoRecord` groups
+  edits inside one macro run only.
+- **Word for Mac's PDF export** always draws comments and tracked changes in a
+  margin.
+- **Language:** text marked with the custom locale `0x0C00` is never
+  spell-checked.
+- **Tables of contents:** a `TOC` field made with `create new field` gives the
+  same table as Word's own command, on both platforms.
