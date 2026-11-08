@@ -68,8 +68,8 @@ First, fixes to what is there, for long documents (PROBES.md, Reading):
   (up to 200 a call). The styles could come from the document's XML on
   Windows (Content.WordOpenXML) and through VBA on the Mac.
 - **word_insert_paragraphs** now sets a style on each run of paragraphs
-  that share it and reads the text back in one call (1,000 paragraphs on
-  the Mac: 6.5 s instead of 57 s).
+  that share it and reads the text back in one call (1,000 paragraphs:
+  4.5 s instead of 49 s on Windows, 6.5 s instead of 57 s on the Mac).
 
 Then, ordered roughly by what the owner stressed.
 

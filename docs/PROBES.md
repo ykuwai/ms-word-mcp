@@ -118,8 +118,8 @@ Measured with `scripts/probes/mac_bulk_reads.py` and
 | The whole text split at `\r` | | 31 pieces for 19 paragraphs with two equations (each equation's text holds marks of its own) and a table of contents: the split cannot number paragraphs by itself |
 | Word's heading list (`get cross reference items` with `reference type heading`) | | One call, 9 ms. Paragraphs in a heading style only: a Normal paragraph given outline level 2 directly is not in it. Each item is the heading's text indented two spaces a level; a tab or line break becomes a space, the heading's own leading spaces are dropped, and a long heading is cut at about 100 characters. |
 | `go to next` a heading item from the start | | Stopped moving after three headings: not used |
-| word_get_outline, 1,000 paragraphs, 40 headings, 10 numbered equations | Every paragraph: 28.2 s. Heading list, each heading read back: 2.5 s, the same 40 headings | Every paragraph: 19.9 s. Heading list, each heading read back: 3.4 s, the same 40 headings |
-| word_insert_paragraphs, 1,000 paragraphs | 48.6 s, a style set and read back a paragraph at a time | 57 s the same way; 6.5 s with a style set on each run of paragraphs that share it and the text read back in one call |
+| word_get_outline, 1,000 paragraphs, 40 headings, 10 numbered equations | Every paragraph: 28.2 s and 37.0 s in two runs. Heading list, each heading read back: 2.5 s and 6.7 s, the same 40 headings | Every paragraph: 19.9 s. Heading list, each heading read back: 3.4 s, the same 40 headings |
+| word_insert_paragraphs, 1,000 paragraphs | 48.6 s, a style set and read back a paragraph at a time; 4.5 s by runs of a style, read back in one call | 57 s the same way; 6.5 s with a style set on each run of paragraphs that share it and the text read back in one call |
 
 ## Tables (Word 16, both platforms)
 
