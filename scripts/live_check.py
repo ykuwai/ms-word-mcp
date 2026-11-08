@@ -246,6 +246,10 @@ def run_steps(path: str) -> None:
          check=lambda o: o.get("replaced") == 1 and "warnings" not in o)
     step("the replacement landed where it was found", text._get_outline_impl,
          check=lambda o: all("squared" not in h["text"] for h in o["headings"]))
+    full = json.loads(_common.run(text._get_outline_impl, True))
+    step("the outline from Word's heading list is the one from every paragraph",
+         text._get_outline_impl, False,
+         check=lambda o: o["headings"] == full["headings"] and len(o["headings"]) >= 2)
     run_table_steps()
     step("picture of page 1", screen._get_page_image_impl, 1, None,
          check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)

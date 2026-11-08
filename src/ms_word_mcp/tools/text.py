@@ -45,10 +45,56 @@ def _get_document_info_impl():
     }
 
 
-def _get_outline_impl():
+WD_REF_TYPE_HEADING = 1  # WdReferenceType
+
+
+class OutlineInput(Input):
+    every_paragraph: bool = Field(False, description=(
+        "Also find paragraphs given an outline level without a heading style, by "
+        "reading every paragraph: seconds on a long document."))
+
+
+def _fast_outline(doc, count: int) -> list[dict] | None:
+    """The headings from Word's heading list, each read back; None if one is not found."""
+    from ._outline import locate_headings, split_texts
+
+    items = list(doc.GetCrossReferenceItems(WD_REF_TYPE_HEADING) or ())
+    if not items:
+        return []
+    paragraphs, texts, levels = {}, {}, {}
+
+    def para(i):
+        if i not in paragraphs:
+            paragraphs[i] = doc.Paragraphs.Item(i)
+        return paragraphs[i]
+
+    def read_text(i):
+        if i not in texts:
+            texts[i] = para(i).Range.Text if 1 <= i <= count else None
+        return texts[i]
+
+    def read_level(i):
+        if i not in levels:
+            level = para(i).OutlineLevel
+            levels[i] = None if level == WD_OUTLINE_BODY else int(level)
+        return levels[i]
+
+    found = locate_headings(items, split_texts(doc.Content.Text), read_text, read_level)
+    if found is None:
+        return None
+    # The text and level were read to place each heading; only the style is new.
+    return [{"index": i, "level": levels[i], "text": clean_text(texts[i]),
+             "style": style_name(para(i).Style)} for i in found]
+
+
+def _get_outline_impl(every_paragraph=False):
     doc = backend.word.document()
-    headings = []
     count = doc.Paragraphs.Count
+    if not every_paragraph:
+        headings = _fast_outline(doc, count)
+        if headings is not None:
+            return {"success": True, "paragraphs": count, "headings": headings}
+    headings = []
     for index, p in paragraphs_in(doc, 1, count):
         level = p.OutlineLevel
         if level != WD_OUTLINE_BODY:
@@ -313,13 +359,15 @@ def register(mcp) -> None:
         return await call(_get_document_info_impl)
 
     @mcp.tool(name="word_get_outline", annotations=annotations("Outline", READ_ONLY))
-    async def word_get_outline() -> str:
+    async def word_get_outline(params: OutlineInput) -> str:
         """The document's headings, with their level and paragraph index.
 
         Start here to find your way around a document; then read the parts
-        you need with word_get_paragraphs.
+        you need with word_get_paragraphs. Headings are the paragraphs Word
+        lists as headings (heading styles); `every_paragraph` also finds
+        paragraphs given an outline level directly.
         """
-        return await call(_get_outline_impl)
+        return await call(_get_outline_impl, params.every_paragraph)
 
     @mcp.tool(name="word_get_paragraphs", annotations=annotations("Read paragraphs", READ_ONLY))
     async def word_get_paragraphs(params: GetParagraphsInput) -> str:

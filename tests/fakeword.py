@@ -567,3 +567,16 @@ FakeDocument.ListTemplates = property(
 FakeRange.OMaths = property(lambda self: SimpleNamespace(Count=0))
 # No tables in a fake document.
 FakeDocument.Tables = property(lambda self: SimpleNamespace(Count=0))
+
+
+def _cross_reference_items(self, kind):
+    """Word's heading list: each heading's text, two spaces a level below 1."""
+    out = []
+    for p in self.paragraph_objects():
+        level = p.OutlineLevel
+        if level != 10:
+            out.append("  " * (level - 1) + p.Range.Text.rstrip("\r"))
+    return out
+
+
+FakeDocument.GetCrossReferenceItems = _cross_reference_items

@@ -274,10 +274,48 @@ def get_document_info():
             "track_revisions": bool(doc.track_revisions.get())}
 
 
+def _fast_outline(doc, count: int):
+    """text_tools._fast_outline on the Mac: Word's heading list, each read back."""
+    from ._outline import locate_headings, split_texts
+
+    k = _k()
+    items = list(doc.get_cross_reference_items(reference_type=k.reference_type_heading)
+                 or [])
+    if not items:
+        return []
+
+    texts, levels = {}, {}
+
+    def read_text(i):
+        if i not in texts:
+            texts[i] = (doc.paragraphs[i].text_object.content.get()
+                        if 1 <= i <= count else None)
+        return texts[i]
+
+    def read_level(i):
+        if i not in levels:
+            level = _name(doc.paragraphs[i].outline_level.get())
+            levels[i] = (None if level == "outline_level_body_text"
+                         else int(level.rsplit("level", 1)[1]))
+        return levels[i]
+
+    found = locate_headings(items, split_texts(doc.text_object.content.get() or ""),
+                            read_text, read_level)
+    if found is None:
+        return None
+    # The text and level were read to place each heading; only the style is new.
+    return [{"index": i, "level": levels[i], "text": _clean(texts[i]),
+             "style": doc.paragraphs[i].style.name_local.get()} for i in found]
+
+
 @mac_impl(text_tools._get_outline_impl)
-def get_outline():
+def get_outline(every_paragraph=False):
     doc = backend.word.document()
     count = _count(doc)
+    if not every_paragraph:
+        headings = _fast_outline(doc, count)
+        if headings is not None:
+            return {"success": True, "paragraphs": count, "headings": headings}
     headings = []
     for i in range(1, count + 1):
         level = _name(doc.paragraphs[i].outline_level.get())
