@@ -304,9 +304,19 @@ def run_review_steps() -> None:
              False, undo="Replace", check=lambda o: o.get("replaced") == 2)
         step("only the spaces searched for went", text._get_paragraphs_impl, 6, 6, False,
              check=lambda o: o["paragraphs"][0]["text"] == "b b x")
-        step("more than 500 matches are all replaced", text._find_replace_impl, "zeta", "eta",
-             True, False, False, undo="Replace",
-             check=lambda o: o.get("replaced") == 520 and "warnings" not in o)
+        # One call may run out of time (Windows: 433 of these in a call) and says
+        # so; calling again does the rest.
+        replaced = 0
+        for call_number in range(1, 6):
+            out = step(f"more than 500 matches, call {call_number}", text._find_replace_impl,
+                       "zeta", "eta", True, False, False, undo="Replace",
+                       check=lambda o: o.get("replaced", 0) > 0
+                       and (o.get("complete", True) or "Call again" in o["warnings"][-1]))
+            replaced += out.get("replaced", 0)
+            if out.get("complete", True):
+                break
+        step("all 520 were replaced", text._find_replace_impl, "zeta", None, True, False, False,
+             check=lambda o: o.get("matches") == 0 and replaced == 520)
         step("a replacement beyond the basic plane reads back", text._find_replace_impl, "swap me",
              "\U0001F600 done", True, False, False, undo="Replace",
              check=lambda o: o.get("replaced") == 1 and "warnings" not in o)

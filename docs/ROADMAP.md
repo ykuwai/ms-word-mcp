@@ -69,6 +69,9 @@ First, fixes to what is there, for long documents (PROBES.md, Reading):
 - **word_get_outline** now reads Word's heading list and checks each
   heading (1,000 paragraphs: 2.5 s instead of 28 s on Windows, 3.4 s
   instead of 20 s on the Mac).
+- **word_find_replace** on Windows finds about 40 matches a second, match by
+  match, so thousands take several calls (docs/PROBES.md, Replacing many
+  matches).
 - **word_get_paragraphs** still asks Word three or more times a paragraph
   (up to 200 a call). The styles could come from the document's XML on
   Windows (Content.WordOpenXML) and through VBA on the Mac.
