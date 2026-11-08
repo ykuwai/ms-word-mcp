@@ -254,6 +254,13 @@ def run_steps(path: str) -> None:
          check=lambda o: o.get("bytes", 0) > 0)
 
 
+def _active_document():
+    return {"name": backend.word.get_app().active_document.name.get()}
+
+
+_common.MAC_IMPLS[_active_document.__name__] = _active_document  # a Mac-only check
+
+
 def run_table_steps() -> None:
     t = step("table at the end, bold heading row, numbers on the right",
              tables._insert_table_impl,
@@ -317,6 +324,37 @@ def run_table_steps() -> None:
     step("merge the last row's first two cells", tables._merge_cells_impl, n, 4, 1, 4, 2,
          "Total", undo="Merge table cells",
          check=lambda o: o["merged_cell"] == "Total" and len(o["cells"][3]) == 2)
+    step("unshade, and bold, italic, color and size", tables._format_cells_impl, n, 2, 2, 1,
+         1, "none", True, True, "#C00000", 12.0, None, None, undo="Format table cells",
+         check=lambda o: o["cells"] == 1 and o["first_cell_reads"]["shading"] is None
+         and o["first_cell_reads"]["bold"] is True)
+    if "error" not in mid:
+        step("merge down a column", tables._merge_cells_impl, 1, 1, 1, 2, 1, None,
+             undo="Merge table cells", check=lambda o: len(o["cells"][1]) == 1)
+        step("read a table merged down a column", tables._get_table_impl, 1, 1,
+             check=lambda o: o["rows"] == 2 and o["cells"][1] == ["1"])
+        step("restyle it", tables._set_table_impl, 1, "Light Grid", None, None, None, None,
+             None, undo="Change table", check=lambda o: o["style"])
+        step("rows of it are added or refused with a reason", tables._insert_rows_impl, 1,
+             None, 1, None, undo="Insert table rows",
+             check=lambda o: "error" not in o or "merged down a column" in o["error"])
+    other = step("another document becomes the active one",
+                 documents._create_document_impl, None, None,
+                 check=lambda o: "error" not in o)
+    if "error" not in other:
+        step("add a row in a document that is not the active one",
+             tables._insert_rows_impl, n, 1, None, [["Kiwi", "1", "0.30"]],
+             undo="Insert table rows", check=lambda o: o["cells"][0][0] == "Kiwi")
+        step("merge in it", tables._merge_cells_impl, n, 2, 2, 2, 3, None,
+             undo="Merge table cells", check=lambda o: "error" not in o)
+        if backend.IS_MACOS:
+            step("the other document is still the active one", _active_document,
+                 check=lambda o: o["name"] == other["name"])
+        token = call_document.set(other["full_name"])
+        try:
+            step("close the other document", documents._close_document_impl, False)
+        finally:
+            call_document.reset(token)
     step("list the tables", tables._list_tables_impl,
          check=lambda o: len(o["tables"]) == 3 and o["tables"][1]["first_row"][0] == "Item")
     if "error" not in second:

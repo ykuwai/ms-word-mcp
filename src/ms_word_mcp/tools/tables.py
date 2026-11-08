@@ -319,18 +319,23 @@ def _columns_reachable(what: str):
     Table.Uniform is not asked first: it read False on Windows for a table
     no cell of which had been merged (live check), while Columns(i) worked.
     """
-    from ..backend.com import ComError
-
     try:
         yield
-    except ComError as exc:
-        raise ValueError(f"This table has merged cells, so {what}. ({exc})") from None
+    except ValueError:
+        raise
+    except Exception:  # noqa: BLE001 - Word's refusal, answered
+        raise ValueError(f"This table has merged cells, so {what}. Nothing after "
+                         "that was changed.") from None
+
+
+ROWS_UNREACHABLE = ("Word cannot reach its rows one by one (a cell is merged down a "
+                    "column)")
 
 
 def _describe(doc, tb, number: int, cells: bool = True) -> dict:
     out = {"table": number, "rows": tb.Rows.Count, "columns": tb.Columns.Count,
            "style": tb.Style.NameLocal if tb.Style is not None else None,
-           "uniform": bool(tb.Uniform), "paragraphs": _span(doc, tb)}
+           "paragraphs": _span(doc, tb)}
     heading = 0
     for r in range(1, min(out["rows"], 10) + 1):
         try:
@@ -382,11 +387,12 @@ def _apply_look(doc, tb, style, header_rows, borders, column_widths, autofit,
     warnings = []
     if style is not None:
         if header_rows is None:
-            header_rows = _describe(doc, tb, 0, cells=False)["header_rows"]
+            header_rows = _describe(doc, tb, 0, cells=False)["header_rows"] or None
         _set_style(doc, tb, style)
     if header_rows is not None:
-        for r in range(1, min(tb.Rows.Count, max(header_rows, 10)) + 1):
-            tb.Rows.Item(r).HeadingFormat = r <= header_rows
+        with _columns_reachable(ROWS_UNREACHABLE):
+            for r in range(1, min(tb.Rows.Count, max(header_rows, 10)) + 1):
+                tb.Rows.Item(r).HeadingFormat = r <= header_rows
         tb.ApplyStyleHeadingRows = header_rows > 0
     if borders is not None:
         tb.Borders.Enable = bool(borders)
@@ -603,20 +609,21 @@ def _insert_rows_impl(table, after_row, count, values):
         raise ValueError(f"The table has {rows} rows.")
     if values and max(len(v) for v in values) > n_cols:
         raise ValueError(f"A new row has more cells than the table's {n_cols} columns.")
-    for i in range(n):
-        if after_row + i < rows + i:
-            tb.Rows.Add(tb.Rows.Item(after_row + i + 1))
-        else:
-            tb.Rows.Add()
     first = after_row + 1
-    _unhead(lambda r: tb.Rows.Item(r).HeadingFormat in (True, -1),
-            lambda r: (setattr(tb.Rows.Item(r), "HeadingFormat", False),
-                       setattr(tb.Rows.Item(r).Range.Font, "Bold", False)),
-            after_row, first, n, tb.Rows.Count)
+    with _columns_reachable(ROWS_UNREACHABLE):
+        for i in range(n):
+            if after_row < rows:
+                tb.Rows.Add(tb.Rows.Item(after_row + i + 1))
+            else:
+                tb.Rows.Add()
+        _unhead(lambda r: tb.Rows.Item(r).HeadingFormat in (True, -1),
+                lambda r: (setattr(tb.Rows.Item(r), "HeadingFormat", False),
+                           setattr(tb.Rows.Item(r).Range.Font, "Bold", False)),
+                after_row, first, n, tb.Rows.Count)
     for r, line in enumerate(values or [], start=first):
         for c, value in enumerate(line, start=1):
             tb.Cell(r, c).Range.Text = _text(value)
-    follow(doc, tb.Rows.Item(first).Range)
+    follow(doc, tb.Cell(first, 1).Range)
     return {"success": True, "table": table, "inserted_rows": [first, first + n - 1],
             "rows": tb.Rows.Count, "cells": _grid(tb, first, n),
             "paragraphs": _span(doc, tb)}
@@ -631,8 +638,9 @@ def _delete_rows_impl(table, start, end):
         raise ValueError(f"Rows {start} to {end} are not all in the table: it has {rows}.")
     if start == 1 and end == rows:
         raise ValueError("That is every row. Use word_delete_table to delete the table.")
-    for r in range(end, start - 1, -1):
-        tb.Rows.Item(r).Delete()
+    with _columns_reachable(ROWS_UNREACHABLE):
+        for r in range(end, start - 1, -1):
+            tb.Rows.Item(r).Delete()
     follow(doc, tb.Range)
     return {"success": True, "table": table, "rows": tb.Rows.Count,
             "paragraphs": _span(doc, tb)}
@@ -696,7 +704,7 @@ def _merge_cells_impl(table, from_row, from_column, to_row, to_column, text):
     follow(doc, cell.Range)
     return {"success": True, "table": table,
             "merged_cell": _cell_text(cell.Range.Text[:-len(CELL_END)]),
-            "uniform": bool(tb.Uniform), "cells": _grid(tb),
+            "cells": _grid(tb),
             "paragraphs": _span(doc, tb)}
 
 
@@ -730,6 +738,11 @@ def _mac_span(doc, tb) -> dict:
             "last": int(doc.create_range(start=0, end_=end).count(each=k.paragraph))}
 
 
+def _mac_clean(content) -> str:
+    return content[:-len(CELL_END)] if isinstance(content, str) and \
+        content.endswith(CELL_END) else (content or "")
+
+
 def _mac_true(value) -> bool:
     """`get range information` answers text: 'true' or 'false' (measured)."""
     return value is True or str(value).lower() == "true"
@@ -744,11 +757,24 @@ def _mac_grid(tb, start_row: int = 1, limit: int = MAX_ROWS_PER_READ) -> list[li
 
     n_rows, n_cols = _mac_size(tb)
     if tb.uniform.get():
-        counts = [n_cols] * n_rows
-    else:
-        counts = [int(tb.rows[r].count(each=k.cell)) for r in range(1, n_rows + 1)]
-    rows = _rows_from_tokens(tb.text_object.content.get() or "", counts)
-    return rows[start_row - 1:start_row - 1 + limit]
+        rows = _rows_from_tokens(tb.text_object.content.get() or "", [n_cols] * n_rows)
+        return rows[start_row - 1:start_row - 1 + limit]
+    # With merged cells the rows' cell counts cannot be read (a cell merged
+    # down a column makes `rows` unreachable, -1728) and the text keeps an
+    # empty place for the cells under a merged one, so each cell is asked
+    # for. Those under a merged cell answer -1708 and are left out, as
+    # Windows leaves them out of a table's cells (measured).
+    out = []
+    for r in range(start_row, min(n_rows, start_row + limit - 1) + 1):
+        row = []
+        for c in range(1, n_cols + 1):
+            try:
+                row.append(_cell_text(_mac_clean(
+                    tb.get_cell_from_table(row=r, column=c).text_object.content.get())))
+            except Exception:  # noqa: BLE001 - no cell there
+                continue
+        out.append(row)
+    return out
 
 
 def _mac_describe(doc, tb, number: int, cells: bool = True) -> dict:
@@ -758,7 +784,7 @@ def _mac_describe(doc, tb, number: int, cells: bool = True) -> dict:
     except Exception:  # noqa: BLE001
         style = None
     out = {"table": number, "rows": n_rows, "columns": n_cols, "style": style,
-           "uniform": bool(tb.uniform.get()), "paragraphs": _mac_span(doc, tb)}
+           "paragraphs": _mac_span(doc, tb)}
     heading = 0
     for r in range(1, min(n_rows, 10) + 1):
         try:
@@ -846,12 +872,13 @@ def _mac_apply_look(doc, tb, style, header_rows, borders, column_widths, autofit
         # Setting a style on Word for Mac clears the rows' heading format
         # (measured), so the heading rows are put back.
         if header_rows is None:
-            header_rows = _mac_describe(doc, tb, 0, cells=False)["header_rows"]
+            header_rows = _mac_describe(doc, tb, 0, cells=False)["header_rows"] or None
         _mac_set_style(doc, tb, style)
     n_rows, n_cols = _mac_size(tb)
     if header_rows is not None:
-        for r in range(1, min(n_rows, max(header_rows, 10)) + 1):
-            tb.rows[r].heading_format.set(r <= header_rows)
+        with _columns_reachable(ROWS_UNREACHABLE):
+            for r in range(1, min(n_rows, max(header_rows, 10)) + 1):
+                tb.rows[r].heading_format.set(r <= header_rows)
         tb.apply_style_heading_rows.set(header_rows > 0)
     if borders is not None:
         tb.border_options.enable_borders.set(bool(borders))
@@ -1076,7 +1103,8 @@ def _mac_format_cells(table, from_row, to_row, from_column, to_column, shading, 
                 missing += 1
                 continue
             if shading == "none":
-                cell.shading.background_pattern_color_index.set(k.auto)
+                # A cell never shaded reads index `no highlight` (measured).
+                cell.shading.background_pattern_color_index.set(k.no_highlight)
             elif shading is not None:
                 v = shading.lstrip("#")
                 cell.shading.background_pattern_color.set(
@@ -1098,6 +1126,8 @@ def _mac_format_cells(table, from_row, to_row, from_column, to_column, shading, 
             done += 1
     first = _mac_cell(tb, from_row, from_column)
     raw = first.shading.background_pattern_color.get()
+    if first.shading.background_pattern_color_index.get() == k.no_highlight:
+        raw = None  # [0, 0, 0] then means no shading, not black
     bold_now = first.text_object.bold.get()
     sample = {"shading": (f"#{round(raw[0] / 257):02X}{round(raw[1] / 257):02X}"
                           f"{round(raw[2] / 257):02X}"
@@ -1127,16 +1157,17 @@ def _mac_insert_rows(table, after_row, count, values):
         raise ValueError(f"A new row has more cells than the table's {n_cols} columns.")
     # `make new row at end of rows` is refused (-1708); after a row, or before
     # the first, works (measured).
-    for i in range(n):
-        if after_row == 0:
-            doc.make(new=k.row, at=tb.rows[1].before)
-        else:
-            doc.make(new=k.row, at=tb.rows[after_row + i].after)
     first = after_row + 1
-    _unhead(lambda r: tb.rows[r].heading_format.get() is True,
-            lambda r: (tb.rows[r].heading_format.set(False),
-                       tb.rows[r].text_object.bold.set(False)),
-            after_row, first, n, _mac_size(tb)[0])
+    with _columns_reachable(ROWS_UNREACHABLE):
+        for i in range(n):
+            if after_row == 0:
+                doc.make(new=k.row, at=tb.rows[1].before)
+            else:
+                doc.make(new=k.row, at=tb.rows[after_row + i].after)
+        _unhead(lambda r: tb.rows[r].heading_format.get() is True,
+                lambda r: (tb.rows[r].heading_format.set(False),
+                           tb.rows[r].text_object.bold.set(False)),
+                after_row, first, n, _mac_size(tb)[0])
     for r, line in enumerate(values or [], start=first):
         for c, value in enumerate(line, start=1):
             _mac_cell(tb, r, c).text_object.content.set(_text(value))
@@ -1156,8 +1187,9 @@ def _mac_delete_rows(table, start, end):
         raise ValueError(f"Rows {start} to {end} are not all in the table: it has {rows}.")
     if start == 1 and end == rows:
         raise ValueError("That is every row. Use word_delete_table to delete the table.")
-    for r in range(end, start - 1, -1):
-        tb.rows[r].delete()
+    with _columns_reachable(ROWS_UNREACHABLE):
+        for r in range(end, start - 1, -1):
+            tb.rows[r].delete()
     return {"success": True, "table": table, "rows": _mac_size(tb)[0],
             "paragraphs": _mac_span(doc, tb)}
 
@@ -1197,13 +1229,16 @@ def _mac_merge_cells(table, from_row, from_column, to_row, to_column, text):
     doc = backend.word.document()
     tb = _mac_table(doc, table)
     _check_cells(*_mac_size(tb), to_row, to_column)
-    _mac_cell(tb, from_row, from_column).merge_cell(with_=_mac_cell(tb, to_row, to_column))
+    # Merging makes the document the active one (measured), so the user's
+    # active document is given back afterwards.
+    _mac_with_active(backend.word.get_app(), doc, lambda: _mac_cell(
+        tb, from_row, from_column).merge_cell(with_=_mac_cell(tb, to_row, to_column)))
     cell = _mac_cell(tb, from_row, from_column)
     if text is not None:
         cell.text_object.content.set(_text(text))
     return {"success": True, "table": table,
             "merged_cell": _cell_text(m._clean(cell.text_object.content.get())),
-            "uniform": bool(tb.uniform.get()), "cells": _mac_grid(tb),
+            "cells": _mac_grid(tb),
             "paragraphs": _mac_span(doc, tb)}
 
 
@@ -1244,7 +1279,8 @@ def register(mcp) -> None:
     @mcp.tool(name="word_get_table", annotations=annotations("Read a table", READ_ONLY))
     async def word_get_table(params: GetTableInput) -> str:
         """A table's cells as text, row by row (100 rows at a time), with its
-        size and style. Rows with merged cells hold fewer cells."""
+        size and style. Rows with merged cells hold fewer cells, and a cell's
+        column number is its place in that row."""
         return await call(_get_table_impl, params.table, params.start_row)
 
     @mcp.tool(name="word_set_table", annotations=annotations("Change a table", WRITES))
@@ -1311,8 +1347,11 @@ def register(mcp) -> None:
               annotations=annotations("Merge table cells", WRITES))
     async def word_merge_table_cells(params: MergeCellsInput) -> str:
         """Merge the cells from one corner to the other into one cell, keeping
-        their texts or putting `text` in it. Set column widths before merging:
-        a table with merged cells has no single width per column."""
+        their texts or putting `text` in it. Afterwards a row holds fewer
+        cells, and a cell's column number is its place in the row as
+        word_get_table shows it. Set column widths and add columns before
+        merging; a cell merged down a column stops rows being added or
+        deleted."""
         p = params
         return await call(_merge_cells_impl, p.table, p.from_row, p.from_column, p.to_row,
                           p.to_column, p.text, undo="Merge table cells")

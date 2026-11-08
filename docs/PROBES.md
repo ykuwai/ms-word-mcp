@@ -124,6 +124,9 @@ Japanese UI) and `scripts/probes/mac_tables.py` (Word 16.114.4) on
 | Deleting rows and columns | `Rows(i).Delete`, `Columns(i).Delete` | `delete row i`, `delete column i` |
 | Merging | `Cell(1,1).Merge(Cell(1,2))`: the cell holds both texts, a paragraph each; `Uniform` False; `Columns(1)` can no longer be reached ("cell widths differ") | `merge cell ... with` the same; `columns` can no longer be reached (-1728) |
 | `Uniform` | Read False in the live check for a table none of whose cells had been merged (rows added at the bottom, fitted to the window, cells shaded); why is not measured, so the tools do not ask it before reaching a column | True until cells are merged |
+| With another document active | Not measured beyond `Tables.Add` | Writing cells, `make new row`, `delete row`/`column`, style, heading format, borders, autofit, widths, row alignment, shading and fonts all work. **`merge cell` makes the table's document the active one.** (`scripts/probes/mac_tables_inactive.py`) |
+| A cell merged down a column | Not measured with the probe; the live check reads and restyles such a table | `rows` can no longer be reached (-1728) and `make new row` is refused (-1708); `get cell from table` for the cell under the merged one answers -1708; the table's text keeps an empty place for it (`r1c1\rr2c1\r\x07r1c2...\r\x07\r\x07` then an empty cell in row 2) |
+| A cell never shaded | | `background pattern color` reads [0, 0, 0] with `background pattern color index` `no highlight`; setting that index takes shading off |
 | Cells of a row with merged cells | `Rows(1).Cells.Count` 3 of 4 | `count rows 1 each cell` 2 of 3; `get cell from table row 1 column 2` is the cell after the merged one |
 | A table's text | Each cell ends in `\r\x07`, each row too after its cells | The same |
 | Shading | `Cell.Shading.BackgroundPatternColor` (BGR) | `background pattern color` of the cell's `shading`, 16-bit channels |
