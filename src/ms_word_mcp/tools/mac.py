@@ -1151,6 +1151,15 @@ def remove_list(start, end):
     return result
 
 
+@mac_impl(lists._restart_numbering_impl)
+def restart_numbering(index):
+    # Every way of doing this through Word for Mac's scripting left numbers
+    # that changed from one identical run to the next (docs/PROBES.md).
+    raise ValueError("Restarting the numbering is not available on macOS: Word for Mac's "
+                     "scripting renumbers the list unpredictably, sometimes the paragraphs "
+                     "before this one too. Nothing was changed.")
+
+
 @mac_impl(lists._get_list_impl)
 def get_list(index):
     doc = backend.word.document()

@@ -132,6 +132,26 @@ Measured with `scripts/probes/mac_bulk_reads.py` and
 | `shading` of a paragraph, its format, its text, or a style | All work and agree |
 | A background taken off | `background pattern color index` set to `no highlight`; the color then reads `[0, 0, 0]`, so the index is what tells |
 
+## Restarting a list's numbering (Word for Mac 16)
+
+A list numbered 1 to 5 alone in a document restarts at the third paragraph
+when `apply list template` with `list apply to this point forward` is given a
+range collapsed at that paragraph's start (1, 2, 1, 2, 3). Given the whole
+paragraph, it restarts the next one: the point is the range's end.
+
+In a document that also has numbered headings, the same steps gave different
+numbers from one identical run to the next, and they stayed that way when read
+again later. A list of four, restarting at the third:
+
+| Method | Results |
+|---|---|
+| Collapsed range, this point forward | 1, 2, 1, 2 in 3 of 8 runs; 3, 4, 1, 2 in 5 of 8 |
+| The rest of the list, `selection` | 1, 2, 1, 2 in 2 of 5 runs; unchanged in 3 of 5 |
+| A new list over the rest (`word_apply_list`) | 1, 2, 1, 2 once; 3, 4, 1, 2 once; 1, 2, 3, 1 three times out of 5 |
+
+So word_restart_numbering refuses on macOS. The last row also means
+`word_apply_list` over part of an existing list is unreliable on the Mac.
+
 ## Numbered headings (Word 16, both platforms)
 
 `scripts/probes/numbered_headings.py`: `word_apply_list` on the first heading

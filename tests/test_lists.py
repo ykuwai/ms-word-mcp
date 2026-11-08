@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from ms_word_mcp.tools import _common, lists
+from ms_word_mcp.tools import _common, lists, mac
 
 
 def answer(impl, *args):
@@ -81,3 +81,37 @@ def test_a_bulleted_level_of_a_multilevel_list_is_reported_as_a_bullet():
     assert lists.list_kind("outline_numbering", True) == "bullet"
     assert lists.list_kind("outline_numbering", False) == "outline_numbering"
     assert lists.list_kind("simple_numbering", False) == "simple_numbering"
+
+
+def test_numbering_starts_over_at_a_paragraph(make_doc):
+    make_doc("one", "two", "three", "four")
+    apply(1, 4, [level(number_style="arabic", number_format="%1.")])
+    out = answer(lists._restart_numbering_impl, 3)
+    assert "warnings" not in out
+    assert out["paragraph"]["list_string"] == "1."
+    assert out["next"]["list_string"] == "2."
+    assert answer(lists._get_list_impl, 2)["paragraph"]["list_string"] == "2."
+
+
+def test_restarting_a_paragraph_not_in_a_list_is_refused(make_doc):
+    make_doc("one")
+    out = answer(lists._restart_numbering_impl, 1)
+    assert "not in a list" in out["error"]
+
+
+def test_restarting_a_bullet_is_refused(make_doc):
+    make_doc("one")
+    apply(1, 1, [level(bullet="●")])
+    assert "has a bullet" in answer(lists._restart_numbering_impl, 1)["error"]
+
+
+def test_the_last_paragraph_has_no_next(make_doc):
+    make_doc("one", "two")
+    apply(1, 2, [level(number_style="arabic", number_format="%1.")])
+    assert "next" not in answer(lists._restart_numbering_impl, 2)
+
+
+def test_restarting_is_refused_on_the_mac():
+    with pytest.raises(ValueError, match="not available on macOS"):
+        mac.restart_numbering(1)
+

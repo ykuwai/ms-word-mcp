@@ -37,6 +37,7 @@ LIST_TYPES = {0: "none", 1: "listnum_field", 2: "bullet", 3: "simple_numbering",
               4: "outline_numbering", 5: "mixed_numbering", 6: "picture_bullet"}
 WD_WORD10_LIST_BEHAVIOR = 2
 WD_LIST_APPLY_TO_WHOLE_LIST = 0
+WD_LIST_APPLY_TO_THIS_POINT_FORWARD = 1
 
 
 class BulletFont(Input):
@@ -300,6 +301,53 @@ def _remove_list_impl(start, end):
     return result
 
 
+class RestartNumberingInput(Input):
+    index: int = Field(..., ge=1, description=(
+        "The paragraph whose number goes back to the start; those after it count "
+        "on from there."))
+
+
+def check_can_restart(info: dict) -> None:
+    if info["list"] == "none":
+        raise ValueError(f"Paragraph {info['index']} is not in a list. Make it one with "
+                         "word_apply_list first. Nothing was changed.")
+    if info["list"] in ("bullet", "picture_bullet"):
+        raise ValueError(f"Paragraph {info['index']} has a bullet, which has no number to "
+                         "restart. Nothing was changed.")
+
+
+def restart_answer(info: dict, following: dict | None, value: int, start_at: int) -> dict:
+    result = {"success": True, "paragraph": info}
+    if following is not None and following["list"] != "none":
+        result["next"] = following
+    if value != start_at:
+        result["warnings"] = [f"Paragraph {info['index']} reads back as number {value}, "
+                              f"not {start_at}, the number its level starts at."]
+    return result
+
+
+def _restart_numbering_impl(index):
+    doc = backend.word.document()
+    p = paragraph(doc, index)
+    check_can_restart(describe_paragraph_list(index, p))
+    # From the paragraph's start: "this point forward" means from the end of
+    # the range, so a whole paragraph would restart the one after it (measured
+    # on Word for Mac, docs/PROBES.md).
+    at = doc.Range(p.Range.Start, p.Range.Start)
+    fmt = at.ListFormat
+    fmt.ApplyListTemplate(ListTemplate=fmt.ListTemplate, ContinuePreviousList=False,
+                          ApplyTo=WD_LIST_APPLY_TO_THIS_POINT_FORWARD,
+                          DefaultListBehavior=WD_WORD10_LIST_BEHAVIOR)
+    p = paragraph(doc, index)
+    fmt = p.Range.ListFormat
+    start_at = fmt.ListTemplate.ListLevels.Item(fmt.ListLevelNumber).StartAt
+    after = p.Next()
+    following = describe_paragraph_list(index + 1, after) if after is not None else None
+    result = restart_answer(describe_paragraph_list(index, p), following, fmt.ListValue, start_at)
+    follow(doc, p.Range)
+    return result
+
+
 class GetListInput(Input):
     index: int = Field(..., ge=1, description="A paragraph of the list.")
 
@@ -345,6 +393,15 @@ def register(mcp) -> None:
         p = params
         return await call(_set_list_level_impl, p.start, p.end, p.level,
                           undo="List level")
+
+    @mcp.tool(name="word_restart_numbering",
+              annotations=annotations("Restart numbering", WRITES))
+    async def word_restart_numbering(params: RestartNumberingInput) -> str:
+        """Start a numbered list over at this paragraph: it goes back to 1 (or
+        the number its level starts at) and those after it count on from
+        there. Reads back the paragraph and the next one. Not available on
+        macOS, where Word's scripting renumbers the list unpredictably."""
+        return await call(_restart_numbering_impl, params.index, undo="Restart numbering")
 
     @mcp.tool(name="word_remove_list", annotations=annotations("Remove a list", DESTRUCTIVE))
     async def word_remove_list(params: ListSpanInput) -> str:

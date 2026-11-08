@@ -40,7 +40,9 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
   the bullet's own font, color and size, positions, levels; each list gets a
   template of its own so no other list changes. Read a list back, change
   levels, remove a list. Numbered headings: levels linked to the heading
-  styles number every heading, including ones added later.
+  styles number every heading, including ones added later. Restarting the
+  numbering in the middle of a list (Windows; Word for Mac's scripting gives
+  numbers that change from run to run, docs/PROBES.md).
 
 - Equations: display equations from LaTeX (converted with Word's own Math
   AutoCorrect symbols) or UnicodeMath, built by Word, numbered (1), (2)... at
@@ -87,8 +89,7 @@ Then, ordered roughly by what the owner stressed.
 
 1. **Styles, the rest.** Tab stops on the Mac, list linkage, the language
    of a style; creating a style on the Mac (through VBA).
-2. **Lists, the rest.** Restarting numbering in the middle of a list,
-   picture bullets.
+2. **Lists, the rest.** Picture bullets.
 3. **Equations, the rest.** Inline equations inside a paragraph,
    chapter-style numbers (2.1) with STYLEREF, cross-references to equations,
    editing an equation in place.

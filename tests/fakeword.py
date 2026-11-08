@@ -597,12 +597,22 @@ class FakeListFormat:
         lv = template.ListLevels.Item(level)
         if lv.NumberStyle == 23:
             return lv.NumberFormat
+        return lv.NumberFormat.replace(f"%{level}", str(self.ListValue))
+
+    @property
+    def ListValue(self):
+        mark = self._marks()[0]
+        template, level = mark["list"]
         same = [m for m in self.rng.doc.attrs if m.get("list") == mark["list"]]
-        number = lv.StartAt + next(i for i, m in enumerate(same) if m is mark)
-        return lv.NumberFormat.replace(f"%{level}", str(number))
+        at = next(i for i, m in enumerate(same) if m is mark)
+        since = next(i for i in range(at, -1, -1) if i == 0 or same[i].get("restart"))
+        return template.ListLevels.Item(level).StartAt + at - since
 
     def ApplyListTemplate(self, ListTemplate, ContinuePreviousList=False, ApplyTo=0,
                           DefaultListBehavior=2):
+        if ApplyTo == 1:  # this point forward: the list stays, and counts from here
+            self._marks()[0]["restart"] = True
+            return
         for mark in self._marks():
             mark["list"] = (ListTemplate, 1)
 

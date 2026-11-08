@@ -364,6 +364,24 @@ def run_heading_number_steps() -> None:
              [{"text": "Later", "style": "Heading 2"}], None, None, undo="Insert paragraphs")
         step("and reads 2.2", lists._get_list_impl, 7,
              check=lambda o: o["paragraph"].get("list_string") == "2.2")
+        step("a numbered list after the headings", text._insert_paragraphs_impl,
+             [{"text": t, "style": "Normal"} for t in ("a", "b", "c", "d")], None, None,
+             undo="Insert paragraphs")
+        step("numbered 1 to 4", lists._apply_list_impl, 8, 11,
+             [{"level": 1, "number_style": "arabic", "number_format": "%1."}], None, False,
+             undo="Apply list", check=lambda o: o["paragraphs"][3]["list_string"] == "4.")
+        if backend.IS_MACOS:
+            step("starting over is refused on the Mac", lists._restart_numbering_impl, 10,
+                 check=lambda o: "Nothing was changed" in o.get("error", ""))
+        else:
+            step("start over at the third", lists._restart_numbering_impl, 10,
+                 undo="Restart numbering",
+                 check=lambda o: "warnings" not in o and o["paragraph"]["list_string"] == "1."
+                 and o["next"]["list_string"] == "2.")
+        step("the ones before keep their numbers", lists._get_list_impl, 9,
+             check=lambda o: o["paragraph"]["list_string"] == "2.")
+        step("the headings keep theirs", lists._get_list_impl, 7,
+             check=lambda o: o["paragraph"]["list_string"] == "2.2")
         limit = text.READ_SECONDS
         text.READ_SECONDS = -1.0
         try:
