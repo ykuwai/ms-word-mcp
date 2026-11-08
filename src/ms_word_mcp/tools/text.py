@@ -146,9 +146,21 @@ def _insert_paragraphs_impl(paragraphs: list[dict], after: int | None,
             rng.InsertAfter("\r" + "\r".join(texts))
     else:
         first_index = at
-        start = paragraph(doc, at).Range.Start
-        rng = doc.Range(start, start)
-        rng.InsertAfter("\r".join(texts) + "\r")
+        target = paragraph(doc, at)
+        if at > 1 and target.Range.OMaths.Count:
+            # Text put at the start of a paragraph that holds an equation goes
+            # into the equation, which refuses a paragraph mark (measured on
+            # Word for Windows; the Mac refuses it too). The new paragraphs go
+            # in at the end of the paragraph before instead, and take its
+            # formatting, so each gets a style below.
+            end = paragraph(doc, at - 1).Range.End - 1
+            doc.Range(end, end).InsertAfter("\r" + "\r".join(texts))
+            paragraphs = [{**item, "style": item.get("style") or "Normal"}
+                          for item in paragraphs]
+        else:
+            start = target.Range.Start
+            rng = doc.Range(start, start)
+            rng.InsertAfter("\r".join(texts) + "\r")
 
     written, warnings = [], []
     for offset, (index, p) in enumerate(

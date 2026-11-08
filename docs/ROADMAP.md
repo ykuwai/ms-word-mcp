@@ -45,6 +45,12 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
   the right margin by a SEQ field in the UnicodeMath `#` number, so they
   renumber themselves; listed, and read back as UnicodeMath.
 
+- Fields and tables of contents: a table of contents for the whole document
+  or for part of it (a chapter, through a bookmark and \b), any field by its
+  code (PAGE, DATE, STYLEREF, SEQ, REF...), listing them, and updating all
+  fields, the tables of contents (whole or page numbers only) or the SEQ
+  numbers, in the whole document or in some paragraphs.
+
 ## Next
 
 First, a fix to what is there: **read in bulk.** word_get_outline and
@@ -63,8 +69,8 @@ Then, ordered roughly by what the owner stressed.
    editing an equation in place.
 4. **Figures and tables.** Pictures, tables with styles, captions with
    numbering, cross-references, list of figures.
-5. **Fields.** SEQ, REF, PAGE, TOC and the rest; insert, update, read codes
-   and results.
+5. **Cross-references.** Bookmarks, REF fields to headings, figures, tables and
+   equations.
 6. **Japanese typography.** Vertical text (section text direction, document
    grid), ruby (phonetic guide), emphasis marks, East Asian line breaking
    rules, character-unit indents, mixed-script spacing.

@@ -562,3 +562,6 @@ class FakeListFormat:
 FakeRange.ListFormat = property(lambda self: FakeListFormat(self))
 FakeDocument.ListTemplates = property(
     lambda self: self.__dict__.setdefault("_list_templates", FakeListTemplates()))
+
+# The fake has no equations.
+FakeRange.OMaths = property(lambda self: SimpleNamespace(Count=0))

@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from ms_word_mcp import backend  # noqa: E402
 from ms_word_mcp.backend import call_document  # noqa: E402
-from ms_word_mcp.tools import _common, documents, edit, equations, formatting, lists, text  # noqa: E402
+from ms_word_mcp.tools import _common, documents, edit, equations, fields, formatting, lists, text  # noqa: E402
 
 results: list[tuple[str, bool]] = []
 
@@ -158,22 +158,6 @@ def run_steps(path: str) -> None:
          check=lambda o: all(p["list"] == "none" for p in o["paragraphs"]))
     step("delete the list items", text._delete_paragraphs_impl, 6, 8,
          undo="Delete paragraphs", check=lambda o: o.get("paragraphs") == 5)
-    step("numbered equation from LaTeX", equations._insert_equation_impl,
-         r"\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}", "latex", True, "Equation",
-         5, None, undo="Insert equation",
-         check=lambda o: o.get("number") == "1" and "▒" in o.get("word_reads_it_as", ""))
-    step("second numbered equation, from UnicodeMath", equations._insert_equation_impl,
-         "a^2+b^2=c^2", "unicodemath", True, "Equation", 6, None, undo="Insert equation",
-         check=lambda o: o.get("number") == "2")
-    step("a numbered equation above renumbers", equations._insert_equation_impl,
-         r"E=mc^2", "latex", True, "Equation", 5, None, undo="Insert equation",
-         check=lambda o: o.get("number") == "1")
-    step("list the equations", equations._list_equations_impl,
-         check=lambda o: len(o.get("equations", [])) == 3)
-    step("read an equation back", equations._get_equation_impl, 7,
-         check=lambda o: "√" in o.get("unicodemath", ""))
-    step("delete the equations", text._delete_paragraphs_impl, 6, 8,
-         undo="Delete paragraphs", check=lambda o: o.get("paragraphs") == 5)
     step("apply Heading 2", formatting._apply_style_impl, 5, None, "Heading 2", True,
          undo="Apply style", check=lambda o: "warnings" not in o)
     step("rewrite a paragraph", text._set_paragraph_text_impl, 4, "Rewritten heading",
@@ -191,6 +175,44 @@ def run_steps(path: str) -> None:
          check=lambda o: len(o.get("styles", [])) >= 3)
     step("document info", text._get_document_info_impl,
          check=lambda o: o.get("paragraphs") == 4)
+    # Equations, fields and tables of contents last: they add paragraphs. The
+    # document is now: 1 title, 2 Heading 1, 3 body, 4 Heading 2.
+    step("numbered equation from LaTeX", equations._insert_equation_impl,
+         r"\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}", "latex", True, "Equation",
+         None, None, undo="Insert equation",
+         check=lambda o: o.get("index") == 5 and o.get("number") == "1"
+         and "▒" in o.get("word_reads_it_as", ""))
+    step("second numbered equation, from UnicodeMath", equations._insert_equation_impl,
+         "a^2+b^2=c^2", "unicodemath", True, "Equation", None, None, undo="Insert equation",
+         check=lambda o: o.get("index") == 6 and o.get("number") == "2")
+    step("a numbered equation above them renumbers", equations._insert_equation_impl,
+         r"E=mc^2", "latex", True, "Equation", None, 5, undo="Insert equation",
+         check=lambda o: o.get("index") == 5 and o.get("number") == "1")
+    step("list the equations", equations._list_equations_impl,
+         check=lambda o: [e.get("number") for e in o.get("equations", [])] in (
+             ["1", "2", "3"], [None, None, None]))
+    step("read an equation back", equations._get_equation_impl, 6,
+         check=lambda o: "√" in o.get("unicodemath", ""))
+    step("page number at the end", text._insert_paragraphs_impl,
+         [{"text": "Page ", "style": None}], None, None, undo="Insert paragraphs",
+         check=lambda o: o["inserted"][0]["index"] == 8)
+    step("PAGE field", fields._insert_field_impl, 8, "PAGE", "end", None,
+         undo="Insert field", check=lambda o: o.get("result") == "1")
+    step("table of contents for part of the document", fields._insert_toc_impl, None,
+         None, 1, 3, True, False, 2, 4, undo="Insert table of contents",
+         check=lambda o: "bookmark" in o and o.get("entries") == 2)
+    step("table of contents at the start", fields._insert_toc_impl, 0, None, 1, 3, True,
+         True, None, None, undo="Insert table of contents",
+         check=lambda o: o.get("index") == 1 and o.get("entries", 0) >= 2)
+    step("list the fields", fields._list_fields_impl, None, None,
+         check=lambda o: {"TOC", "SEQ", "PAGE"} <= {f["kind"] for f in o["fields"]})
+    step("update the equation numbers", fields._update_fields_impl, "numbers", None, None,
+         undo="Update fields", check=lambda o: o.get("updated") == 3)
+    step("update the tables of contents' page numbers", fields._update_fields_impl,
+         "page_numbers", None, None, undo="Update fields",
+         check=lambda o: o.get("updated") == 2)
+    step("update every field", fields._update_fields_impl, "all", None, None,
+         undo="Update fields", check=lambda o: o.get("updated", 0) >= 6)
     step("save", documents._save_document_impl)
     pdf = os.path.splitext(path)[0] + ".pdf"
     step("export PDF", documents._save_document_as_impl, pdf, True,

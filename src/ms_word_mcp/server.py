@@ -231,9 +231,9 @@ A result with `error` changed nothing unless it says otherwise.
 
 mcp = WordServer("ms_word_mcp", lifespan=app_lifespan, instructions=INSTRUCTIONS)
 
-from .tools import documents, edit, equations, formatting, lists, mac, text, view  # noqa: E402,F401 - mac registers the Mac halves
+from .tools import documents, edit, equations, fields, formatting, lists, mac, text, view  # noqa: E402,F401 - mac registers the Mac halves
 
-for module in (documents, text, formatting, lists, equations, view, edit):
+for module in (documents, text, formatting, lists, equations, fields, view, edit):
     module.register(mcp)
 
 
