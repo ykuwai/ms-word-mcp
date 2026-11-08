@@ -205,3 +205,22 @@ def test_a_new_style_does_not_take_the_formatting_where_the_cursor_is(make_doc):
     style = out["style"]
     assert style["base_style"] == "Normal"
     assert style["font"]["bold"] is False and style["font"]["size"] == 10.5
+
+
+def test_points_take_over_from_characters():
+    from ms_word_mcp.tools import _props
+
+    before, after = _props.paired_steps({"first_line_indent": 0.0})
+    assert before == {"first_line_indent_chars": 0.0} and after == {}
+    before, after = _props.paired_steps({"first_line_indent_chars": 0})
+    assert before == {} and after == {"first_line_indent": 0.0}
+    assert _props.paired_steps({"first_line_indent_chars": 1}) == ({}, {})
+
+
+def test_a_style_set_to_zero_characters_also_gets_zero_points(make_doc):
+    doc = make_doc("a")
+    style = doc.Styles.Item(-2)
+    style.ParagraphFormat.CharacterUnitFirstLineIndent = 1
+    style.ParagraphFormat.FirstLineIndent = 10.5
+    set_style("Heading 1", paragraph={"first_line_indent_chars": 0})
+    assert style.ParagraphFormat.FirstLineIndent == 0

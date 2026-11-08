@@ -102,21 +102,32 @@ def _bounds(doc, index: int) -> tuple[int, int]:
 
 
 def _style_value(doc, name: str):
-    """What to set `style` to: a built-in enumerator, or the document's own style."""
+    """What to set `style` to: a built-in enumerator, or the document's own style.
+
+    Word for Mac names its built-in style enumerators after the English names,
+    with some spaces dropped ("style heading1", "style toc1", "style list
+    paragraph"), so the spellings are tried in turn and checked with Word.
+    """
     key = " ".join(name.lower().split())
     if key in BUILTIN_STYLES:
-        enum = getattr(_k(), "style_" + key.replace(" ", "_").replace("heading_", "heading"),
-                       None)
-        if enum is not None:
-            return enum
+        k = _k()
+        for spelling in (key.replace(" ", "_"), key.replace(" ", ""),
+                         "_".join(key.split()[:-1]) + key.split()[-1]
+                         if len(key.split()) > 1 else key):
+            enum = getattr(k, "style_" + spelling)
+            try:
+                doc.Word_styles[enum].name_local.get()
+                return enum
+            except Exception:  # noqa: BLE001 - not this spelling
+                continue
     style = doc.Word_styles[name]
     try:
         style.name_local.get()
     except Exception:  # noqa: BLE001
         raise ValueError(
-            f"No style called '{name}' in this document. Use a built-in English name "
-            f"({', '.join(sorted(k.title() for k in BUILTIN_STYLES))}) or one that "
-            "word_list_styles gives.") from None
+            f"No style called '{name}' in this document. Use a built-in style's English "
+            "name (Normal, Heading 1, Title, Body Text, Caption, TOC 1, Header...: every "
+            "Word built-in style), or a name word_list_styles gives.") from None
     return style
 
 

@@ -189,8 +189,15 @@ def run_steps(path: str) -> None:
          r"E=mc^2", "latex", True, "Equation", None, 5, undo="Insert equation",
          check=lambda o: o.get("index") == 5 and o.get("number") == "1")
     step("list the equations", equations._list_equations_impl,
-         check=lambda o: [e.get("number") for e in o.get("equations", [])] in (
-             ["1", "2", "3"], [None, None, None]))
+         check=lambda o: [e.get("number") for e in o.get("equations", [])]
+         == ["1", "2", "3"])
+    step("TOC 1 by its English name", formatting._get_style_impl, "TOC 1",
+         check=lambda o: o.get("success") is True)
+    step("zero characters of indent on a style also zeroes its points",
+         formatting._set_style_impl, "Heading 2", None, None, None, None,
+         {"first_line_indent_chars": 0}, None, None, None, None, undo="Define style",
+         check=lambda o: o["style"]["paragraph"].get("first_line_indent") == 0
+         and "warnings" not in o)
     step("read an equation back", equations._get_equation_impl, 6,
          check=lambda o: "√" in o.get("unicodemath", ""))
     step("page number at the end", text._insert_paragraphs_impl,

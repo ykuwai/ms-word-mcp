@@ -319,21 +319,43 @@ def _com_read(prop: Prop, raw):
     return raw
 
 
+def paired_steps(spec: dict) -> tuple[dict, dict]:
+    """What to set before and after `spec` so a measure in points takes.
+
+    Word keeps an indent or a space both in points and in characters (or
+    lines), and the one in characters wins while it is not zero; a style
+    inherits both from its base. So a value in points is set after the
+    characters are made 0, and 0 characters also sets 0 points (seen in an
+    agent's run on the Mac: Normal's 1-character first-line indent stayed on
+    the headings based on it until both were 0).
+    """
+    before, after = {}, {}
+    for points, units in PAIRED_UNITS.items():
+        if points in spec and units not in spec:
+            before[units] = 0.0
+        if units in spec and spec[units] == 0 and points not in spec:
+            after[points] = 0.0
+    return before, after
+
+
 def com_apply(obj, props, spec: dict) -> dict:
     """Set each given property on a COM Font or ParagraphFormat.
 
     Returns {name: reason} for the ones Word refused; the rest still apply.
     """
-    refused = {}
-    for prop in props:
-        if prop.name not in spec:
-            continue
-        try:
-            setattr(obj, prop.com, _com_value(prop, spec[prop.name]))
-        except Exception as exc:  # noqa: BLE001 - reported to the caller
-            from ._common import error_text
+    from ._common import error_text
 
-            refused[prop.name] = error_text(exc)
+    refused = {}
+    before, after = paired_steps(spec) if props is PARAGRAPH_PROPS else ({}, {})
+    for step in (before, spec, after):
+        for prop in props:
+            if prop.name not in step:
+                continue
+            try:
+                setattr(obj, prop.com, _com_value(prop, step[prop.name]))
+            except Exception as exc:  # noqa: BLE001 - reported to the caller
+                if step is spec:
+                    refused[prop.name] = error_text(exc)
     return refused
 
 
@@ -489,16 +511,21 @@ def _mac_read(prop: Prop, raw):
 def mac_apply(obj, props, spec: dict) -> dict:
     """Set each given property on a Word for Mac font or paragraph format."""
     refused = {}
-    for prop in props:
-        if prop.name not in spec:
-            continue
-        if prop.mac is None:
-            refused[prop.name] = "Word for Mac has no such property; it works on Windows."
-            continue
-        try:
-            getattr(obj, prop.mac).set(_mac_value(prop, spec[prop.name]))
-        except Exception as exc:  # noqa: BLE001 - reported to the caller
-            refused[prop.name] = str(exc).splitlines()[0]
+    before, after = paired_steps(spec) if props is PARAGRAPH_PROPS else ({}, {})
+    for step in (before, spec, after):
+        for prop in props:
+            if prop.name not in step:
+                continue
+            if prop.mac is None:
+                if step is spec:
+                    refused[prop.name] = ("Word for Mac has no such property; it works "
+                                          "on Windows.")
+                continue
+            try:
+                getattr(obj, prop.mac).set(_mac_value(prop, step[prop.name]))
+            except Exception as exc:  # noqa: BLE001 - reported to the caller
+                if step is spec:
+                    refused[prop.name] = str(exc).splitlines()[0]
     return refused
 
 

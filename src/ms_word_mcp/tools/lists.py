@@ -94,10 +94,8 @@ class ApplyListInput(Input):
         "How each level looks; this does not put any paragraph at a level. A plain "
         "bulleted list is [{\"bullet\": \"●\"}]; a numbered one "
         "[{\"number_style\": \"arabic\", \"number_format\": \"%1.\"}]. Every "
-        "paragraph starts at level 1: move some to level 2 with `level` here (all "
-        "of them) or word_set_list_level afterwards (some of them)."))
-    level: int | None = Field(None, ge=1, le=9, description=(
-        "Put all these paragraphs at this level of the list (default 1)."))
+        "paragraph starts at level 1: move some to level 2 with "
+        "word_set_list_level afterwards."))
     continue_previous: bool = Field(False, description=(
         "Continue the numbering of the list before, rather than start at 1."))
 
@@ -319,8 +317,8 @@ def register(mcp) -> None:
         """Make paragraphs a bulleted or numbered list, with each level's bullet
         character or number format, the bullet's own font, color and size, and
         the positions of the number and the text. `levels` defines the look of
-        levels 1 to 9; paragraphs are at level 1 until `level` or
-        word_set_list_level moves them.
+        levels 1 to 9; every paragraph is at level 1 until word_set_list_level
+        moves it.
 
         The list gets a template of its own, so no other list in the document
         changes. Reads back each paragraph's list text (ListString) and each
@@ -328,7 +326,7 @@ def register(mcp) -> None:
         """
         p = params
         return await call(_apply_list_impl, p.start, p.end,
-                          [lv.model_dump() for lv in p.levels], p.level,
+                          [lv.model_dump() for lv in p.levels], None,
                           p.continue_previous, undo="Apply list")
 
     @mcp.tool(name="word_set_list_level", annotations=annotations("List level", WRITES))

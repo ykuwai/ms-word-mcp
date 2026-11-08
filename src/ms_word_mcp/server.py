@@ -214,9 +214,12 @@ user to stop typing.
 2. Read before writing: `word_get_outline` for the headings, then
    `word_get_paragraphs` for the parts you need.
 3. Define the look with styles before writing much text: `word_set_style` on
-   "Normal" for the body font (Latin and East Asian separately) and spacing,
-   and on "Heading 1", "Heading 2" for headings. The English built-in names
-   work in every language of Word. Then write with `word_insert_paragraphs`,
+   "Normal" for the body font (Latin and East Asian separately), and on
+   "Heading 1", "Heading 2" for headings. The English built-in names work in
+   every language of Word ("Normal", "Heading 1", "Title", "Body Text",
+   "TOC 1"...). Most styles are based on Normal and take what Normal does not
+   override: an indent or spacing for body text belongs on a body style such
+   as "Body Text", or headings, the title and the table of contents move too. Then write with `word_insert_paragraphs`,
    giving each paragraph its style. Formatting text directly
    (`word_format_text`, `word_set_paragraph_format`) is for the exceptions.
 4. Lists (`word_apply_list`), equations (`word_insert_equation`, LaTeX or
@@ -492,9 +495,10 @@ async def word_run_steps(steps: list[dict], document: str | None = None,
     Each step is {"tool": name, "params": {...}}. A value "$prev.key" is the
     previous step's result field, and "$2.inserted.0.index" the second
     step's. A step fails when its tool raises or answers {"error": ...}; with
-    stop_on_error, the first failing step ends the run and says why.
+    stop_on_error, the first failing step ends the run and says why. Page
+    pictures from word_get_page_image follow the report.
     """
-    report, results, failed = [], [], []
+    report, results, failed, images = [], [], [], []
     for number, step in enumerate(steps, start=1):
         step = step if isinstance(step, dict) else {}
         tool = step.get("tool")
@@ -526,12 +530,15 @@ async def word_run_steps(steps: list[dict], document: str | None = None,
             continue
         report.append({"step": number, "tool": tool, "result": data})
         results.append(data)
+        # A page picture (word_get_page_image) comes after the report.
+        images += [b for b in blocks if getattr(b, "type", "") == "image"]
     out = {"steps": report, "ran": len(report), "of": len(steps)}
     if failed:
         number, tool, message = failed[0]
         more = f" ({len(failed)} steps failed)" if len(failed) > 1 else ""
         out["error"] = f"Step {number} ({tool}) failed: {message}{more}"
-    return json.dumps(out, ensure_ascii=False)
+    text = json.dumps(out, ensure_ascii=False)
+    return [text, *images] if images else text
 
 
 # The schema rewrites reach into SDK internals that have moved between majors

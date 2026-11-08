@@ -255,13 +255,25 @@ def _mac_list_equations():
     from appscript import k
 
     doc = backend.word.document()
+    numbers = []
+    for j in range(1, int(doc.count(each=k.field)) + 1):
+        f = doc.fields[j]
+        code = (f.field_code.content.get() or "").split()
+        if code and code[0].upper() == "SEQ":
+            numbers.append((f.field_code.start_of_content.get(),
+                            code[1] if len(code) > 1 else "",
+                            (f.result_range.content.get() or "").strip()))
     out = []
     for j in range(1, int(doc.count(each=k.math_object)) + 1):
         mo = doc.math_objects[j]
         start = mo.text_range.start_of_content.get()
+        end = mo.text_range.end_of_content.get()
         index = int(doc.create_range(start=0, end_=start + 1).count(each=k.paragraph))
-        out.append({"index": index,
-                    "display": "inline" not in str(mo.display_type.get())})
+        entry = {"index": index, "display": "inline" not in str(mo.display_type.get())}
+        inside = [(seq, number) for at, seq, number in numbers if start <= at <= end]
+        if inside:
+            entry["sequence"], entry["number"] = inside[0]
+        out.append(entry)
     return {"success": True, "equations": out}
 
 
