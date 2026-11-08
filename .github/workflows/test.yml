@@ -1,0 +1,53 @@
+name: Tests
+
+# Run by hand while the repository is private: macOS runners count ten times
+# against a private repository's Actions minutes. Add push and pull_request
+# once it is public.
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: pytest (Windows, ${{ matrix.label }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: locked
+            key: locked
+            run: uv run --frozen pytest -q
+          - label: mcp 1.x
+            key: mcp1
+            run: >-
+              uv run --no-project --with "mcp[cli]>=1.0,<2" --with "pywin32>=306"
+              --with "pydantic>=2" --with "anyio>=4" --with pytest python -m pytest -q
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      UV_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          cache-suffix: ${{ matrix.key }}
+      - run: uv python install 3.12
+      - run: ${{ matrix.run }}
+
+  macos:
+    name: pytest (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      UV_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          cache-suffix: macos
+      - run: uv python install 3.12
+      - run: uv run --frozen pytest -q -o faulthandler_timeout=120
