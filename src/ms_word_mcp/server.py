@@ -204,36 +204,59 @@ write through ranges, never through the user's cursor or selection, and
 scroll the window to what they changed so the user can follow. Do not ask the
 user to stop typing.
 
-## Getting started
+## A good order of work
 
-1. Open or create the document with `word_open_document` or
-   `word_create_document`, or pick an open one with `word_activate_document`.
-   The chosen document is shared by every conversation this server serves,
-   so also pass its `full_name` as `document` on every further call.
-2. Read `word_get_outline` to see the headings, then `word_get_paragraphs`
-   for the parts you need. Paragraphs are numbered from 1, as Word counts
-   them. Indices move when paragraphs are added or deleted above them: every
-   writing call reads back what it changed, with the new indices.
-3. Structure with styles, not manual formatting. Give headings the built-in
-   heading styles ("Heading 1", "Heading 2"; the English names work in every
-   language of Word), so the outline, the navigation pane and a table of
-   contents follow.
-4. Word keeps three fonts on all text: Latin, East Asian and complex script
-   (right-to-left). Setting one leaves the others; set the ones you mean with
-   `word_format_text`, and read its warnings.
-5. Each writing call is one undo step in Word, so the user can take back one
-   call with a single Undo.
-6. Save early: an unsaved document has no file to come back to.
+1. Find the document: `word_list_documents`, then `word_activate_document`,
+   or make one with `word_create_document` (pass `save_as` to save it at
+   once) or open one with `word_open_document`. The chosen document is
+   shared by every conversation this server serves, so also pass its
+   `full_name` as `document` on every further call.
+2. Read before writing: `word_get_outline` for the headings, then
+   `word_get_paragraphs` for the parts you need.
+3. Define the look with styles before writing much text: `word_set_style` on
+   "Normal" for the body font (Latin and East Asian separately) and spacing,
+   and on "Heading 1", "Heading 2" for headings. The English built-in names
+   work in every language of Word. Then write with `word_insert_paragraphs`,
+   giving each paragraph its style. Formatting text directly
+   (`word_format_text`, `word_set_paragraph_format`) is for the exceptions.
+4. Lists (`word_apply_list`), equations (`word_insert_equation`, LaTeX or
+   UnicodeMath, `numbered` for (1), (2)...), fields and tables of contents.
+   Insert a table of contents last, since it adds paragraphs above the rest.
+5. Look at the result: `word_get_page_image` shows a page as Word lays it
+   out. Use it after layout changes, equations and lists; reading the text
+   back cannot show a layout that broke.
+6. Save with `word_save_document`.
+
+## Paragraph numbers
+
+Paragraphs are numbered from 1, as Word counts them. Inserting or deleting
+moves the paragraphs after it: every writing call answers the indices it
+used (`inserted`, `index`, `paragraphs`), so take the next index from the
+last answer rather than counting by hand. Several calls in one
+`word_run_steps` can pass results on ("$1.inserted.0.index").
+
+## Answers
 
 A result with `warnings` landed only in part; the warnings say what did not.
-A result with `error` changed nothing unless it says otherwise.
+A result with `error` changed nothing unless it says otherwise. Each writing
+call is one undo step in Word on Windows when the document is Word's active
+one; otherwise the result says so in `undo`.
+
+## Japanese and other scripts
+
+Word keeps three fonts on all text: Latin, East Asian and complex script
+(right-to-left). Setting one leaves the others; set the ones you mean. An
+East Asian font must have East Asian glyphs: Word refuses Segoe UI or Arial
+there, and the warning says so. Spacing can be given in lines (行,
+`space_before_lines`) and indents in characters (字,
+`first_line_indent_chars`), as Japanese documents measure them.
 """
 
 mcp = WordServer("ms_word_mcp", lifespan=app_lifespan, instructions=INSTRUCTIONS)
 
-from .tools import documents, edit, equations, fields, formatting, lists, mac, text, view  # noqa: E402,F401 - mac registers the Mac halves
+from .tools import documents, edit, equations, fields, formatting, lists, mac, screen, text, view  # noqa: E402,F401 - mac registers the Mac halves
 
-for module in (documents, text, formatting, lists, equations, fields, view, edit):
+for module in (documents, text, formatting, lists, equations, fields, view, screen, edit):
     module.register(mcp)
 
 
@@ -339,9 +362,25 @@ def summary(description):
     return text[:120]
 
 
+AREAS = {"documents": "Documents", "text": "Reading and writing text",
+         "formatting": "Formatting and styles", "lists": "Lists",
+         "equations": "Equations", "fields": "Fields and tables of contents",
+         "view": "View", "screen": "Seeing a page", "edit": "Undo"}
+
+
 def catalog_lines():
-    return "\n".join(f"{tool.name}: {summary(tool.description)}"
-                     for tool in mcp.all_tools() if tool.name not in CATALOG_TOOLS)
+    """One line per tool, under a heading for each area, in the order of work."""
+    lines, area = [], None
+    for tool in mcp.all_tools():
+        if tool.name in CATALOG_TOOLS:
+            continue
+        module = getattr(getattr(tool, "fn", None), "__module__", "") or ""
+        here = AREAS.get(module.rsplit(".", 1)[-1])
+        if here and here != area:
+            lines.append(f"\n# {here}")
+            area = here
+        lines.append(f"{tool.name}: {summary(tool.description)}")
+    return "\n".join(lines).strip()
 
 
 def content_of(result):
@@ -419,7 +458,8 @@ async def word_describe(names: list[str] | None = None) -> str:
     with word_describe().
     """
     if not names:
-        return catalog_lines()
+        return (catalog_lines() + "\n\nNext: word_describe(names=[...]) for the "
+                "arguments of the tools you will use, then word_run or word_run_steps.")
     found, missing = {}, []
     for name in names:
         tool = mcp.registered_tool(name)

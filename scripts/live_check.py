@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from ms_word_mcp import backend  # noqa: E402
 from ms_word_mcp.backend import call_document  # noqa: E402
-from ms_word_mcp.tools import _common, documents, edit, equations, fields, formatting, lists, text  # noqa: E402
+from ms_word_mcp.tools import _common, documents, edit, equations, fields, formatting, lists, screen, text  # noqa: E402
 
 results: list[tuple[str, bool]] = []
 
@@ -213,6 +213,10 @@ def run_steps(path: str) -> None:
          check=lambda o: o.get("updated") == 2)
     step("update every field", fields._update_fields_impl, "all", None, None,
          undo="Update fields", check=lambda o: o.get("updated", 0) >= 6)
+    step("picture of page 1", screen._get_page_image_impl, 1, None,
+         check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)
+    step("picture of the page a paragraph is on", screen._get_page_image_impl, None, 5,
+         check=lambda o: o.get("page", 0) >= 1 and os.path.exists(o["path"]))
     step("save", documents._save_document_impl)
     pdf = os.path.splitext(path)[0] + ".pdf"
     step("export PDF", documents._save_document_as_impl, pdf, True,

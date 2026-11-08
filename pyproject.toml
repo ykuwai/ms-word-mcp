@@ -33,6 +33,8 @@ dependencies = [
     # installable on the other platform, so both carry a marker.
     "pywin32>=306; sys_platform == 'win32'",
     "appscript>=1.4.0; sys_platform == 'darwin'",
+    # Word's window is found by its window id for a screenshot on the Mac.
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
 ]
 
 [project.urls]

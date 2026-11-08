@@ -169,7 +169,8 @@ def test_describe_lists_every_tool_a_line_each():
     async def go():
         return await server.word_describe()
 
-    lines = asyncio.run(go()).splitlines()
+    lines = [line for line in asyncio.run(go()).splitlines()
+             if line.startswith("word_")]
     names = {t.name for t in server.mcp.all_tools()} - server.CATALOG_TOOLS
     assert {line.split(":")[0] for line in lines} == names
 

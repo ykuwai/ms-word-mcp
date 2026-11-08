@@ -294,12 +294,23 @@ def get_paragraphs(start, end, detail):
 # -- writing ---------------------------------------------------------------------
 
 def _scroll(doc, start: int, end: int) -> None:
+    """Scroll the document's window to about where [start, end) is.
+
+    Word for Mac has no `scroll into view`. Setting the window's `vertical
+    percent scrolled` moves the view (measured by pictures of the window:
+    50 showed page 4 of 17), although reading it back answers 0. The place is
+    the edit's share of the document's characters, so it is near the edit
+    rather than on it. The user's selection is not touched.
+    """
     from ._common import FOLLOW_EDITS
 
     if not FOLLOW_EDITS:
         return
     try:
-        doc.active_window.scroll_into_view(doc.create_range(start=start, end_=end))
+        total = doc.text_object.end_of_content.get()
+        if total > 0:
+            doc.active_window.vertical_percent_scrolled.set(
+                max(0, min(100, round(100 * start / total))))
     except Exception:  # noqa: BLE001 - the edit landed either way
         pass
 

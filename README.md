@@ -45,6 +45,7 @@ every tool instead.
 | Equations | `word_insert_equation`, `word_list_equations`, `word_get_equation` |
 | Fields and tables of contents | `word_insert_table_of_contents`, `word_insert_field`, `word_list_fields`, `word_update_fields` |
 | View | `word_get_view`, `word_set_view` |
+| Seeing a page | `word_get_page_image`: a picture of a page as Word lays it out, so the model can check the layout |
 | Undo | `word_undo`, `word_redo` |
 
 Every tool that works on a document takes an optional `document` argument (a
@@ -97,6 +98,10 @@ Other clients (Claude Desktop, Cursor, `.mcp.json`):
 - Word for Mac is sandboxed: it writes without asking only inside
   `~/Library/Containers/com.microsoft.Word/Data/Documents`; saving elsewhere
   may make Word ask for access.
+- `word_get_page_image` has Word save a PDF in its own folder for a moment and
+  draws the page from it; the first time, macOS may ask whether the app the
+  server runs in may read Word's data. On Windows the page comes from Word
+  directly. Neither captures the screen.
 - Each change is its own Undo step (Word for Mac's scripting cannot group
   them), and a style can be changed but not created. Tools say so in their
   results.
