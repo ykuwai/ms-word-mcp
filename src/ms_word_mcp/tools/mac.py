@@ -550,22 +550,25 @@ def _matches_until(doc, find, match_case, whole_word, deadline):
     # on a 1,000-paragraph document (measured) and could only agree.
     exact = hidden == 0 and "\x07" not in content
     found, drift = [], 0
+    units, counted = 0, 0  # counted as it goes: from the top each time, it adds up
     for m in re.finditer(pattern, content, flags):
-        start = _u16(content, m.start()) + drift
+        units += _u16(content[counted:m.start()], m.start() - counted)
+        counted = m.start()
+        start = units + drift
         length = _u16(m.group(0), len(m.group(0)))
         if exact:
             found.append((start, start + length))
-            continue
-        for shift in range(0, hidden - drift + 1):
-            at = start + shift
-            try:
-                text = doc.create_range(start=at, end_=at + length).content.get() or ""
-            except Exception:  # noqa: BLE001 - half of a math character: not here
-                continue
-            if (text == m.group(0)) if match_case else (text.lower() == m.group(0).lower()):
-                found.append((at, at + length))
-                drift += shift
-                break
+        else:
+            for shift in range(0, hidden - drift + 1):
+                at = start + shift
+                try:
+                    text = doc.create_range(start=at, end_=at + length).content.get() or ""
+                except Exception:  # noqa: BLE001 - half of a math character: not here
+                    continue
+                if (text == m.group(0)) if match_case else (text.lower() == m.group(0).lower()):
+                    found.append((at, at + length))
+                    drift += shift
+                    break
         if deadline is not None and time.monotonic() > deadline:
             return found, False
     return found, True

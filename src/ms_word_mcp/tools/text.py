@@ -354,8 +354,13 @@ LISTED_MATCHES = 100
 
 
 def replace_outcome(result: dict, listed: int, searched_all: bool, replaced: int | None,
-                    find: str, replace: str | None) -> None:
-    """Add to a find-and-replace answer what the time limit left undone."""
+                    find: str, replace: str | None, wildcards: bool = False) -> None:
+    """Add to a find-and-replace answer what the time limit left undone.
+
+    Calling again is offered only when it cannot replace new text a second
+    time. A wildcard pattern can match text that does not contain it ("a?"
+    matches "abc"), so for one that is left to the caller to judge.
+    """
     if result["matches"] > listed:
         result["paragraphs_cover"] = f"the first {listed} matches"
     if searched_all and (replaced is None or replaced == result["matches"]):
@@ -367,9 +372,15 @@ def replace_outcome(result: dict, listed: int, searched_all: bool, replaced: int
                 f"{found} matches.")
     else:
         note = (f"The time for one call ran out with {replaced} of {found} matches replaced. ")
-        note += ("The new text holds what was searched for, so calling again would replace "
-                 "those too: narrow the search." if find.lower() in replace.lower() else
-                 "Call again with the same arguments for the rest.")
+        if wildcards:
+            note += ("A wildcard pattern can match the new text too, and calling again would "
+                     "then replace it a second time. Call again only if the pattern cannot "
+                     "match the new text; otherwise narrow the search.")
+        elif find.lower() in replace.lower():
+            note += ("The new text holds what was searched for, so calling again would "
+                     "replace those too: narrow the search.")
+        else:
+            note += "Call again with the same arguments for the rest."
     result.setdefault("warnings", []).append(note)
 
 
@@ -434,7 +445,7 @@ def _find_replace_impl(find: str, replace: str | None, match_case: bool,
     if missed:
         result["warnings"] = [f"{missed} of {done} replacements read back "
                               "differently. Read the paragraphs back."]
-    replace_outcome(result, len(listed), searched_all, done, find, replace)
+    replace_outcome(result, len(listed), searched_all, done, find, replace, wildcards)
     follow(doc, paragraph(doc, matches[0][2]).Range)
     return result
 

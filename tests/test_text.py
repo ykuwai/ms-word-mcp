@@ -1,8 +1,9 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
-from ms_word_mcp.tools import _common, text
+from ms_word_mcp.tools import _common, mac, text
 
 
 def answer(impl, *args):
@@ -185,6 +186,32 @@ def test_calling_again_is_not_offered_when_it_would_replace_twice(make_doc, monk
     monkeypatch.setattr(text, "WORK_SECONDS", -1.0)
     out = answer(text._find_replace_impl, "cat", "catfish", False, False, False)
     assert "narrow the search" in out["warnings"][0]
+
+
+def test_calling_again_is_not_offered_for_a_wildcard_pattern(make_doc, monkeypatch):
+    make_doc("cat cat")
+    monkeypatch.setattr(text, "WORK_SECONDS", -1.0)
+    out = answer(text._find_replace_impl, "cat", "dog", False, False, True)
+    assert out["complete"] is False
+    assert "wildcard pattern can match" in out["warnings"][0]
+    assert "same arguments" not in out["warnings"][0]
+
+
+def _mac_text(content):
+    value = lambda v: SimpleNamespace(get=lambda: v)  # noqa: E731
+    return SimpleNamespace(text_object=SimpleNamespace(
+        content=value(content), end_of_content=value(len(content.encode("utf-16-le")) // 2)))
+
+
+def test_a_mac_search_out_of_time_stops_on_a_plain_document():
+    found, finished = mac._matches_until(_mac_text("cat cat cat"), "cat", False, False,
+                                         float("-inf"))
+    assert (found, finished) == ([(0, 3)], False)
+
+
+def test_a_mac_search_counts_positions_past_an_emoji():
+    found, finished = mac._matches_until(_mac_text("😀cat 😀 cat"), "cat", False, False, None)
+    assert (found, finished) == ([(2, 5), (9, 12)], True)
 
 
 def test_only_the_first_matches_are_given_paragraph_numbers(make_doc):
