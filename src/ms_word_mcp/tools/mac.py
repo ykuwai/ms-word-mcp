@@ -24,7 +24,7 @@ from . import documents, edit, formatting
 from . import text as text_tools
 from ._common import mac_impl
 from . import _props as P
-from ._word import BUILTIN_STYLES, spacing_in_lines
+from ._word import BUILTIN_STYLES, spacing_in_lines, with_ruby
 
 MAX_PARAGRAPHS_PER_READ = text_tools.MAX_PARAGRAPHS_PER_READ
 
@@ -135,6 +135,14 @@ def _info(doc, index: int, detail: bool = False) -> dict:
     p = doc.paragraphs[index]
     out = {"index": index, "text": _clean(p.text_object.content.get()),
            "style": p.style.name_local.get()}
+    if "\x15" in out["text"]:
+        k = _k()
+        rng = p.text_object
+        out["text"], rubies = with_ruby(out["text"], [
+            rng.fields[i].field_code.content.get()
+            for i in range(1, int(rng.count(each=k.field)) + 1)])
+        if rubies:
+            out["ruby"] = rubies
     level = _name(p.outline_level.get())
     if level != "outline_level_body_text":
         out["outline_level"] = int(level.rsplit("level", 1)[1])
@@ -347,6 +355,12 @@ def get_paragraphs(start, end, detail):
 
 # -- writing ---------------------------------------------------------------------
 
+def _in_table(doc, index: int) -> bool:
+    """`get range information` answers text: 'true' or 'false' (measured)."""
+    return str(doc.paragraphs[index].text_object.get_range_information(
+        information_type=_k().with_in_table)).lower() == "true"
+
+
 def _scroll(doc, start: int, end: int) -> None:
     """Scroll the document's window to about where [start, end) is.
 
@@ -396,6 +410,10 @@ def insert_paragraphs(paragraphs, after, before):
         first = at
         start, _ = _bounds(doc, at)
         try:
+            if at > 1 and _in_table(doc, at) and not _in_table(doc, at - 1):
+                # At the start of a table's first cell the text would go into
+                # the cell, so it takes the way round below.
+                raise LookupError
             doc.create_range(start=start, end_=start).content.set("\r".join(texts) + "\r")
         except Exception:  # noqa: BLE001 - measured below
             # Measured on Word 16.114: text set at the start of a paragraph that

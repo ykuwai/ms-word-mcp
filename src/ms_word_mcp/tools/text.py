@@ -19,6 +19,7 @@ from ._word import (
 )
 
 MAX_PARAGRAPHS_PER_READ = 200
+WD_WITHIN_TABLE = 12  # WdInformation
 
 
 # -- reading -------------------------------------------------------------------
@@ -164,6 +165,12 @@ class InsertParagraphsInput(Input):
         return self
 
 
+def _starts_table(doc, at: int) -> bool:
+    """Whether paragraph `at` is the first of a table (the one before is not in it)."""
+    return bool(paragraph(doc, at).Range.Information(WD_WITHIN_TABLE)
+                and not paragraph(doc, at - 1).Range.Information(WD_WITHIN_TABLE))
+
+
 def style_runs(paragraphs: list[dict]) -> list[tuple[str, int, int]]:
     """(style, first offset, last offset) of each run of paragraphs given one style."""
     runs: list[list] = []
@@ -210,10 +217,11 @@ def _insert_paragraphs_impl(paragraphs: list[dict], after: int | None,
     else:
         first_index = at
         target = paragraph(doc, at)
-        if at > 1 and target.Range.OMaths.Count:
+        if at > 1 and (target.Range.OMaths.Count or _starts_table(doc, at)):
             # Text put at the start of a paragraph that holds an equation goes
             # into the equation, which refuses a paragraph mark (measured on
-            # Word for Windows; the Mac refuses it too). The new paragraphs go
+            # Word for Windows; the Mac refuses it too), and at the start of a
+            # table's first cell it goes into the cell. The new paragraphs go
             # in at the end of the paragraph before instead, and take its
             # formatting, so each gets a style below.
             end = paragraph(doc, at - 1).Range.End - 1

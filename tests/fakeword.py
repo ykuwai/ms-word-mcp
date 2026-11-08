@@ -580,3 +580,6 @@ def _cross_reference_items(self, kind):
 
 
 FakeDocument.GetCrossReferenceItems = _cross_reference_items
+
+# A fake document has no tables, so nothing is in one.
+FakeRange.Information = lambda self, what: False

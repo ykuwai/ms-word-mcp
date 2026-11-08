@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -22,7 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from ms_word_mcp import backend  # noqa: E402
 from ms_word_mcp.backend import call_document  # noqa: E402
 from ms_word_mcp.tools import (  # noqa: E402
-    _common, documents, edit, equations, fields, formatting, lists, screen, tables, text)
+    _common, documents, edit, equations, fields, formatting, lists, page, references, screen,
+    tables, text)
 
 results: list[tuple[str, bool]] = []
 
@@ -255,6 +257,7 @@ def run_steps(path: str) -> None:
          text._get_outline_impl, False,
          check=lambda o: o["headings"] == full["headings"] and len(o["headings"]) >= 2)
     run_table_steps()
+    run_picture_and_page_steps(Path(path).parent)
     step("picture of page 1", screen._get_page_image_impl, 1, None,
          check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)
     step("picture of the page a paragraph is on", screen._get_page_image_impl, None, 5,
@@ -263,6 +266,136 @@ def run_steps(path: str) -> None:
     pdf = os.path.splitext(path)[0] + ".pdf"
     step("export PDF", documents._save_document_as_impl, pdf, True,
          check=lambda o: o.get("bytes", 0) > 0)
+
+
+def run_picture_and_page_steps(folder: Path) -> None:
+    picture = folder / "live-picture.png"
+    picture.write_bytes(screen.png(60, 30, [b"\x40\x80\xc0" * 60] * 30))
+    pic = step("a picture, 150 pt wide, height in proportion", references._insert_picture_impl,
+               str(picture), None, None, 150.0, None, "center", "A blue box",
+               undo="Insert picture",
+               check=lambda o: o["width"] == 150 and abs(o["height"] - 75) < 1)
+    picture.unlink()
+    if "error" in pic:
+        return
+    step("picture read back", references._list_pictures_impl,
+         check=lambda o: o["pictures"][-1]["alt_text"] == "A blue box")
+    step("a picture wider than the text warns", references._set_picture_impl, pic["picture"],
+         900.0, None, None, None, undo="Change picture",
+         check=lambda o: "right margin" in " ".join(o.get("warnings", [])))
+    step("and back", references._set_picture_impl, pic["picture"], 150.0, None, None, None,
+         undo="Change picture", check=lambda o: "warnings" not in o)
+    cap = step("a caption under the picture", references._insert_caption_impl, "A blue box",
+               "Figure", ": ", pic["picture"], None, None, None, undo="Insert caption",
+               check=lambda o: o["number"] == "1" and o["text"] == "Figure 1: A blue box")
+    tab = step("a table caption in another label, in Japanese", references._insert_caption_impl,
+               "売上", "表", " ", None, 2, None, None, undo="Insert caption",
+               check=lambda o: o["number"] == "1" and o["text"] == "表 1 売上")
+    step("captions are listed", references._list_captions_impl,
+         check=lambda o: {"Figure", "表", "Equation"} <= {c["label"] for c in o["captions"]})
+    para = step("a paragraph to refer from", text._insert_paragraphs_impl,
+                [{"text": "As PLACEHOLDER shows, and on page .", "style": "Normal"}], None, None,
+                undo="Insert paragraphs", check=lambda o: "error" not in o)
+    if "error" in cap or "error" in para:
+        return
+    at = para["inserted"][0]["index"]
+    # The table's caption went in above the figure's, so its number is asked again.
+    figure = next(c["index"] for c in
+                  json.loads(_common.run(references._list_captions_impl))["captions"]
+                  if c["label"] == "Figure")
+    step("a reference to the figure", references._insert_cross_reference_impl, at, figure,
+         "label_and_number", "end", "PLACEHOLDER", undo="Insert cross-reference",
+         check=lambda o: o["result"] == "Figure 1")
+    step("a reference to its page", references._insert_cross_reference_impl, at, figure,
+         "page", "end", None, undo="Insert cross-reference",
+         check=lambda o: o["result"].isdigit())
+    step("a heading has no number to refer to", references._insert_cross_reference_impl, at, 4,
+         "number", "end", None, undo="Insert cross-reference",
+         check=lambda o: "no number" in o.get("error", ""))
+    equation = next(c for c in json.loads(_common.run(references._list_captions_impl))["captions"]
+                    if c["label"] == "Equation")
+    step("a reference to an equation's number", references._insert_cross_reference_impl, at,
+         equation["index"], "number", "end", None, undo="Insert cross-reference",
+         check=lambda o: o.get("result") == equation["number"])
+    earlier = step("a figure caption above renumbers the others",
+                   references._insert_caption_impl, "Earlier", "Figure", ": ", None, None, 2, None,
+                   undo="Insert caption", check=lambda o: o["number"] == "1")
+    if "error" not in earlier:
+        step("a caption before a table's first cell stays out of the table",
+             tables._list_tables_impl,
+             check=lambda o: all(not t["first_row"][0].startswith(("Figure", "表"))
+                                 for t in o["tables"]))
+        step("the reference followed", text._get_paragraphs_impl, at + 1, at + 1, False,
+             undo=None, check=lambda o: "Figure 2" in o["paragraphs"][0]["text"])
+    step("a header", page._set_header_footer_impl, "header", "Live check", "primary", 1, "right",
+         undo="Set header or footer", check=lambda o: o["reads"] == "Live check")
+    step("a footer with the page number and count", page._set_header_footer_impl, "footer",
+         "Page {page} of {pages}", "primary", 1, "center", undo="Set header or footer",
+         check=lambda o: re.fullmatch(r"Page \d+ of \d+", o["reads"]))
+    step("a first page of its own", page._set_header_footer_impl, "header", "", "first", 1, None,
+         undo="Set header or footer", check=lambda o: o["reads"] == "")
+    step("roman page numbers from 5", page._set_page_numbers_impl, 1, "lowercase_roman", 5, None,
+         undo="Set page numbering",
+         check=lambda o: o["style"] == "lowercase_roman" and o["start_at"] == 5)
+    step("back to arabic from 1", page._set_page_numbers_impl, 1, "arabic", 1, None,
+         undo="Set page numbering", check=lambda o: o["style"] == "arabic")
+    step("headers and footers read back", page._get_headers_footers_impl,
+         check=lambda o: o["sections"][0]["header"]["primary"]["text"] == "Live check"
+         and o["sections"][0]["header"]["first"]["text"] == "")
+    step("not a first page of its own", page._set_page_setup_impl, None,
+         {"different_first_page": False}, undo="Set page setup",
+         check=lambda o: o["sections"][0]["different_first_page"] is False)
+    step("A4, margins of 72", page._set_page_setup_impl, None,
+         {"paper": "a4", "top_margin": 72.0, "bottom_margin": 72.0}, undo="Set page setup",
+         check=lambda o: o["sections"][0]["paper"] == "a4"
+         and o["sections"][0]["margins"]["top"] == 72 and "warnings" not in o)
+    step("vertical text keeps the page upright", page._set_page_setup_impl, None,
+         {"text_direction": "vertical"}, undo="Set page setup",
+         check=lambda o: o["sections"][0]["text_direction"] == "vertical"
+         and o["sections"][0]["orientation"] == "portrait" and "warnings" not in o)
+    step("back to horizontal", page._set_page_setup_impl, None,
+         {"text_direction": "horizontal"}, undo="Set page setup",
+         check=lambda o: o["sections"][0]["text_direction"] == "horizontal"
+         and o["sections"][0]["orientation"] == "portrait")
+    step("no table floats after the change of direction", _tables_float,
+         check=lambda o: o["float"] == [False] * o["tables"] and o["tables"] >= 2)
+    step("two columns, and back to one", page._set_page_setup_impl, None, {"columns": 2},
+         undo="Set page setup", check=lambda o: o["sections"][0]["columns"] == 2)
+    step("one column", page._set_page_setup_impl, None, {"columns": 1}, undo="Set page setup",
+         check=lambda o: o["sections"][0]["columns"] == 1)
+    ruby = step("a paragraph for ruby", text._insert_paragraphs_impl,
+                [{"text": "漢字と日本語の文章です。", "style": "Normal"}], None, None,
+                undo="Insert paragraphs", check=lambda o: "error" not in o)
+    if "error" not in ruby:
+        at = ruby["inserted"][0]["index"]
+        step("ruby on two words", page._add_ruby_impl, at,
+             [{"text": "漢字", "ruby": "かんじ"}, {"text": "文章", "ruby": "ぶんしょう"}], "center", None,
+             undo="Add ruby",
+             check=lambda o: o["text"] == "漢字と日本語の文章です。"
+             and [r["ruby"] for r in o["ruby"]] == ["かんじ", "ぶんしょう"])
+        step("ruby next to existing ruby", page._add_ruby_impl, at,
+             [{"text": "日本語", "ruby": "にほんご"}], "center", 5, undo="Add ruby",
+             check=lambda o: len(o["ruby"]) == 3 and o["text"] == "漢字と日本語の文章です。")
+        step("text that is not there changes nothing", page._add_ruby_impl, at,
+             [{"text": "ない", "ruby": "x"}], "center", None, undo="Add ruby",
+             check=lambda o: "Nothing was changed" in o.get("error", ""))
+
+
+def _tables_float():
+    doc = backend.word.document()
+    if backend.IS_MACOS:
+        from appscript import k
+
+        n = int(doc.count(each=k.table))
+        return {"tables": n,
+                "float": [bool(doc.tables[i].row_options.wrap_around_text.get())
+                          for i in range(1, n + 1)]}
+    n = doc.Tables.Count
+    return {"tables": n, "float": [bool(doc.Tables.Item(i).Rows.WrapAroundText)
+                                   for i in range(1, n + 1)]}
+
+
+_common.MAC_IMPLS[_tables_float.__name__] = _tables_float
 
 
 def _active_document():

@@ -121,6 +121,26 @@ Measured with `scripts/probes/mac_bulk_reads.py` and
 | word_get_outline, 1,000 paragraphs, 40 headings, 10 numbered equations | Every paragraph: 28.2 s and 37.0 s in two runs. Heading list, each heading read back: 2.5 s and 6.7 s, the same 40 headings | Every paragraph: 19.9 s. Heading list, each heading read back: 3.4 s, the same 40 headings |
 | word_insert_paragraphs, 1,000 paragraphs | 48.6 s, a style set and read back a paragraph at a time; 4.5 s by runs of a style, read back in one call | 57 s the same way; 6.5 s with a style set on each run of paragraphs that share it and the text read back in one call |
 
+## Pictures, captions, references, the page, ruby (Word 16, both platforms)
+
+Measured with `scripts/probes/windows_layout.py` and `scripts/probes/mac_layout.py`
+on 2026-11-08, then through the live check.
+
+| What | Windows | Mac |
+|---|---|---|
+| A picture from a file | `InlineShapes.AddPicture(path, False, True, range)`, no prompt; in a document that is not active | `make new inline picture` in a document that is not active. **A file outside Word's container makes Word ask the user, and the call times out (-1712) while it waits**, per file, even in a folder where Word has saved documents. From a copy inside the container: no prompt. |
+| Its natural size, 40 x 20 pixels | 30 x 15 pt | 40 x 20 pt |
+| Setting one side | Width alone leaves the height; with `LockAspectRatio` on the height follows | The width alone leaves the height, so both are set |
+| A caption | Paragraph in Caption, `SEQ Figure \* ARABIC` over a placeholder: "Figure 1: A red box". `GetCrossReferenceItems("Figure")` lists it. | The same. `get cross reference items` takes only the enumerated types (-1708 for a label). |
+| A cross-reference | Hidden bookmark `_Ref100000001` over "Figure 1" (start of the paragraph to the field's result end + 1) and `REF _Ref100000001 \h`: "Figure 1". Not in `Bookmarks` unless `ShowHidden` | The same, `make new bookmark` `at` the document. A bookmark round a numbered equation's SEQ field works. |
+| Which calls change the active document | `Range.PhoneticGuide` | `create new field`, `merge cell`, `phonetic guide`: the target is made active and the user's document given back |
+| Headers and footers | `Sections(n).Headers(i).Range.Text`; `doc.Fields.Add(range.Characters(n), -1, "PAGE", False)` | `get header`/`get footer` of a section; `create new field` over `characters n` of its `text object`; `create range` is the main text's |
+| Page numbers | `PageNumbers.NumberStyle`, `RestartNumberingAtSection`, `StartingNumber` | `page number options` of the footer: the same |
+| Vertical text | `Section.Range.Orientation = 1` (wdTextOrientationVerticalFarEast): the page turns (595 x 842 becomes 842 x 595) | `orientation` of the section's `text object`, `text orientation vertical east asian`: the same |
+| Tables when the direction changes | Not measured apart from the live check, which passes | They float (`wrap around text` true) and go left; in vertical text `wrap around text` cannot be turned off. Back in horizontal text, wrap off first: setting it resets a table's alignment. |
+| Ruby | `Range.PhoneticGuide(text)` makes an EQ field (`\o\ad(\s\up 10(かんじ),漢字)`), and the text it covers reads as one `\x15` | `phonetic guide` with every parameter (`raise` 0 places it): the same field, `\x15` too |
+| Document grid | `LinesPage = 30` or `CharsLine = 40` refused in vertical text ("the value is out of range") | Taken |
+
 ## Tables (Word 16, both platforms)
 
 Measured with `scripts/probes/windows_tables.py` (Microsoft 365 16.0.20527,

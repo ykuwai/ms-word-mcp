@@ -19,7 +19,7 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from .. import backend
-from ._common import READ_ONLY, WRITES, Input, annotations, call, follow, mac_impl
+from ._common import READ_ONLY, WRITES, Input, annotations, call, follow, mac_impl, mac_with_active
 from ._word import clean_text, paragraph
 from .latex import LatexError, latex_to_unicodemath
 
@@ -228,9 +228,9 @@ def _mac_insert_equation(equation, fmt, numbered, sequence, after, before):
             warnings.append("The equation number could not be found to make it a field; "
                             "it stays (1).")
         else:
-            app.create_new_field(text_range=doc.create_range(start=pos, end_=pos + 1),
-                                 field_type=k.field_sequence, field_text=sequence,
-                                 preserve_formatting=False)
+            mac_with_active(app, doc, lambda: app.create_new_field(
+                text_range=doc.create_range(start=pos, end_=pos + 1),
+                field_type=k.field_sequence, field_text=sequence, preserve_formatting=False))
             for j in range(1, int(doc.count(each=k.field)) + 1):
                 f = doc.fields[j]
                 code = (f.field_code.content.get() or "").split()

@@ -41,6 +41,31 @@ def mac_impl(com_impl: Callable[..., Any]):
     return register
 
 
+def mac_with_active(app, doc, make):
+    """Run `make` with `doc` the active document, then give the user's back.
+
+    Word for Mac makes a table only in the active document (-1708 in any
+    other), and merging cells, a new field and ruby make their document the
+    active one (all measured), so the target is made active for the moment.
+    """
+    try:
+        before = app.active_document.name.get()
+    except Exception:  # noqa: BLE001 - no document active
+        before = None
+    name = doc.name.get()
+    if before == name:
+        return make()
+    doc.activate_object()
+    try:
+        return make()
+    finally:
+        if before:
+            try:
+                app.documents[before].activate_object()
+            except Exception:  # noqa: BLE001 - the edit landed either way
+                logger.debug("Could not give the active document back", exc_info=True)
+
+
 def _setting(name: str, default: bool) -> bool:
     value = os.getenv(name, "").strip().lower()
     if value in ("", "default"):

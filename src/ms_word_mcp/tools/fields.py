@@ -15,10 +15,11 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from .. import backend
-from ._common import READ_ONLY, WRITES, Input, annotations, call, follow, mac_impl
+from ._common import READ_ONLY, WRITES, Input, annotations, call, follow, mac_impl, mac_with_active
 from ._word import check_span, clean_text, paragraph, span_range
 
 WD_FIELD_EMPTY = -1
+REFERENCE_KINDS = ("REF", "PAGEREF")
 
 
 def toc_code(upper: int, lower: int, hyperlinks: bool, page_numbers: bool,
@@ -119,12 +120,13 @@ def _insert_toc_impl(after, before, upper_level, lower_level, hyperlinks, page_n
 
 
 class UpdateFieldsInput(Input):
-    what: Literal["all", "tables_of_contents", "page_numbers", "numbers"] = Field(
+    what: Literal["all", "tables_of_contents", "page_numbers", "numbers", "references"] = Field(
         "all", description=(
             "all: every field in the main text. tables_of_contents: rebuild the tables "
             "of contents (entries and page numbers). page_numbers: only the page numbers "
             "of the tables of contents, leaving their entries. numbers: SEQ fields "
-            "(equation, figure and table numbers)."))
+            "(equation, figure and table numbers). references: cross-references (REF and "
+            "PAGEREF fields)."))
     start: int | None = Field(None, ge=1, description=(
         "Only the fields in these paragraphs: first paragraph..."))
     end: int | None = Field(None, ge=1, description="...last paragraph.")
@@ -185,6 +187,8 @@ def _update_fields_impl(what, start, end):
         for i, f in enumerate(_fields_in(doc, start, end), start=1):
             kind = _kind(f.Code.Text)
             if what == "numbers" and kind != "SEQ":
+                continue
+            if what == "references" and kind not in REFERENCE_KINDS:
                 continue
             if what in ("tables_of_contents", "page_numbers") and kind != "TOC":
                 continue
@@ -263,9 +267,9 @@ def _mac_new_field(app, doc, start, end, code):
     """Make a field over [start, end) and find it again by its position."""
     from appscript import k
 
-    app.create_new_field(text_range=doc.create_range(start=start, end_=end),
-                         field_type=k.field_empty, field_text=code,
-                         preserve_formatting=False)
+    mac_with_active(app, doc, lambda: app.create_new_field(
+        text_range=doc.create_range(start=start, end_=end), field_type=k.field_empty,
+        field_text=code, preserve_formatting=False))
     for f in _mac_fields(doc):
         s = f.field_code.start_of_content.get()
         if start - 1 <= s <= start + 2:
@@ -330,6 +334,8 @@ def _mac_update_fields(what, start, end):
         if lo is not None and not lo <= f.field_code.start_of_content.get() < hi:
             continue
         if what == "numbers" and kind != "SEQ":
+            continue
+        if what == "references" and kind not in REFERENCE_KINDS:
             continue
         if what in ("tables_of_contents", "page_numbers") and kind != "TOC":
             continue
