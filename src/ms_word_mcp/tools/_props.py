@@ -413,10 +413,15 @@ def com_apply_tab_stops(fmt, tab_stops) -> None:
 
 
 def com_read_tab_stops(fmt) -> list:
+    """The custom tab stops. TabStops also holds Word's default ones (every
+    36 pt after the last custom one, measured on Windows), which
+    TabStop.CustomTab tells apart."""
     stops = fmt.TabStops
     out = []
     for i in range(1, stops.Count + 1):
         t = stops.Item(i)
+        if not t.CustomTab:
+            continue
         out.append({"position": round(t.Position, 2),
                     "alignment": next((k for k, v in TAB_ALIGNMENTS.items()
                                        if v == t.Alignment), t.Alignment),
