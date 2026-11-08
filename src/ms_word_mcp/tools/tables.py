@@ -756,8 +756,6 @@ def _mac_size(tb) -> tuple[int, int]:
 
 
 def _mac_grid(tb, start_row: int = 1, limit: int = MAX_ROWS_PER_READ) -> list[list[str]]:
-    from appscript import k
-
     n_rows, n_cols = _mac_size(tb)
     if tb.uniform.get():
         rows = _rows_from_tokens(tb.text_object.content.get() or "", [n_cols] * n_rows)
