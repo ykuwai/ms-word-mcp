@@ -104,6 +104,17 @@ class FakeStyle:
             self.ParagraphFormat = AttrProxy(self._data, PARA_KEYS)
 
     @property
+    def BaseStyle(self):
+        return self._base
+
+    @BaseStyle.setter
+    def BaseStyle(self, value):
+        # Word reads a base style back as a style, however it was set.
+        if isinstance(value, int):
+            value = BUILTIN_NAMES[value]
+        self._base = getattr(value, "NameLocal", value)
+
+    @property
     def Linked(self):
         if self.Type != 1:
             raise Exception("This property cannot be used for this object.")
