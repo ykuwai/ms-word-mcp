@@ -97,7 +97,11 @@ try:
     types = {}
     for i in range(1, a.Styles.Count + 1):
         s = a.Styles(i)
-        key = (s.Type, bool(s.Linked))
+        try:
+            linked = bool(s.Linked)
+        except Exception:  # noqa: BLE001 - measured: some styles refuse it
+            linked = "refused"
+        key = (s.Type, linked)
         types.setdefault(key, []).append(s.NameLocal)
     for key in sorted(types):
         show(f"Style.Type, Linked = {key}", f"{len(types[key])} e.g. {types[key][:3]}")

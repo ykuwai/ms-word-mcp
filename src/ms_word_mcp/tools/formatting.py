@@ -301,6 +301,15 @@ _STYLE_TYPES = {1: "paragraph", 2: "character", 3: "table", 4: "list", 5: "parag
                 6: "paragraph"}
 
 
+def _linked(style) -> bool:
+    """Style.Linked, which Word refuses for some styles (measured on Windows:
+    "this property cannot be used for this object")."""
+    try:
+        return bool(style.Linked)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _list_styles_impl(in_use_only):
     doc = backend.word.document()
     styles = doc.Styles
@@ -313,7 +322,7 @@ def _list_styles_impl(in_use_only):
         if kind in ("table", "list"):
             continue
         entry = {"name": s.NameLocal, "type": kind, "builtin": bool(s.BuiltIn)}
-        if kind == "paragraph" and s.Linked:
+        if kind == "paragraph" and _linked(s):
             entry["linked"] = True
         if kind == "paragraph":
             font = s.Font

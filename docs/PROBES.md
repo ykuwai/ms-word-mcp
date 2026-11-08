@@ -48,6 +48,21 @@ the first run; the three failures are below and were fixed).
 | Font.Bold | Reads back -1 for bold. |
 | Page | A new document from Normal: A4 (595.3 × 841.9 pt), margins 99.25 / 85.05 / 85.05 / 85.05 pt. |
 
+What the documentation leaves unstated, measured with `scripts/probes/windows_checks.py`:
+
+| What | Seen |
+|---|---|
+| `DisableLineHeightGrid` | True writes `<w:snapToGrid w:val="0"/>`: the paragraph does **not** snap to the grid. The property's name is right and the documentation's sentence is inverted. Reads back -1 / 0. |
+| `Window.ScrollIntoView` | Leaves the selection where it was (0, 0 before and after). |
+| `Range.Paragraphs` | Counts a paragraph the range covers in part: `Range(5, 6)` counts 1; `Range(0, start of paragraph 3)` counts 2, and one character further counts 3. |
+| `Chr(11)` | A line break inside the paragraph: the paragraph count stays the same. |
+| The last paragraph mark | Deleting it changes nothing (67 characters before and after). |
+| `Font.Name` | Times New Roman set NameAscii, NameOther and NameBi and left NameFarEast; 游ゴシック set NameAscii and NameFarEast and left the other two. Which slots it writes depends on the font, so the tools set each slot by name. |
+| Mixed ranges | SpaceBefore, Alignment, SizeBi and Color all read 9999999 (wdUndefined) over two paragraphs that differ. |
+| `Font.Bold` | Reads as the Python int 0 or -1. |
+| `Document.Path` | An unsaved document's is `''`. |
+| `Style.Linked` | Raises "this property cannot be used for this object" for some styles. |
+
 ## From the reference branch
 
 AlonSoko measured Word 16 on both platforms before writing his own version, and
