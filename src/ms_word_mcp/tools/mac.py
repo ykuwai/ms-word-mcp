@@ -344,6 +344,7 @@ def get_outline(every_paragraph=False):
 @mac_impl(text_tools._get_paragraphs_impl)
 def get_paragraphs(start, end, detail):
     doc = backend.word.document()
+    began = time.monotonic()
     count = _count(doc)
     if start > count:
         raise ValueError(f"The document has {count} paragraphs; start is {start}.")
@@ -351,12 +352,14 @@ def get_paragraphs(start, end, detail):
                start + MAX_PARAGRAPHS_PER_READ - 1)
     from .tables import mac_mark_tables
 
-    out = {"success": True,
-           "paragraphs": [_info(doc, i, detail) for i in range(start, last + 1)],
-           "count": count}
-    mac_mark_tables(doc, out["paragraphs"])
-    if last < count:
-        out["more"] = f"Paragraphs {last + 1} to {count} follow; pass start={last + 1}."
+    read = []
+    for i in range(start, last + 1):
+        read.append(_info(doc, i, detail))
+        if time.monotonic() > began + text_tools.READ_SECONDS:
+            break
+    out = {"success": True, "paragraphs": read, "count": count}
+    mac_mark_tables(doc, read)
+    text_tools.finish_reading(out, last, count)
     return out
 
 

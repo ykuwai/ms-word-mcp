@@ -38,7 +38,8 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
   number format (full-width digits, circled numbers, kanji, aiueo, iroha...),
   the bullet's own font, color and size, positions, levels; each list gets a
   template of its own so no other list changes. Read a list back, change
-  levels, remove a list.
+  levels, remove a list. Numbered headings: levels linked to the heading
+  styles number every heading, including ones added later.
 
 - Equations: display equations from LaTeX (converted with Word's own Math
   AutoCorrect symbols) or UnicodeMath, built by Word, numbered (1), (2)... at
@@ -73,8 +74,10 @@ First, fixes to what is there, for long documents (PROBES.md, Reading):
   match, so thousands take several calls (docs/PROBES.md, Replacing many
   matches).
 - **word_get_paragraphs** still asks Word three or more times a paragraph
-  (up to 200 a call). The styles could come from the document's XML on
-  Windows (Content.WordOpenXML) and through VBA on the Mac.
+  (up to 200 a call; 200 with `detail` took 22 s on Windows and 55 s on the
+  Mac). A read now stops after 40 s and says where to go on. The styles could
+  come from the document's XML on Windows (Content.WordOpenXML) and through
+  VBA on the Mac.
 - **word_insert_paragraphs** now sets a style on each run of paragraphs
   that share it and reads the text back in one call (1,000 paragraphs:
   4.5 s instead of 49 s on Windows, 6.5 s instead of 57 s on the Mac).
@@ -83,8 +86,8 @@ Then, ordered roughly by what the owner stressed.
 
 1. **Styles, the rest.** Borders and shading, tab stops, list linkage, the
    language of a style; creating a style on the Mac (through VBA).
-2. **Lists, the rest.** Numbered headings (levels linked to heading styles),
-   restarting numbering in the middle of a list, picture bullets.
+2. **Lists, the rest.** Restarting numbering in the middle of a list,
+   picture bullets.
 3. **Equations, the rest.** Inline equations inside a paragraph,
    chapter-style numbers (2.1) with STYLEREF, cross-references to equations,
    editing an equation in place.

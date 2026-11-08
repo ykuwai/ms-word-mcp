@@ -87,8 +87,8 @@ pushed it with the measurements to the `reference` branch of this repository
   outline level took 20 s through COM and 15 s through Apple Events. The whole
   text comes in one call (13 ms), the headings in one call
   (`GetCrossReferenceItems`), and styles with the document's XML
-  (`Content.WordOpenXML`, 84 ms). word_get_outline and word_get_paragraphs
-  here still walk paragraph by paragraph; see ROADMAP.
+  (`Content.WordOpenXML`, 84 ms). word_get_paragraphs here still walks
+  paragraph by paragraph; see ROADMAP.
 - **Starting Word for Mac:** with `open -g -j` (hidden) Word loses track of
   its documents once the front one closes; `open -g` does not.
 - **Commands that make their document the active one on the Mac:**
@@ -119,7 +119,16 @@ Measured with `scripts/probes/mac_bulk_reads.py` and
 | Word's heading list (`get cross reference items` with `reference type heading`) | | One call, 9 ms. Paragraphs in a heading style only: a Normal paragraph given outline level 2 directly is not in it. Each item is the heading's text indented two spaces a level; a tab or line break becomes a space, the heading's own leading spaces are dropped, and a long heading is cut at about 100 characters. |
 | `go to next` a heading item from the start | | Stopped moving after three headings: not used |
 | word_get_outline, 1,000 paragraphs, 40 headings, 10 numbered equations | Every paragraph: 28.2 s and 37.0 s in two runs. Heading list, each heading read back: 2.5 s and 6.7 s, the same 40 headings | Every paragraph: 19.9 s. Heading list, each heading read back: 3.4 s, the same 40 headings |
+| word_get_paragraphs, 200 of 1,000 paragraphs (`scripts/probes/paragraph_read_speed.py`) | 8.7 s and 12.9 s; with `detail` 19.8 s and 22.0 s | 11.9 s and 11.3 s; with `detail` 55.1 s and 55.3 s, close to the 69 s a call may run, so a read stops itself after 40 s |
 | word_insert_paragraphs, 1,000 paragraphs | 48.6 s, a style set and read back a paragraph at a time; 4.5 s by runs of a style, read back in one call | 57 s the same way; 6.5 s with a style set on each run of paragraphs that share it and the text read back in one call |
+
+## Numbered headings (Word 16, both platforms)
+
+`scripts/probes/numbered_headings.py`: `word_apply_list` on the first heading
+alone, with level 1 linked to Heading 1 and level 2 to Heading 2, numbers every
+heading in the document (1, 1.1, 1.2, 2, 2.1). Body text stays unnumbered, and a
+Heading 2 added afterwards reads 2.2. Word for Mac and Word for Windows gave the
+same numbers, on a Japanese Word, from the English style names.
 
 ## Replacing many matches (Word 16, both platforms)
 

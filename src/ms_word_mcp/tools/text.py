@@ -124,8 +124,29 @@ class GetParagraphsInput(Input):
         "spacing and spacing before and after."))
 
 
+#: How long one word_get_paragraphs reads. A call has 45 s on Windows and 69 s
+#: on the Mac; 200 paragraphs with `detail` took 55 s on the Mac (measured,
+#: docs/PROBES.md), and paragraphs with more formatting than that take longer.
+READ_SECONDS = 40.0
+
+
+def finish_reading(result: dict, last: int, count: int) -> None:
+    """Say what follows the paragraphs read, and if time ran out before `last`."""
+    reached = result["paragraphs"][-1]["index"]
+    if reached < last:
+        result["complete"] = False
+        result.setdefault("warnings", []).append(
+            f"The time for one call ran out after paragraph {reached}, before paragraph "
+            f"{last}. Call again with start={reached + 1} for the rest, or leave out "
+            "`detail` to read faster.")
+    if reached < count:
+        result["more"] = (f"Paragraphs {reached + 1} to {count} follow; "
+                          f"pass start={reached + 1}.")
+
+
 def _get_paragraphs_impl(start: int, end: int | None, detail: bool):
     doc = backend.word.document()
+    began = time.monotonic()
     count = doc.Paragraphs.Count
     if start > count:
         raise ValueError(f"The document has {count} paragraphs; start is {start}.")
@@ -134,11 +155,14 @@ def _get_paragraphs_impl(start: int, end: int | None, detail: bool):
         last = start + MAX_PARAGRAPHS_PER_READ - 1
     from .tables import mark_tables
 
-    out = [paragraph_info(i, p, detail) for i, p in paragraphs_in(doc, start, last)]
+    out = []
+    for i, p in paragraphs_in(doc, start, last):
+        out.append(paragraph_info(i, p, detail))
+        if time.monotonic() > began + READ_SECONDS:
+            break
     mark_tables(doc, out)
     result = {"success": True, "paragraphs": out, "count": count}
-    if last < count:
-        result["more"] = f"Paragraphs {last + 1} to {count} follow; pass start={last + 1}."
+    finish_reading(result, last, count)
     return result
 
 
@@ -473,7 +497,9 @@ def register(mcp) -> None:
     async def word_get_paragraphs(params: GetParagraphsInput) -> str:
         """Read paragraphs by index: text, style and outline level, and with
         `detail` their formatting too. A paragraph in a table carries the
-        table's number (`table`): read those with word_get_table."""
+        table's number (`table`): read those with word_get_table. A read that
+        runs out of time answers what it has, `complete` false and where to go
+        on in `more`."""
         return await call(_get_paragraphs_impl, params.start, params.end,
                                    params.detail)
 

@@ -259,6 +259,7 @@ def run_steps(path: str) -> None:
     run_table_steps()
     run_picture_and_page_steps(Path(path).parent)
     run_review_steps()
+    run_heading_number_steps()
     step("picture of page 1", screen._get_page_image_impl, 1, None,
          check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)
     step("picture of the page a paragraph is on", screen._get_page_image_impl, None, 5,
@@ -328,6 +329,49 @@ def run_review_steps() -> None:
         step("the old reading is still there", text._get_paragraphs_impl, 9, 9, False,
              check=lambda o: [r["ruby"] for r in o["paragraphs"][0].get("ruby", [])] == ["かんじ"])
         step("close the document of the review's cases", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_heading_number_steps() -> None:
+    """Numbered headings through linked list levels, and a read that runs out of time."""
+    other = step("a document for numbered headings", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        heads = [("Intro", "Heading 1"), ("Body", None), ("Scope", "Heading 2"),
+                 ("Aim", "Heading 2"), ("Method", "Heading 1"), ("Steps", "Heading 2")]
+        made = step("headings and body text", text._insert_paragraphs_impl,
+                    [{"text": t, "style": s} for t, s in heads], None, None)
+        if "error" in made:
+            return
+        step("number the first heading, with levels linked to the heading styles",
+             lists._apply_list_impl, 1, 1,
+             [{"level": 1, "number_style": "arabic", "number_format": "%1",
+               "linked_style": "Heading 1"},
+              {"level": 2, "number_style": "arabic", "number_format": "%1.%2",
+               "linked_style": "Heading 2"}], None, False,
+             undo="Apply list", check=lambda o: o["paragraphs"][0]["list_string"] == "1")
+        wanted = {1: "1", 3: "1.1", 4: "1.2", 5: "2", 6: "2.1"}
+        for index, number in wanted.items():
+            step(f"heading {index} is numbered {number}", lists._get_list_impl, index,
+                 check=lambda o, n=number: o["paragraph"].get("list_string") == n)
+        step("body text is not numbered", lists._get_list_impl, 2,
+             check=lambda o: o["paragraph"]["list"] == "none")
+        step("a heading added later takes the next number", text._insert_paragraphs_impl,
+             [{"text": "Later", "style": "Heading 2"}], None, None, undo="Insert paragraphs")
+        step("and reads 2.2", lists._get_list_impl, 7,
+             check=lambda o: o["paragraph"].get("list_string") == "2.2")
+        limit = text.READ_SECONDS
+        text.READ_SECONDS = -1.0
+        try:
+            step("a read out of time answers what it has", text._get_paragraphs_impl, 1, 3, False,
+                 check=lambda o: len(o["paragraphs"]) == 1 and o["complete"] is False
+                 and "start=2" in o["more"])
+        finally:
+            text.READ_SECONDS = limit
+        step("close the document of numbered headings", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
 
