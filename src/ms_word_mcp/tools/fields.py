@@ -135,6 +135,7 @@ def _kind(code: str) -> str:
 def _update_fields_impl(what, start, end):
     doc = backend.word.document()
     updated, failed = [], []
+    count = 0
     if what in ("tables_of_contents", "page_numbers") and start is None:
         tocs = doc.TablesOfContents
         for i in range(1, tocs.Count + 1):
@@ -147,6 +148,22 @@ def _update_fields_impl(what, start, end):
                 updated.append(f"table of contents {i}")
             except Exception as exc:  # noqa: BLE001 - reported
                 failed.append(f"table of contents {i}: {exc}")
+    elif what == "all":
+        # One Fields.Update over the collection: updating a table of contents
+        # remakes the hyperlink fields inside it, so fields listed beforehand
+        # and updated one by one were found deleted (measured on Windows).
+        # Fields.Update answers 0, or the index of the first field it could
+        # not update (https://learn.microsoft.com/en-us/office/vba/api/word.fields.update).
+        if start is not None:
+            s, e = check_span(doc, start, end)
+            fields = span_range(doc, s, e).Fields
+        else:
+            fields = doc.Fields
+        count = fields.Count
+        first_error = fields.Update()
+        updated = [f"{count} fields"] if count else []
+        if first_error:
+            failed.append(f"field {first_error} and possibly some after it")
     else:
         for i, f in enumerate(_fields_in(doc, start, end), start=1):
             kind = _kind(f.Code.Text)
@@ -158,10 +175,11 @@ def _update_fields_impl(what, start, end):
             # example tests for it).
             ok = f.Update()
             (updated if ok in (True, 1, -1, None) else failed).append(f"{kind} field {i}")
-    result = {"success": True, "updated": len(updated), "which": updated[:50]}
+    total = count if what == "all" else len(updated)
+    result = {"success": True, "updated": total, "which": updated[:50]}
     if failed:
         result["warnings"] = [f"Not updated: {', '.join(failed[:20])}."]
-    if not updated and not failed:
+    if not total and not failed:
         result["note"] = "There was nothing of that kind to update."
     return result
 
