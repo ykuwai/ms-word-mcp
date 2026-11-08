@@ -51,6 +51,12 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
   fields, the tables of contents (whole or page numbers only) or the SEQ
   numbers, in the whole document or in some paragraphs.
 
+- Tables: insert one filled with its cells (style, heading rows, grid
+  lines, column widths and alignments, autofit, position), list and read
+  them, write and format blocks of cells (shading, bold, color, alignment),
+  add and delete rows and columns, merge cells, delete a table. Adding
+  columns works on Windows only.
+
 ## Next
 
 First, a fix to what is there: **read in bulk.** word_get_outline and
@@ -67,8 +73,10 @@ Then, ordered roughly by what the owner stressed.
 3. **Equations, the rest.** Inline equations inside a paragraph,
    chapter-style numbers (2.1) with STYLEREF, cross-references to equations,
    editing an equation in place.
-4. **Figures and tables.** Pictures, tables with styles, captions with
-   numbering, cross-references, list of figures.
+4. **Figures and tables.** Pictures; captions with numbering for figures
+   and tables, cross-references, list of figures; the cells of a table
+   marked as such in word_get_paragraphs; splitting cells, sorting, table
+   borders one side at a time.
 5. **Cross-references.** Bookmarks, REF fields to headings, figures, tables and
    equations.
 6. **Japanese typography.** Vertical text (section text direction, document

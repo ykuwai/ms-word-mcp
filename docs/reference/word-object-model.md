@@ -176,6 +176,32 @@ Font.Size on a mixed range: the page's example tests `If mySel = wdUndefined The
 | Item() | (Index: Variant) → Style | method | Returns an individual Style object in a collection. — Params: Index: The individual object to be returned. Can be a Long indicating the ordinal position or a String representing the name of the individual obj… | https://learn.microsoft.com/en-us/office/vba/api/word.styles.item |
 | Count | Long | R | Returns a Long that represents the number of styles in the collection. | https://learn.microsoft.com/en-us/office/vba/api/word.styles.count |
 
+### A.8 Tables (members the table tools use)
+
+Fetched from the pages cited on 2026-11-08, the same way as the rest.
+
+| Member | Type | What the page says | URL |
+|---|---|---|---|
+| Tables.Add(Range, NumRows, NumColumns, DefaultTableBehavior, AutoFitBehavior) | Table | "The table replaces the range, if the range isn't collapsed." DefaultTableBehavior: wdWord8TableBehavior (AutoFit disabled, the default) or wdWord9TableBehavior. | https://learn.microsoft.com/en-us/office/vba/api/word.tables.add |
+| WdDefaultTableBehavior | enum | wdWord8TableBehavior 0 (disables AutoFit, default), wdWord9TableBehavior 1 | https://learn.microsoft.com/en-us/office/vba/api/word.wddefaulttablebehavior |
+| Document.DefaultTableStyle | Variant, R | "the table style that is applied to all newly created tables in a document" | https://learn.microsoft.com/en-us/office/vba/api/word.document.defaulttablestyle |
+| Table.Style | Variant, R/W | "you can specify the local name of the style, an integer, a WdBuiltinStyle constant, or a TableStyle object" | https://learn.microsoft.com/en-us/office/vba/api/word.table.style |
+| Table.ApplyStyleHeadingRows | Boolean, R/W | Heading-row formatting of the table style on the first row; the style must have it | https://learn.microsoft.com/en-us/office/vba/api/word.table.applystyleheadingrows |
+| Row.HeadingFormat | Long, R/W | True for rows formatted as a table heading, "repeated when a table spans more than one page" | https://learn.microsoft.com/en-us/office/vba/api/word.row.headingformat |
+| Rows.Add(BeforeRow) | Row | BeforeRow: "the row that will appear immediately below the new row" | https://learn.microsoft.com/en-us/office/vba/api/word.rows.add |
+| Columns.Add(BeforeColumn) | Column | BeforeColumn: "the column that will appear immediately to the right of the new column" | https://learn.microsoft.com/en-us/office/vba/api/word.columns.add |
+| Cell.Merge(MergeTo) | method | "Merges the specified table cell with another table cell. The result is a single table cell." | https://learn.microsoft.com/en-us/office/vba/api/word.cell.merge |
+| Borders.Enable | Long, R/W | True "sets the line style to the default line style and sets the line width to the default line width"; False removes all borders | https://learn.microsoft.com/en-us/office/vba/api/word.borders.enable |
+| Table.AutoFitBehavior(Behavior) | method | Content or window sets AllowAutoFit True; fixed sets it False | https://learn.microsoft.com/en-us/office/vba/api/word.table.autofitbehavior |
+| WdAutoFitBehavior | enum | wdAutoFitContent 1, wdAutoFitFixed 0, wdAutoFitWindow 2 | https://learn.microsoft.com/en-us/office/vba/api/word.wdautofitbehavior |
+| WdPreferredWidthType | enum | wdPreferredWidthAuto 1, wdPreferredWidthPercent 2, wdPreferredWidthPoints 3 | https://learn.microsoft.com/en-us/office/vba/api/word.wdpreferredwidthtype |
+| WdCellVerticalAlignment | enum | wdCellAlignVerticalTop 0, Center 1, Bottom 3 | https://learn.microsoft.com/en-us/office/vba/api/word.wdcellverticalalignment |
+| WdRowAlignment | enum | wdAlignRowLeft 0, Center 1, Right 2 | https://learn.microsoft.com/en-us/office/vba/api/word.wdrowalignment |
+| Table.Cell(Row, Column) | Cell | One cell of the table | https://learn.microsoft.com/en-us/office/vba/api/word.table.cell |
+
+What a new table looks like, and what Word for Mac accepts, is measured in
+[PROBES.md](../PROBES.md) (Tables).
+
 ## B. Constants
 
 ### B.1 The code's constants against the documentation

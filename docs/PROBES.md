@@ -105,6 +105,30 @@ pushed it with the measurements to the `reference` branch of this repository
 - **Tables of contents:** a `TOC` field made with `create new field` gives the
   same table as Word's own command, on both platforms.
 
+## Tables (Word 16, both platforms)
+
+Measured with `scripts/probes/windows_tables.py` (Microsoft 365 16.0.20527,
+Japanese UI) and `scripts/probes/mac_tables.py` (Word 16.114.4) on
+2026-11-08, in scratch documents closed unsaved.
+
+| What | Windows | Mac |
+|---|---|---|
+| Making a table | `Tables.Add(range, rows, columns)` at a collapsed range at the start of an empty paragraph; works in a document that is not the active one | `make new table at (create range start s end s) with properties {number of rows, number of columns}`; **-1708 unless the document is the active one**. `activate object` on the document makes it active, and on the other document gives the user's back (both measured). |
+| Style of a new table | Normal Table (標準の表), `Borders.Enable` 0, `DefaultTableStyle` "" | Normal Table (標準の表), `enable borders` false, `default table style` empty |
+| The paragraph it was made in | Left after the table, empty; `Range.Delete` on it removes it (answers 1). At the end of the document it stays. | The same; `delete` on its range removes it |
+| An English style name | `Table.Style = "Table Grid"` and `Styles("Table Grid")`: "the requested member does not exist" on a Japanese Word | `set style to "Table Grid"`: no error, and the style stays Normal Table |
+| A WdBuiltinStyle constant | `Table.Style = -161` (Light Grid) gives 表 (モノトーン) 3 | `style table light grid` gives 表 (モノトーン) 3; `style table medium shading1 accent1` gives 表 (青) 4. A style object (`Word styles "表 (格子)"`) works too. |
+| Heading rows after a style | Not measured (the tools set them again either way) | **Cleared**: `heading format` of row 1 reads false after `style` is set |
+| Adding rows | `Rows.Add()` at the end, `Rows.Add(Rows(1))` before the first | `make new row at end of rows`: -1708. `at after row n` and `at before row 1` work. `insert rows` works on the selection only. |
+| Adding columns | `Columns.Add()`, `Columns.Add(Columns(1))` | `make new column` (after or before a column): -1708. `insert columns` works on the selection only. |
+| Deleting rows and columns | `Rows(i).Delete`, `Columns(i).Delete` | `delete row i`, `delete column i` |
+| Merging | `Cell(1,1).Merge(Cell(1,2))`: the cell holds both texts, a paragraph each; `Uniform` False; `Columns(1)` can no longer be reached ("cell widths differ") | `merge cell ... with` the same; `columns` can no longer be reached (-1728) |
+| Cells of a row with merged cells | `Rows(1).Cells.Count` 3 of 4 | `count rows 1 each cell` 2 of 3; `get cell from table row 1 column 2` is the cell after the merged one |
+| A table's text | Each cell ends in `\r\x07`, each row too after its cells | The same |
+| Shading | `Cell.Shading.BackgroundPatternColor` (BGR) | `background pattern color` of the cell's `shading`, 16-bit channels |
+| In a table? | `Range.Information(12)` (wdWithInTable) | `get range information ... information type with in table` answers the **text** "true" or "false" |
+| Deleting a table | `Table.Delete`: the paragraphs around it stay | `delete table`: the same |
+
 ## Equations (Word 16, both platforms)
 
 Measured with `scripts/probes/windows_equations.py` and `scripts/probes/mac_equations.py`;
