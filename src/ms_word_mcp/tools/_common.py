@@ -12,9 +12,9 @@ import json
 import logging
 import os
 import re
-from typing import Any, Callable
+from typing import Annotated, Any, Callable
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from .. import backend
 
@@ -27,9 +27,18 @@ MAC_IMPLS: dict[str, Callable[..., Any]] = {}
 
 
 class Input(BaseModel):
-    """The base of every tool's arguments: unknown keys are refused."""
+    """The base of every tool's arguments: unknown keys are refused.
 
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    Strings arrive as they were given: a space can be the point of a text, a
+    search or a separator, and U+3000 at a paragraph's start is its indent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+#: A name rather than a text (a style, a font, a color, a path): the spaces
+#: around it are never meant.
+Trimmed = Annotated[str, StringConstraints(strip_whitespace=True)]
 
 
 def mac_impl(com_impl: Callable[..., Any]):

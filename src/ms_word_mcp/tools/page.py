@@ -16,7 +16,7 @@ which Word stores as an EQ field: the text it covers then reads as a single
 from __future__ import annotations
 
 import re
-from collections import Counter
+from contextlib import contextmanager
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -24,7 +24,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .. import backend
 from ._common import READ_ONLY, WRITES, Input, annotations, call, error_text, follow, mac_impl, mac_with_active
 from ._word import (
-    ALIGNMENTS, ALIGNMENT_NAMES, clean_text, locate_spans, paragraph, paragraph_info, ruby_of)
+    ALIGNMENTS, ALIGNMENT_NAMES, clean_text, locate_spans, paragraph, paragraph_info,
+    ruby_to_drop)
 
 WD_FIELD_EMPTY = -1
 ORIENTATIONS = {"portrait": 0, "landscape": 1}  # WdOrientation
@@ -129,7 +130,7 @@ class SetPageNumbersInput(Input):
 
 
 class RubySpan(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
     text: str = Field(..., min_length=1, max_length=255, description=(
         "The text to put ruby on, as it stands in the paragraph. Text that already "
@@ -342,50 +343,65 @@ def _set_page_numbers_impl(section, style, start_at, continue_previous):
                     "(word_set_header_footer)."}
 
 
-def _drop_ruby(doc, p, spans) -> None:
-    """Turn the ruby of the spans' text, if it has any, back into plain text."""
-    wanted = Counter(s["text"] for s in spans)
-    found = []
-    fields = p.Range.Fields
-    for i in range(1, fields.Count + 1):
-        f = fields.Item(i)
-        got = ruby_of(f.Code.Text)
-        if got and wanted[got[0]] > 0:
-            wanted[got[0]] -= 1
-            found.append((f, got[0]))
-    for f, base in reversed(found):
-        at = f.Code.Start - 1  # the field's begin mark
-        f.Delete()
+@contextmanager
+def _saying_what_was_taken_off(words: list[str]):
+    """An error after old readings came off says so: it is not "nothing changed"."""
+    try:
+        yield
+    except Exception as exc:
+        if not words:
+            raise
+        said = error_text(exc).replace("Nothing was changed.", "").strip()
+        raise ValueError(f"{said} The readings on {', '.join(words)} had been taken off by "
+                         "then: read the paragraph, and add them again.") from exc
+
+
+def _drop_ruby(doc, p, spans) -> list[str]:
+    """Turn the ruby of the spans' text, if it has any, back into plain text.
+
+    Refuses first, with nothing taken off, when the spans do not fit the
+    paragraph. Answers the words whose readings came off.
+    """
+    rng = p.Range
+    fields = rng.Fields
+    items = [fields.Item(i) for i in range(1, fields.Count + 1)]
+    found = ruby_to_drop(clean_text(rng.Text), [f.Code.Text for f in items],
+                         [s["text"] for s in spans])
+    for i, base in reversed(found):
+        at = items[i].Code.Start - 1  # the field's begin mark
+        items[i].Delete()
         doc.Range(at, at).InsertAfter(base)
+    return [base for _, base in found]
 
 
 def _add_ruby_impl(index, spans, alignment, size):
     doc = backend.word.document()
     p = paragraph(doc, index)
-    _drop_ruby(doc, p, spans)
-    p = paragraph(doc, index)
-    rng = p.Range
-    raw = rng.Text or ""
-    hidden = max(0, rng.End - rng.Start - len(raw.encode("utf-16-le")) // 2)
-    places = locate_spans(raw, [s["text"] for s in spans],
-                          lambda a, b: doc.Range(a, b).Text, rng.Start, hidden)
-    app = backend.word.get_app()
-    try:
-        was = app.ActiveDocument
-    except Exception:  # noqa: BLE001 - no active document
-        was = None
-    # Last first, so the positions before it hold. PhoneticGuide makes the
-    # document the active one (measured), so the user's is given back.
-    try:
-        for (start, end), span in zip(reversed(places), reversed(spans)):
-            target = doc.Range(start, end)
-            if size is None:
-                target.PhoneticGuide(span["ruby"], RUBY_ALIGNMENTS[alignment])
-            else:
-                target.PhoneticGuide(span["ruby"], RUBY_ALIGNMENTS[alignment], 0, size)
-    finally:
-        if was is not None and was.FullName != doc.FullName:
-            was.Activate()
+    taken_off = _drop_ruby(doc, p, spans)
+    with _saying_what_was_taken_off(taken_off):
+        p = paragraph(doc, index)
+        rng = p.Range
+        raw = rng.Text or ""
+        hidden = max(0, rng.End - rng.Start - len(raw.encode("utf-16-le")) // 2)
+        places = locate_spans(raw, [s["text"] for s in spans],
+                              lambda a, b: doc.Range(a, b).Text, rng.Start, hidden)
+        app = backend.word.get_app()
+        try:
+            was = app.ActiveDocument
+        except Exception:  # noqa: BLE001 - no active document
+            was = None
+        # Last first, so the positions before it hold. PhoneticGuide makes the
+        # document the active one (measured), so the user's is given back.
+        try:
+            for (start, end), span in zip(reversed(places), reversed(spans)):
+                target = doc.Range(start, end)
+                if size is None:
+                    target.PhoneticGuide(span["ruby"], RUBY_ALIGNMENTS[alignment])
+                else:
+                    target.PhoneticGuide(span["ruby"], RUBY_ALIGNMENTS[alignment], 0, size)
+        finally:
+            if was is not None and was.FullName != doc.FullName:
+                was.Activate()
     p = paragraph(doc, index)
     follow(doc, p.Range)
     return {"success": True, **paragraph_info(index, p)}
@@ -611,22 +627,18 @@ def _mac_set_page_numbers(section, style, start_at, continue_previous):
                     "(word_set_header_footer)."}
 
 
-def _mac_drop_ruby(doc, index, spans) -> None:
+def _mac_drop_ruby(doc, index, spans) -> list[str]:
     from appscript import k
 
     rng = doc.paragraphs[index].text_object
-    wanted = Counter(s["text"] for s in spans)
-    found = []
-    for i in range(1, int(rng.count(each=k.field)) + 1):
-        f = rng.fields[i]
-        got = ruby_of(f.field_code.content.get())
-        if got and wanted[got[0]] > 0:
-            wanted[got[0]] -= 1
-            found.append((i, got[0]))
+    codes = [rng.fields[i].field_code.content.get()
+             for i in range(1, int(rng.count(each=k.field)) + 1)]
+    found = ruby_to_drop(clean_text(rng.content.get()), codes, [s["text"] for s in spans])
     for i, base in reversed(found):
-        at = rng.fields[i].field_code.start_of_content.get() - 1  # the field's begin mark
-        rng.fields[i].delete()
+        at = rng.fields[i + 1].field_code.start_of_content.get() - 1  # the field's begin mark
+        rng.fields[i + 1].delete()
         doc.create_range(start=at, end_=at).content.set(base)
+    return [base for _, base in found]
 
 
 @mac_impl(_add_ruby_impl)
@@ -639,27 +651,28 @@ def _mac_add_ruby(index, spans, alignment, size):
     app = word.get_app()
     doc = word.document()
     m._para(doc, index)
-    _mac_drop_ruby(doc, index, spans)
-    start, end = m._bounds(doc, index)
-    raw = doc.paragraphs[index].text_object.content.get() or ""
-    hidden = max(0, end - start - len(raw.encode("utf-16-le")) // 2)
+    taken_off = _mac_drop_ruby(doc, index, spans)
+    with _saying_what_was_taken_off(taken_off):
+        start, end = m._bounds(doc, index)
+        raw = doc.paragraphs[index].text_object.content.get() or ""
+        hidden = max(0, end - start - len(raw.encode("utf-16-le")) // 2)
 
-    def read(a, b):
-        try:
-            return doc.create_range(start=a, end_=b).content.get()
-        except Exception:  # noqa: BLE001 - half a character: not here
-            return None
+        def read(a, b):
+            try:
+                return doc.create_range(start=a, end_=b).content.get()
+            except Exception:  # noqa: BLE001 - half a character: not here
+                return None
 
-    places = locate_spans(raw, [s["text"] for s in spans], read, start, hidden)
-    value = getattr(k, "phonetic_guide_alignment_" + {
-        "center": "center", "zero_one_zero": "zero_one_zero", "one_two_one": "one_two_one",
-        "left": "left", "right": "right"}[alignment])
-    for (a, b), span in zip(reversed(places), reversed(spans)):
-        target = doc.create_range(start=a, end_=b)
-        points = size or max(1, round(float(target.font_object.font_size.get()) / 2))
-        # `raise` 0 lets Word place the reading; every parameter is required here.
-        mac_with_active(app, doc, lambda t=target, s=span, p=points: t.phonetic_guide(
-            text=s["ruby"], alignment_type=value, raise_=0, font_size=p, font_name=""))
+        places = locate_spans(raw, [s["text"] for s in spans], read, start, hidden)
+        value = getattr(k, "phonetic_guide_alignment_" + {
+            "center": "center", "zero_one_zero": "zero_one_zero", "one_two_one": "one_two_one",
+            "left": "left", "right": "right"}[alignment])
+        for (a, b), span in zip(reversed(places), reversed(spans)):
+            target = doc.create_range(start=a, end_=b)
+            points = size or max(1, round(float(target.font_object.font_size.get()) / 2))
+            # `raise` 0 lets Word place the reading; every parameter is required here.
+            mac_with_active(app, doc, lambda t=target, s=span, p=points: t.phonetic_guide(
+                text=s["ruby"], alignment_type=value, raise_=0, font_size=p, font_name=""))
     m._scroll(doc, start, end)
     return {"success": True, **m._info(doc, index)}
 

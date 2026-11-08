@@ -7,7 +7,7 @@ import os
 from pydantic import Field, field_validator
 
 from .. import backend
-from ._common import READ_ONLY, WRITES, DESTRUCTIVE, Input, annotations, call
+from ._common import READ_ONLY, WRITES, DESTRUCTIVE, Input, Trimmed, annotations, call
 
 # WdSaveFormat values for the formats save-as takes, by file extension.
 SAVE_FORMATS = {".docx": 16, ".docm": 13, ".dotx": 14, ".doc": 0, ".rtf": 6,
@@ -62,7 +62,7 @@ def _list_documents_impl():
 
 
 class ActivateDocumentInput(Input):
-    document: str = Field(..., min_length=1, description=(
+    document: Trimmed = Field(..., min_length=1, description=(
         "The document to work on from now on: its full path, file name, or file "
         "name without extension, as word_list_documents gives it."))
 
@@ -81,7 +81,7 @@ def _activate_document_impl(document: str):
 # -- open, create ------------------------------------------------------------
 
 class OpenDocumentInput(Input):
-    path: str = Field(..., min_length=1, description="Full path of the file to open.")
+    path: Trimmed = Field(..., min_length=1, description="Full path of the file to open.")
     read_only: bool = Field(False, description="Open it read-only.")
     visible: bool = Field(True, description=(
         "Open it in a window. False opens it without one, for reading only."))
@@ -112,10 +112,10 @@ def _open_document_impl(path: str, read_only: bool, visible: bool):
 
 
 class CreateDocumentInput(Input):
-    template: str | None = Field(None, description=(
+    template: Trimmed | None = Field(None, description=(
         "Full path of a template (.dotx, .dotm) or document to base it on. "
         "Leave out for Word's Normal template."))
-    save_as: str | None = Field(None, description=(
+    save_as: Trimmed | None = Field(None, description=(
         "Full path to save it to straight away (.docx). Saving early is safer."))
 
     @field_validator("template", "save_as")
@@ -154,7 +154,7 @@ def _save_document_impl():
 
 
 class SaveDocumentAsInput(Input):
-    path: str = Field(..., min_length=1, description=(
+    path: Trimmed = Field(..., min_length=1, description=(
         "Full path to save to. The extension picks the format: "
         + ", ".join(sorted(SAVE_FORMATS)) + ". A .pdf is an export: the document "
         "keeps its own file."))

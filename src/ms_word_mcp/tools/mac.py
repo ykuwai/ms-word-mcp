@@ -18,6 +18,7 @@ appscript is imported inside the functions, so this module loads anywhere.
 from __future__ import annotations
 
 import os
+import time
 
 from .. import backend
 from . import documents, edit, formatting
@@ -292,7 +293,13 @@ def _fast_outline(doc, count: int):
     if not items:
         return []
 
-    texts, levels = {}, {}
+    texts, levels, styles = {}, {}, {}
+    heading_styles = {_style_object(doc, f"Heading {n}").name_local.get() for n in range(1, 10)}
+
+    def is_heading(i):
+        if i not in styles:
+            styles[i] = doc.paragraphs[i].style.name_local.get()
+        return styles[i] in heading_styles
 
     def read_text(i):
         if i not in texts:
@@ -308,12 +315,12 @@ def _fast_outline(doc, count: int):
         return levels[i]
 
     found = locate_headings(items, split_texts(doc.text_object.content.get() or ""),
-                            read_text, read_level)
+                            read_text, read_level, is_heading)
     if found is None:
         return None
-    # The text and level were read to place each heading; only the style is new.
+    # The text, level and style were all read to place each heading.
     return [{"index": i, "level": levels[i], "text": _clean(texts[i]),
-             "style": doc.paragraphs[i].style.name_local.get()} for i in found]
+             "style": styles[i]} for i in found]
 
 
 @mac_impl(text_tools._get_outline_impl)
@@ -515,7 +522,11 @@ def delete_paragraphs(start, end):
 
 
 def _matches(doc, find, match_case, whole_word):
-    """(start, end) of each match, in Word positions.
+    return _matches_until(doc, find, match_case, whole_word, None)[0]
+
+
+def _matches_until(doc, find, match_case, whole_word, deadline):
+    """(start, end) of each match in Word positions, and whether all were checked.
 
     Found in the document's text in Python, then checked with Word: an
     equation holds characters the text does not show, so after one the
@@ -534,21 +545,33 @@ def _matches(doc, find, match_case, whole_word):
     if whole_word:
         pattern = rf"(?<!\w){pattern}(?!\w)"
     flags = 0 if match_case else re.IGNORECASE
+    # With nothing hidden and no cell marks (two characters in the text, one
+    # in Word) the text's positions are Word's: reading each back costs 33 ms
+    # on a 1,000-paragraph document (measured) and could only agree.
+    exact = hidden == 0 and "\x07" not in content
     found, drift = [], 0
+    units, counted = 0, 0  # counted as it goes: from the top each time, it adds up
     for m in re.finditer(pattern, content, flags):
-        start = _u16(content, m.start()) + drift
+        units += _u16(content[counted:m.start()], m.start() - counted)
+        counted = m.start()
+        start = units + drift
         length = _u16(m.group(0), len(m.group(0)))
-        for shift in range(0, hidden - drift + 1):
-            at = start + shift
-            try:
-                text = doc.create_range(start=at, end_=at + length).content.get() or ""
-            except Exception:  # noqa: BLE001 - half of a math character: not here
-                continue
-            if (text == m.group(0)) if match_case else (text.lower() == m.group(0).lower()):
-                found.append((at, at + length))
-                drift += shift
-                break
-    return found
+        if exact:
+            found.append((start, start + length))
+        else:
+            for shift in range(0, hidden - drift + 1):
+                at = start + shift
+                try:
+                    text = doc.create_range(start=at, end_=at + length).content.get() or ""
+                except Exception:  # noqa: BLE001 - half of a math character: not here
+                    continue
+                if (text == m.group(0)) if match_case else (text.lower() == m.group(0).lower()):
+                    found.append((at, at + length))
+                    drift += shift
+                    break
+        if deadline is not None and time.monotonic() > deadline:
+            return found, False
+    return found, True
 
 
 def _index_at(doc, position: int) -> int:
@@ -561,18 +584,29 @@ def find_replace(find, replace, match_case, whole_word, wildcards):
         raise ValueError("Wildcards are not supported on macOS yet. Search for plain "
                          "text, or use Windows for a wildcard search.")
     doc = backend.word.document()
-    found = _matches(doc, find, match_case, whole_word)
+    began = time.monotonic()
+    found, searched_all = _matches_until(doc, find, match_case, whole_word,
+                                         began + text_tools.SEARCH_SECONDS)
+    listed = found[:text_tools.LISTED_MATCHES]
     out = {"success": True, "matches": len(found),
-           "paragraphs": sorted({_index_at(doc, s) for s, _ in found})}
+           "paragraphs": sorted({_index_at(doc, s) for s, _ in listed})}
     if replace is None or not found:
+        text_tools.replace_outcome(out, len(listed), searched_all, None, find, None)
         return out
     value = replace.replace("\n", "\v")
+    until = began + text_tools.WORK_SECONDS
+    done = 0
     for start, end in reversed(found):
+        if time.monotonic() > until:
+            break
         doc.create_range(start=start, end_=end).content.set(value)
-    out["replaced"] = len(found)
-    left = _matches(doc, find, match_case, whole_word)
-    if left and find.lower() not in value.lower():
-        out["warnings"] = [f"{len(left)} matches are still there after replacing."]
+        done += 1
+    out["replaced"] = done
+    if searched_all and done == len(found) and time.monotonic() < until:
+        left, _ = _matches_until(doc, find, match_case, whole_word, until)
+        if left and find.lower() not in value.lower():
+            out["warnings"] = [f"{len(left)} matches are still there after replacing."]
+    text_tools.replace_outcome(out, len(listed), searched_all, done, find, replace)
     return out
 
 

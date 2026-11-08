@@ -21,7 +21,7 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from ._common import Input
+from ._common import Input, Trimmed
 
 WD_UNDEFINED = 9999999
 
@@ -161,15 +161,15 @@ _PT = dict(ge=-1584, le=1584)
 class FontSpec(Input):
     """Character formatting. Every field is optional; leave out what stays."""
 
-    latin_font: str | None = Field(None, description=(
+    latin_font: Trimmed | None = Field(None, description=(
         "Font for Latin text (alphabet, digits). Also sets latin_font_extended "
         "unless that is given."))
-    latin_font_extended: str | None = Field(None, description=(
+    latin_font_extended: Trimmed | None = Field(None, description=(
         "Font for accented Latin characters (codes 128-255). Defaults to latin_font."))
-    east_asian_font: str | None = Field(None, description=(
+    east_asian_font: Trimmed | None = Field(None, description=(
         "Font for Japanese, Chinese and Korean text. Word refuses a font without "
         "East Asian glyphs here; the result says so."))
-    complex_script_font: str | None = Field(None, description=(
+    complex_script_font: Trimmed | None = Field(None, description=(
         "Font for Arabic, Hebrew and other right-to-left text."))
     size: float | None = Field(None, gt=0, le=1638, description="Points, Latin and East Asian.")
     size_complex_script: float | None = Field(None, gt=0, le=1638, description=(
@@ -179,9 +179,9 @@ class FontSpec(Input):
     italic: bool | None = None
     italic_complex_script: bool | None = None
     underline: Literal[tuple(UNDERLINES)] | None = None  # type: ignore[valid-type]
-    underline_color: str | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description=(
+    underline_color: Trimmed | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description=(
         "#RRGGBB (Windows only)."))
-    color: str | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description="#RRGGBB.")
+    color: Trimmed | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description="#RRGGBB.")
     strikethrough: bool | None = None
     double_strikethrough: bool | None = None
     superscript: bool | None = None

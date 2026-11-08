@@ -64,14 +64,17 @@ def parse_item(item: str) -> tuple[int, str]:
 
 def locate_headings(items: list[str], texts: list[str],
                     read_text: Callable[[int], Optional[str]],
-                    read_level: Callable[[int], Optional[int]]) -> Optional[list[int]]:
+                    read_level: Callable[[int], Optional[int]],
+                    is_heading: Callable[[int], bool]) -> Optional[list[int]]:
     """The paragraph number of each heading in `items`, or None.
 
-    `texts` is split_texts of the whole text. `read_text(i)` and
-    `read_level(i)` ask Word for paragraph i (None when there is none). A
-    number is kept only when Word's text starts with the heading's (the list
-    shortens long headings) and Word's level is the heading's. None means a
-    heading could not be found, and the caller reads every paragraph.
+    `texts` is split_texts of the whole text. `read_text(i)`, `read_level(i)`
+    and `is_heading(i)` ask Word about paragraph i (None when there is none).
+    A number is kept only when Word's text starts with the heading's (the list
+    shortens long headings), Word's level is the heading's, and the paragraph
+    has a heading style: the same words at the same level can be a body
+    paragraph given an outline level directly. None means a heading could not
+    be found, and the caller reads every paragraph.
     """
     found: list[int] = []
     low, shift = 1, 0
@@ -85,7 +88,8 @@ def locate_headings(items: list[str], texts: list[str],
 
     def is_it(i: int, target: str, level: int) -> bool:
         got = text_at(i)
-        return got is not None and got.startswith(target) and read_level(i) == level
+        return (got is not None and got.startswith(target) and read_level(i) == level
+                and is_heading(i))
 
     for item in items:
         level, target = parse_item(item)

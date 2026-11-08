@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from ms_word_mcp.tools import page, references
-from ms_word_mcp.tools._word import ruby_of, with_ruby
+from ms_word_mcp.tools._word import ruby_of, ruby_to_drop, with_ruby
 
 
 def test_page_placeholders_become_one_character_and_a_field():
@@ -70,3 +70,41 @@ def test_page_setup_needs_something_to_do():
         page.SetPageSetupInput(section=1)
     with pytest.raises(ValidationError, match="not both"):
         page.SetPageSetupInput(paper="a4", width=100)
+
+
+_CODE = r"EQ \* jc2 \* \"Font:Yu Mincho\" \* hps5 \o\ad(\s\up 9({}),{})"
+
+
+def _ruby(base, reading):
+    return " " + _CODE.replace("\\\"", '"').format(reading, base) + " "
+
+
+def test_ruby_to_be_replaced_is_found():
+    codes = [_ruby("漢字", "かんじ"), " PAGE ", _ruby("文章", "ぶんしょう")]
+    assert ruby_of(codes[0]) == ("漢字", "かんじ")
+    assert ruby_to_drop("\x15と\x15", codes, ["文章"]) == [(2, "文章")]
+
+
+def test_a_missing_span_is_refused_before_any_ruby_comes_off():
+    codes = [_ruby("漢字", "かんじ")]
+    with pytest.raises(ValueError, match="Nothing was changed"):
+        ruby_to_drop("\x15です", codes, ["漢字", "ない"])
+
+
+def test_spans_out_of_order_are_refused_before_any_ruby_comes_off():
+    codes = [_ruby("漢字", "かんじ"), _ruby("文章", "ぶんしょう")]
+    with pytest.raises(ValueError, match="in the order"):
+        ruby_to_drop("\x15と\x15", codes, ["文章", "漢字"])
+
+
+def test_a_span_cannot_cross_ruby_that_stays():
+    codes = [_ruby("漢字", "かんじ")]
+    with pytest.raises(ValueError, match="Nothing was changed"):
+        ruby_to_drop("\x15です", codes, ["字です"])
+
+
+def test_spaces_of_a_caption_and_of_ruby_are_kept():
+    assert references.InsertCaptionInput(after=1, separator=": ").separator == ": "
+    assert references.InsertCaptionInput(after=1, separator=" ").separator == " "
+    assert references.InsertCaptionInput(after=1, label=" 図 ").label == "図"
+    assert page.RubySpan(text="a b ", ruby=" x").text == "a b "

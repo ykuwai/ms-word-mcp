@@ -24,7 +24,8 @@ from pydantic import Field, model_validator
 
 from .. import backend
 from ._common import (
-    DESTRUCTIVE, READ_ONLY, WRITES, Input, annotations, call, follow, mac_impl, mac_with_active)
+    DESTRUCTIVE, READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow, mac_impl,
+    mac_with_active)
 from ._props import bgr, hex_of
 from ._word import ALIGNMENTS, BUILTIN_STYLES, flag, index_of, paragraph, resolve_style
 
@@ -45,7 +46,7 @@ MAX_ROWS_PER_READ = 100
 class TableLook(Input):
     """What a table looks like as a whole: shared by inserting and changing one."""
 
-    style: str | None = Field(None, max_length=255, description=(
+    style: Trimmed | None = Field(None, max_length=255, description=(
         "A table style. These English names work in every language of Word: Light "
         "Shading, Light List, Light Grid, Medium Shading 1, Medium Shading 2, Medium "
         "List 1, Medium List 2, Medium Grid 1-3, Dark List, Colorful Shading, Colorful "
@@ -137,11 +138,11 @@ class FormatCellsInput(TableInput):
     to_row: int | None = Field(None, ge=1, description="Last row (default: the last).")
     from_column: int = Field(1, ge=1, description="First column (default 1).")
     to_column: int | None = Field(None, ge=1, description="Last column (default: the last).")
-    shading: str | None = Field(None, pattern=r"^(#?[0-9A-Fa-f]{6}|none)$", description=(
+    shading: Trimmed | None = Field(None, pattern=r"^(#?[0-9A-Fa-f]{6}|none)$", description=(
         "Background color #RRGGBB, or none."))
     bold: bool | None = None
     italic: bool | None = None
-    color: str | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description=(
+    color: Trimmed | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description=(
         "Text color #RRGGBB."))
     size: float | None = Field(None, ge=1, le=1638, description="Font size in points.")
     alignment: Literal["left", "center", "right", "justify", "distribute"] | None = Field(

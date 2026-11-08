@@ -15,7 +15,8 @@ from types import SimpleNamespace
 UNDEFINED = 9999999
 
 BUILTIN_NAMES = {-1: "Normal", -66: "Default Paragraph Font", -2: "Heading 1", -3: "Heading 2", -4: "Heading 3",
-                 -5: "Heading 4", -63: "Title", -75: "Subtitle", -180: "List Paragraph"}
+                 -5: "Heading 4", -6: "Heading 5", -7: "Heading 6", -8: "Heading 7",
+                 -9: "Heading 8", -10: "Heading 9", -63: "Title", -75: "Subtitle", -180: "List Paragraph"}
 
 DEFAULT_ATTRS = {
     "NameAscii": "Calibri", "NameOther": "Calibri", "NameFarEast": "游明朝",

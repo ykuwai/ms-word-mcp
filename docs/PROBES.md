@@ -121,6 +121,20 @@ Measured with `scripts/probes/mac_bulk_reads.py` and
 | word_get_outline, 1,000 paragraphs, 40 headings, 10 numbered equations | Every paragraph: 28.2 s and 37.0 s in two runs. Heading list, each heading read back: 2.5 s and 6.7 s, the same 40 headings | Every paragraph: 19.9 s. Heading list, each heading read back: 3.4 s, the same 40 headings |
 | word_insert_paragraphs, 1,000 paragraphs | 48.6 s, a style set and read back a paragraph at a time; 4.5 s by runs of a style, read back in one call | 57 s the same way; 6.5 s with a style set on each run of paragraphs that share it and the text read back in one call |
 
+## Replacing many matches (Word 16, both platforms)
+
+`scripts/probes/find_replace_speed.py`: 1,000 paragraphs holding 3,000 matches.
+One call stops itself after 20 s of searching and 45 s in all, inside the 60 s
+(Windows) and 84 s (Mac) a call may run, and answers `complete: false` with how
+far it got. Calling again does the rest.
+
+| | Count the matches | Replace, one call |
+|---|---|---|
+| Windows (`Find.Execute`, match by match) | 827 in 20.1 s, then out of time | 740 in 31.7 s, 20 s of it searching |
+| Mac (the whole text, in Python) | all 3,000 in 3.6 s | 1,249 in 45.2 s |
+
+One paragraph holding 520 matches is slower on Windows: 433 replaced in a call.
+
 ## Pictures, captions, references, the page, ruby (Word 16, both platforms)
 
 Measured with `scripts/probes/windows_layout.py` and `scripts/probes/mac_layout.py`

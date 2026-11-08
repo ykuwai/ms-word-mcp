@@ -26,7 +26,7 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from .. import backend
-from ._common import READ_ONLY, WRITES, Input, annotations, call, follow, mac_impl
+from ._common import READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow, mac_impl
 from ._word import ALIGNMENTS, clean_text, paragraph
 
 CONTAINER = os.path.expanduser("~/Library/Containers/com.microsoft.Word/Data/Documents")
@@ -45,7 +45,7 @@ def _u16(text: str) -> int:
 # -- arguments ---------------------------------------------------------------------
 
 class InsertPictureInput(Input):
-    path: str = Field(..., min_length=1, description="Full path of the picture file.")
+    path: Trimmed = Field(..., min_length=1, description="Full path of the picture file.")
     after: int | None = Field(None, ge=0, description=(
         "Put it after this paragraph (0 = at the very start). Neither after nor "
         "before: at the end."))
@@ -90,7 +90,7 @@ class SetPictureInput(Input):
 
 class InsertCaptionInput(Input):
     text: str = Field("", description="The caption's words, after its label and number.")
-    label: str = Field("Figure", min_length=1, max_length=40, description=(
+    label: Trimmed = Field("Figure", min_length=1, max_length=40, description=(
         "The label, in the document's language: Figure, Table, 図, 表, Abbildung... "
         "Each label is numbered on its own."))
     separator: str = Field(" ", max_length=10, description=(
