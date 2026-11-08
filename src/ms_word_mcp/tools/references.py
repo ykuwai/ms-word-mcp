@@ -123,7 +123,8 @@ class CrossReferenceInput(Input):
         "At the end of the paragraph's text or at its start."))
     match: str | None = Field(None, min_length=1, max_length=255, description=(
         "Instead of `position`: replace the first occurrence of this text in the "
-        "paragraph, such as a placeholder."))
+        "paragraph, such as a placeholder: \"see FIG\" with match \"FIG\". Several "
+        "references can go in one paragraph, in any order."))
 
 
 class NoInput(Input):

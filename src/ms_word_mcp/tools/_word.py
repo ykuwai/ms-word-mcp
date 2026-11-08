@@ -184,6 +184,34 @@ def with_ruby(text: str, codes: list[str]) -> tuple[str, list[dict]]:
     return text.replace("\x15", ""), rubies
 
 
+def locate_spans(raw: str, spans: list[str], read, start: int, hidden: int) -> list[tuple[int, int]]:
+    """Word's (start, end) of each span, in order, each read back from Word.
+
+    `raw` is the paragraph's text; Word's positions run ahead of it by up to
+    `hidden` after ruby or another field that hides its characters.
+    """
+    def u16(text):
+        return len(text.encode("utf-16-le")) // 2
+
+    out, cursor, drift = [], 0, 0
+    for span in spans:
+        at = raw.find(span, cursor)
+        if at < 0:
+            raise ValueError(f"'{span}' is not in the paragraph after what comes before it. "
+                             "Give the spans in the order they come. Nothing was changed.")
+        base, n = start + u16(raw[:at]), u16(span)
+        for shift in range(drift, hidden + 1):
+            if read(base + shift, base + shift + n) == span:
+                out.append((base + shift, base + shift + n))
+                drift = shift
+                break
+        else:
+            raise ValueError(f"'{span}' could not be found in Word at its place. Nothing "
+                             "was changed.")
+        cursor = at + len(span)
+    return out
+
+
 def clean_text(text: str) -> str:
     """A range's text without its paragraph mark or cell marker."""
     return (text or "").rstrip("\r\x07")

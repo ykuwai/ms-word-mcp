@@ -285,8 +285,7 @@ def _set_paragraph_text_impl(index: int, text: str):
     p = paragraph(doc, index)
     rng = p.Range
     old = clean_text(rng.Text)
-    end = rng.Start + len(old)
-    target = doc.Range(rng.Start, end)
+    target = doc.Range(rng.Start, rng.End - 1)  # a field hides its code from the text
     target.Text = text.replace("\n", "\v")
     p = paragraph(doc, index)
     info = paragraph_info(index, p)

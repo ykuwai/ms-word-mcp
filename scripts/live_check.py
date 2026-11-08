@@ -294,7 +294,7 @@ def run_picture_and_page_steps(folder: Path) -> None:
     step("captions are listed", references._list_captions_impl,
          check=lambda o: {"Figure", "表", "Equation"} <= {c["label"] for c in o["captions"]})
     para = step("a paragraph to refer from", text._insert_paragraphs_impl,
-                [{"text": "As PLACEHOLDER shows, and on page .", "style": "Normal"}], None, None,
+                [{"text": "As PLACEHOLDER shows, and SECOND, and on page .", "style": "Normal"}], None, None,
                 undo="Insert paragraphs", check=lambda o: "error" not in o)
     if "error" in cap or "error" in para:
         return
@@ -306,6 +306,15 @@ def run_picture_and_page_steps(folder: Path) -> None:
     step("a reference to the figure", references._insert_cross_reference_impl, at, figure,
          "label_and_number", "end", "PLACEHOLDER", undo="Insert cross-reference",
          check=lambda o: o["result"] == "Figure 1")
+    table_caption = next(c["index"] for c in
+                         json.loads(_common.run(references._list_captions_impl))["captions"]
+                         if c["label"] == "表")
+    step("a second reference in the paragraph", references._insert_cross_reference_impl, at,
+         table_caption, "label_and_number", "end", "SECOND", undo="Insert cross-reference",
+         check=lambda o: o.get("result") == "表 1")
+    step("both references are in one piece", fields._list_fields_impl, at, at,
+         check=lambda o: [f["kind"] for f in o["fields"]] == ["REF", "REF"]
+         and all(f["code"].count("REF") == 1 for f in o["fields"]))
     step("a reference to its page", references._insert_cross_reference_impl, at, figure,
          "page", "end", None, undo="Insert cross-reference",
          check=lambda o: o["result"].isdigit())
@@ -376,6 +385,13 @@ def run_picture_and_page_steps(folder: Path) -> None:
         step("ruby next to existing ruby", page._add_ruby_impl, at,
              [{"text": "日本語", "ruby": "にほんご"}], "center", 5, undo="Add ruby",
              check=lambda o: len(o["ruby"]) == 3 and o["text"] == "漢字と日本語の文章です。")
+        step("ruby can be changed", page._add_ruby_impl, at,
+             [{"text": "漢字", "ruby": "カンジ"}], "center", None, undo="Add ruby",
+             check=lambda o: o["text"] == "漢字と日本語の文章です。" and len(o["ruby"]) == 3
+             and o["ruby"][0]["ruby"] == "カンジ")
+        step("a paragraph with ruby can be rewritten", text._set_paragraph_text_impl, at,
+             "Rewritten after ruby.", undo="Rewrite",
+             check=lambda o: o["paragraph"]["text"] == "Rewritten after ruby.")
         step("text that is not there changes nothing", page._add_ruby_impl, at,
              [{"text": "ない", "ruby": "x"}], "center", None, undo="Add ruby",
              check=lambda o: "Nothing was changed" in o.get("error", ""))

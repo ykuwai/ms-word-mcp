@@ -89,8 +89,8 @@ Then, ordered roughly by what the owner stressed.
    figures, numbers with the chapter (2.1); splitting cells, sorting, table
    borders one side at a time.
 5. **Footnotes and endnotes**, hyperlinks, bookmarks of the user's own.
-6. **Japanese typography, the rest.** Removing or changing ruby, vertical
-   text in part of a page (text boxes), tate-chu-yoko.
+6. **Japanese typography, the rest.** Removing ruby outright, vertical text
+   in part of a page (text boxes), tate-chu-yoko.
 7. **View.** Zoom (percentage, page width, whole page), view type, follow
    edits in a second window.
 8. Adding sections (section breaks); a header of several paragraphs.

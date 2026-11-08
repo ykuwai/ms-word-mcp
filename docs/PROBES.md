@@ -139,6 +139,9 @@ on 2026-11-08, then through the live check.
 | Vertical text | `Section.Range.Orientation = 1` (wdTextOrientationVerticalFarEast): the page turns (595 x 842 becomes 842 x 595) | `orientation` of the section's `text object`, `text orientation vertical east asian`: the same |
 | Tables when the direction changes | Not measured apart from the live check, which passes | They float (`wrap around text` true) and go left; in vertical text `wrap around text` cannot be turned off. Back in horizontal text, wrap off first: setting it resets a table's alignment. |
 | Ruby | `Range.PhoneticGuide(text)` makes an EQ field (`\o\ad(\s\up 10(かんじ),漢字)`), and the text it covers reads as one `\x15` | `phonetic guide` with every parameter (`raise` 0 places it): the same field, `\x15` too |
+| A position counted from a paragraph's text | Runs behind Word's once a field is in the paragraph: the text shows a field's result and hides its code | The same. A second cross-reference placed that way went inside the first's code (-1708, and the first was damaged; seen in a Sonnet trial), so places are read back from Word. |
+| Changing text that has a field or ruby | A range that stops inside a field | The same: `content` of a range stopping inside one is refused (-1708). To the paragraph's real end it is taken. |
+| Changing ruby | `Field.Delete`, then the words inserted at the field's place | `delete` of the field, the same |
 | Document grid | `LinesPage = 30` or `CharsLine = 40` refused in vertical text ("the value is out of range") | Taken |
 
 ## Tables (Word 16, both platforms)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict
@@ -88,7 +89,18 @@ def error_text(exc: BaseException) -> str:
 
     if isinstance(exc, ComError):
         return f"Word refused the call: {describe_com_error(exc)}"
-    return str(exc) or exc.__class__.__name__
+    text = str(exc) or exc.__class__.__name__
+    found = re.search(r"OSERROR: (-?\d+)", text)  # an appscript CommandError
+    if found is None:
+        return text
+    number = found.group(1)
+    if number == "-1712":
+        return ("Word did not answer in time. It may be waiting on a dialog, such as one "
+                "asking for access to a file: look at Word's window, and try again.")
+    message = re.search(r"MESSAGE: (.*)", text)
+    detail = message.group(1).strip() if message else "no message"
+    return (f"Word for Mac refused the call (error {number}: {detail}). Part of it may have "
+            "been done: read the place back, and use word_undo if it is wrong.")
 
 
 def run(impl: Callable[..., Any], *args: Any, undo: str | None = None,

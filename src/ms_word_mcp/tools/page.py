@@ -16,13 +16,15 @@ which Word stores as an EQ field: the text it covers then reads as a single
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .. import backend
 from ._common import READ_ONLY, WRITES, Input, annotations, call, error_text, follow, mac_impl, mac_with_active
-from ._word import ALIGNMENTS, ALIGNMENT_NAMES, clean_text, paragraph, paragraph_info
+from ._word import (
+    ALIGNMENTS, ALIGNMENT_NAMES, clean_text, locate_spans, paragraph, paragraph_info, ruby_of)
 
 WD_FIELD_EMPTY = -1
 ORIENTATIONS = {"portrait": 0, "landscape": 1}  # WdOrientation
@@ -74,9 +76,11 @@ class SetPageSetupInput(Input):
     characters_per_line: float | None = Field(None, gt=0, description=(
         "Characters a line in the grid."))
     different_first_page: bool | None = Field(None, description=(
-        "The first page has its own header and footer."))
+        "The first page has its own header and footer, both blank until written "
+        "with word_set_header_footer `which` first."))
     different_odd_even: bool | None = Field(None, description=(
-        "Even pages have their own header and footer."))
+        "Even pages have their own header and footer, both blank until written "
+        "with `which` even."))
 
     @model_validator(mode="after")
     def _something(self):
@@ -95,8 +99,10 @@ class SetHeaderFooterInput(Input):
         "next tab stop of the Header or Footer style, by default the centre then "
         "the right."))
     which: Literal["primary", "first", "even"] = Field("primary", description=(
-        "primary: every page, or the odd pages when even pages differ. first: the "
-        "first page. even: even pages. first and even turn on that kind of page."))
+        "primary: every page. first: the first page, which then has its own header "
+        "and footer. even: even pages, which then have their own. Once the first or "
+        "even pages have their own, the other part (header or footer) needs writing "
+        "for them too, or they are blank there."))
     section: int = Field(1, ge=1, description=(
         "The section. Later sections show the same until a section has its own; "
         "writing to a later section gives it its own."))
@@ -126,7 +132,8 @@ class RubySpan(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     text: str = Field(..., min_length=1, max_length=255, description=(
-        "The text to put ruby on, as it stands in the paragraph."))
+        "The text to put ruby on, as it stands in the paragraph. Text that already "
+        "has ruby takes the new reading."))
     ruby: str = Field(..., min_length=1, max_length=255, description="The reading above it.")
 
 
@@ -134,7 +141,8 @@ class AddRubyInput(Input):
     index: int = Field(..., ge=1, description="The paragraph.")
     spans: list[RubySpan] = Field(..., min_length=1, max_length=100, description=(
         "Each piece of text and its reading, in the order they come in the "
-        "paragraph: [{\"text\": \"漢字\", \"ruby\": \"かんじ\"}]."))
+        "paragraph: [{\"text\": \"漢字\", \"ruby\": \"かんじ\"}]. Each entry covers one "
+        "occurrence: to cover a word that comes twice, list it twice."))
     alignment: Literal[tuple(RUBY_ALIGNMENTS)] = Field("center", description=(  # type: ignore[valid-type]
         "How the reading sits over the text."))
     size: int | None = Field(None, ge=1, le=127, description=(
@@ -158,34 +166,6 @@ def parse_placeholders(text: str) -> tuple[str, list[tuple[int, str]]]:
             out.append(piece)
             length += len(piece)
     return "".join(out), fields
-
-
-def locate_spans(raw: str, spans: list[str], read, start: int, hidden: int) -> list[tuple[int, int]]:
-    """Word's (start, end) of each span, in order, each read back from Word.
-
-    `raw` is the paragraph's text; Word's positions run ahead of it by up to
-    `hidden` after ruby or another field that hides its characters.
-    """
-    def u16(text):
-        return len(text.encode("utf-16-le")) // 2
-
-    out, cursor, drift = [], 0, 0
-    for span in spans:
-        at = raw.find(span, cursor)
-        if at < 0:
-            raise ValueError(f"'{span}' is not in the paragraph after what comes before it. "
-                             "Give the spans in the order they come. Nothing was changed.")
-        base, n = start + u16(raw[:at]), u16(span)
-        for shift in range(drift, hidden + 1):
-            if read(base + shift, base + shift + n) == span:
-                out.append((base + shift, base + shift + n))
-                drift = shift
-                break
-        else:
-            raise ValueError(f"'{span}' could not be found in Word at its place. Nothing "
-                             "was changed.")
-        cursor = at + len(span)
-    return out
 
 
 def _attempt(warnings: list[str], name: str, action) -> None:
@@ -362,8 +342,27 @@ def _set_page_numbers_impl(section, style, start_at, continue_previous):
                     "(word_set_header_footer)."}
 
 
+def _drop_ruby(doc, p, spans) -> None:
+    """Turn the ruby of the spans' text, if it has any, back into plain text."""
+    wanted = Counter(s["text"] for s in spans)
+    found = []
+    fields = p.Range.Fields
+    for i in range(1, fields.Count + 1):
+        f = fields.Item(i)
+        got = ruby_of(f.Code.Text)
+        if got and wanted[got[0]] > 0:
+            wanted[got[0]] -= 1
+            found.append((f, got[0]))
+    for f, base in reversed(found):
+        at = f.Code.Start - 1  # the field's begin mark
+        f.Delete()
+        doc.Range(at, at).InsertAfter(base)
+
+
 def _add_ruby_impl(index, spans, alignment, size):
     doc = backend.word.document()
+    p = paragraph(doc, index)
+    _drop_ruby(doc, p, spans)
     p = paragraph(doc, index)
     rng = p.Range
     raw = rng.Text or ""
@@ -612,6 +611,24 @@ def _mac_set_page_numbers(section, style, start_at, continue_previous):
                     "(word_set_header_footer)."}
 
 
+def _mac_drop_ruby(doc, index, spans) -> None:
+    from appscript import k
+
+    rng = doc.paragraphs[index].text_object
+    wanted = Counter(s["text"] for s in spans)
+    found = []
+    for i in range(1, int(rng.count(each=k.field)) + 1):
+        f = rng.fields[i]
+        got = ruby_of(f.field_code.content.get())
+        if got and wanted[got[0]] > 0:
+            wanted[got[0]] -= 1
+            found.append((i, got[0]))
+    for i, base in reversed(found):
+        at = rng.fields[i].field_code.start_of_content.get() - 1  # the field's begin mark
+        rng.fields[i].delete()
+        doc.create_range(start=at, end_=at).content.set(base)
+
+
 @mac_impl(_add_ruby_impl)
 def _mac_add_ruby(index, spans, alignment, size):
     from appscript import k
@@ -622,6 +639,7 @@ def _mac_add_ruby(index, spans, alignment, size):
     app = word.get_app()
     doc = word.document()
     m._para(doc, index)
+    _mac_drop_ruby(doc, index, spans)
     start, end = m._bounds(doc, index)
     raw = doc.paragraphs[index].text_object.content.get() or ""
     hidden = max(0, end - start - len(raw.encode("utf-16-le")) // 2)

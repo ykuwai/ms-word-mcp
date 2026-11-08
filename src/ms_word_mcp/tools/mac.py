@@ -470,10 +470,12 @@ def insert_paragraphs(paragraphs, after, before):
 def set_paragraph_text(index, text):
     doc = backend.word.document()
     _para(doc, index)
-    start, _ = _bounds(doc, index)
+    start, end = _bounds(doc, index)
     old = _clean(doc.paragraphs[index].text_object.content.get())
     value = text.replace("\n", "\v")
-    doc.create_range(start=start, end_=start + _u16(old, len(old))).content.set(value)
+    # To the paragraph's real end: a field hides its code from the text, and
+    # a range that stopped inside one was refused (-1708, seen in a trial).
+    doc.create_range(start=start, end_=end - 1).content.set(value)
     info = _info(doc, index)
     _scroll(doc, *_bounds(doc, index))
     out = {"success": True, "paragraph": info, "was": old}
