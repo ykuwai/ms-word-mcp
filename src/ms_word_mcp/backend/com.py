@@ -38,6 +38,10 @@ except ImportError:  # the tests, and macOS
 # or a menu open and refuses calls until it closes.
 BUSY_HRESULTS = frozenset({-2147418111, -2147417846})
 
+UNGROUPED_NOTE = (
+    "This document is not Word's active one, so Word keeps each change of this "
+    "call as its own undo step: one Undo does not take the whole call back.")
+
 
 def describe_com_error(exc: BaseException) -> str:
     """The most useful sentence a com_error carries."""
@@ -87,23 +91,41 @@ class ComWord(Worker):
         # through COM between StartCustomRecord and EndCustomRecord into one
         # entry named after the tool, so a single Undo takes the call back.
         # A record the user's own macro already started is left alone.
+        #
+        # Measured on Word 16 (docs/PROBES.md): the record holds only while
+        # the document written to is Word's active one. Writing to another
+        # ends it at once, and each change becomes its own undo step. The
+        # server does not switch the user's window to make it hold; the
+        # result says how the call can be undone instead.
         record = None
+        grouped = False
         if job.undo:
             try:
-                candidate = self.get_app().UndoRecord
-                if not candidate.IsRecordingCustomRecord:
+                self._local.document = job.document
+                app = self.get_app()
+                target = self.document()
+                active = app.ActiveDocument
+                grouped = target.FullName == active.FullName
+                candidate = app.UndoRecord
+                if grouped and not candidate.IsRecordingCustomRecord:
                     candidate.StartCustomRecord(job.undo[:64])
                     record = candidate
             except Exception:  # noqa: BLE001 - the call still runs, ungrouped
                 logger.debug("Could not start an undo record", exc_info=True)
+                grouped = False
         try:
-            return job.func(*job.args, **job.kwargs)
+            result = job.func(*job.args, **job.kwargs)
+            if record is not None and not record.IsRecordingCustomRecord:
+                grouped = False
         finally:
             if record is not None:
                 try:
                     record.EndCustomRecord()
                 except Exception:  # noqa: BLE001
                     logger.debug("Could not end the undo record", exc_info=True)
+        if job.undo and not grouped and isinstance(result, dict) and "error" not in result:
+            result = {**result, "undo": UNGROUPED_NOTE}
+        return result
 
     # -- connecting -------------------------------------------------------
 

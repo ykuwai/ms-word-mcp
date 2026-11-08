@@ -131,6 +131,13 @@ PARAGRAPH_PROPS = (
          BASELINES, BASELINES_MAC),
 )
 
+# The same spacing or indent in points and in lines or characters. Word keeps
+# both; the one in lines or characters wins while it is not zero (measured on
+# the Mac: 0.5 lines before read back as 9 pt before).
+PAIRED_UNITS = {"space_before": "space_before_lines", "space_after": "space_after_lines",
+                "first_line_indent": "first_line_indent_chars",
+                "left_indent": "left_indent_chars", "right_indent": "right_indent_chars"}
+
 FONT_NAMES = tuple(p.name for p in FONT_PROPS)
 PARAGRAPH_NAMES = tuple(p.name for p in PARAGRAPH_PROPS) + ("line_spacing_rule",
                                                             "line_spacing")
@@ -247,6 +254,11 @@ class ParagraphSpec(Input):
 
     @model_validator(mode="after")
     def _spacing(self):
+        for points, units in PAIRED_UNITS.items():
+            if getattr(self, points) is not None and getattr(self, units) is not None:
+                raise ValueError(f"Give {points} or {units}, not both: Word keeps one "
+                                 "measure for each, and the one in lines or characters "
+                                 "wins while it is set.")
         if self.line_spacing is not None and self.line_spacing_rule in (
                 None, "single", "one_and_half", "double"):
             raise ValueError("line_spacing needs line_spacing_rule \"exactly\", "
@@ -416,3 +428,101 @@ def with_latin_extended(spec: dict) -> dict:
     if "latin_font" in spec and "latin_font_extended" not in spec:
         return {**spec, "latin_font_extended": spec["latin_font"]}
     return spec
+
+
+# -- Mac (appscript) ---------------------------------------------------------------
+
+def _k():
+    from appscript import k
+
+    return k
+
+
+def _kname(value) -> str:
+    return getattr(value, "name", None) or str(value).removeprefix("k.")
+
+
+def mac_font_name(value):
+    """A font name as Windows gives it: Word for Mac adds " ()" to theme fonts."""
+    if not isinstance(value, str) or not value:
+        return None
+    return value[:-3] if value.endswith(" ()") else value
+
+
+def _mac_value(prop: Prop, value):
+    if prop.kind == "flag":
+        return (not value) if prop.invert else bool(value)
+    if prop.kind == "enum":
+        return getattr(_k(), prop.mac_values[value])
+    if prop.kind == "color":
+        # Word for Mac takes 16-bit channels: [192, 0, 0] is black, and
+        # [49344, 0, 0] is #C00000 (measured, docs/PROBES.md).
+        v = value.lstrip("#")
+        return [int(v[i:i + 2], 16) * 257 for i in (0, 2, 4)]
+    return value
+
+
+def _mac_read(prop: Prop, raw):
+    k = _k()
+    if raw == k.missing_value:
+        return None
+    if prop.kind == "flag":
+        if not isinstance(raw, bool):
+            return None
+        return (not raw) if prop.invert else raw
+    if prop.kind == "enum":
+        name = _kname(raw)
+        for key, kname in prop.mac_values.items():
+            if kname == name:
+                return key
+        return name
+    if prop.kind == "color":
+        if isinstance(raw, (list, tuple)) and len(raw) == 3:
+            r, g, b = (round(int(c) / 257) for c in raw)
+            return f"#{r:02X}{g:02X}{b:02X}"
+        return None
+    if prop.kind == "font":
+        return mac_font_name(raw)
+    return raw
+
+
+def mac_apply(obj, props, spec: dict) -> dict:
+    """Set each given property on a Word for Mac font or paragraph format."""
+    refused = {}
+    for prop in props:
+        if prop.name not in spec:
+            continue
+        if prop.mac is None:
+            refused[prop.name] = "Word for Mac has no such property; it works on Windows."
+            continue
+        try:
+            getattr(obj, prop.mac).set(_mac_value(prop, spec[prop.name]))
+        except Exception as exc:  # noqa: BLE001 - reported to the caller
+            refused[prop.name] = str(exc).splitlines()[0]
+    return refused
+
+
+def mac_read(obj, props) -> dict:
+    out = {}
+    for prop in props:
+        if prop.mac is None:
+            continue
+        try:
+            out[prop.name] = _mac_read(prop, getattr(obj, prop.mac).get())
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
+def mac_apply_line_spacing(fmt, rule, value) -> None:
+    if rule is None:
+        return
+    fmt.line_spacing_rule.set(getattr(_k(), LINE_SPACING_MAC[rule]))
+    if value is not None:
+        fmt.line_spacing.set(value * 12.0 if rule == "multiple" else value)
+
+
+def mac_read_line_spacing(fmt) -> dict:
+    name = _kname(fmt.line_spacing_rule.get())
+    rule = next((k for k, v in LINE_SPACING_MAC.items() if v == name), None)
+    return describe_line_spacing(rule, fmt.line_spacing.get())

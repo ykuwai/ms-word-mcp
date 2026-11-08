@@ -61,7 +61,11 @@ What the documentation leaves unstated, measured with `scripts/probes/windows_ch
 | Mixed ranges | SpaceBefore, Alignment, SizeBi and Color all read 9999999 (wdUndefined) over two paragraphs that differ. |
 | `Font.Bold` | Reads as the Python int 0 or -1. |
 | `Document.Path` | An unsaved document's is `''`. |
-| `Style.Linked` | Raises "this property cannot be used for this object" for some styles. |
+| `Style.Linked` | Readable on paragraph styles only (40 of 93 linked); character, table and list styles raise "this property cannot be used for this object". |
+| `Font.Name` again | Set to 游ゴシック, `NameOther` read back as Times New Roman in one run and as 游ゴシック in the next, with the same code. Not reliable: set each slot by name. |
+| `Document.Undo(50)` | With one edit to undo, answers False rather than raising. |
+| UndoRecord, target active | Three edits inside one record were undone by one `Undo(1)`. `IsRecordingCustomRecord` was True while editing. |
+| UndoRecord, target **not** active | `IsRecordingCustomRecord` was False right after the edits: writing to a document that is not the active one ends the record. One `Undo(1)` took back only the last edit, a second the one before. The server does not switch the user's window to keep it; a call on such a document says in its result (`undo`) that it is not one undo step. |
 
 ## From the reference branch
 
