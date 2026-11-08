@@ -330,11 +330,15 @@ def _start_plain(doc, s, kind, base_style) -> None:
     Font.Reset on a style raises 0x800A174B. Copying the base style's Font
     and ParagraphFormat gives a style that differs from its base in nothing.
     """
-    from ._word import resolve_style
+    from ._word import BUILTIN_STYLES, resolve_style
 
-    base = (resolve_style(doc, base_style) if base_style
-            else doc.Styles.Item(_PLAIN_BASE[kind]))
-    s.BaseStyle = base
+    # The base as the measured probe set it: a WdBuiltinStyle constant where
+    # there is one (BaseStyle takes "the local name …, an integer or a
+    # WdBuiltinStyle constant, or an object").
+    key = " ".join((base_style or "").lower().split())
+    constant = BUILTIN_STYLES.get(key) if base_style else _PLAIN_BASE[kind]
+    base = doc.Styles.Item(constant) if constant is not None else resolve_style(doc, base_style)
+    s.BaseStyle = constant if constant is not None else base
     s.Font = base.Font.Duplicate
     if kind == "paragraph":
         s.ParagraphFormat = base.ParagraphFormat.Duplicate

@@ -347,6 +347,7 @@ class FakeParagraph:
 class FakeWindow:
     def __init__(self):
         self.scrolled_to = []
+        self.View = SimpleNamespace(Type=3, Zoom=SimpleNamespace(Percentage=100, PageFit=0))
 
     def ScrollIntoView(self, rng, start=True):
         self.scrolled_to.append((rng.Start, rng.End))

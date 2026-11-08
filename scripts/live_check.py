@@ -34,7 +34,12 @@ def step(label, impl, *args, undo=None, check=lambda out: "error" not in out):
         ok = False
     results.append((label, ok))
     print(f"{'PASS' if ok else 'FAIL'}  {label}")
-    print("      " + json.dumps(out, ensure_ascii=False)[:600])
+    text = json.dumps(out, ensure_ascii=False)
+    # A failure is printed whole, its warnings first, so nothing that
+    # explains it is cut off.
+    if not ok and "warnings" in out:
+        print("      warnings: " + json.dumps(out["warnings"], ensure_ascii=False))
+    print("      " + (text if not ok else text[:600]))
     return out
 
 
@@ -117,6 +122,11 @@ def run_steps(path: str) -> None:
           "line_spacing_rule": "exactly", "line_spacing": 18},
          None, None, None, None, undo="Define style",
          check=lambda o: "warnings" not in o and "error" not in o)
+    if sys.platform != "darwin":
+        step("the new style takes nothing from where the cursor was",
+             formatting._get_style_impl, style,
+             check=lambda o: o["style"]["font"].get("character_spacing") == 0
+             and o["style"]["font"].get("latin_font") == "+本文のフォント")
     step("read the style back", formatting._get_style_impl, style,
          check=lambda o: o["style"]["paragraph"]["line_spacing_pt"] == 18
          and o["style"]["font"]["size"] == 10.5)

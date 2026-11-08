@@ -121,10 +121,19 @@ def _set_level(doc, lv, spec: dict, refused: dict) -> None:
 
             refused[f"level {spec['level']} {key}"] = error_text(exc)
 
-    if spec.get("number_style") is not None:
-        put("number_style", "NumberStyle", NUMBER_STYLES[spec["number_style"]])
-    if spec.get("number_format") is not None:
-        put("number_format", "NumberFormat", spec["number_format"])
+    # Measured on Word 16 for Windows and Mac: a level's number style turns
+    # to bullet only once its number format is the bullet character, and a
+    # number format holding %1 is taken only under a numbering style. So a
+    # bullet's format goes first, and a number's style.
+    style = spec.get("number_style")
+    steps = [("number_format", "NumberFormat", spec.get("number_format")),
+             ("number_style", "NumberStyle",
+              None if style is None else NUMBER_STYLES[style])]
+    if style not in (None, "bullet"):
+        steps.reverse()
+    for key, member, value in steps:
+        if value is not None:
+            put(key, member, value)
     for key, member in (("number_position", "NumberPosition"),
                         ("text_position", "TextPosition"),
                         ("tab_position", "TabPosition"), ("start_at", "StartAt")):
