@@ -348,6 +348,7 @@ while no other document is open.
 | Taking the deletions' spans out of the range | Equals the text with the markup hidden | The same |
 | A replacement through a range | The new text goes in front of the text marked deleted | The same |
 | A whole paragraph deleted | It stays, and `Paragraphs.Count` does not change | The same |
+| A ruby word marked deleted | Its field stays in `Range.Fields` and its `\x15` in `Range.Text`; the code lies inside the deletion | The same, through `field code` |
 | Accepting or rejecting one change | The ones after it renumber | The same |
 | `For Each` over changes that include a format change | Two format changes both answered `Index` 1 | Not seen |
 | `Range.Revisions.AcceptAll` | Works | Refused (-1708), so a change is accepted by number |
