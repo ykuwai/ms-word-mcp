@@ -1,11 +1,12 @@
 """Tracked changes: the tools for them, and the other tools while tracking is on."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
-from ms_word_mcp.tools import _common, revisions, text
+from ms_word_mcp.tools import _common, _word, mac, revisions, text
 
 
 def answer(impl, *args):
@@ -162,3 +163,68 @@ def test_a_number_that_is_not_there_changes_nothing(word, make_doc):
 def test_numbers_or_every_but_one_of_them(arguments):
     with pytest.raises(ValidationError):
         revisions.ResolveRevisionsInput(**arguments)
+
+
+# -- ruby marked deleted ------------------------------------------------------------
+
+def _ruby_code(word):
+    return f'EQ \\* jc0 \\* hps10 \\o(\\s\\up 9(r),{word})'
+
+
+FIELDS = [(_ruby_code("OLD"), 1, 52), (_ruby_code("NEW"), 59, 110)]
+
+
+def test_a_ruby_word_marked_deleted_gives_way_to_the_next():
+    """Measured: the deleted field stays in Word's list, its code inside the deletion."""
+    def piece(a, b):
+        return SimpleNamespace(Text={(0, 53): "\x15", (53, 112): " and \x15\r"}[(a, b)])
+
+    code = [SimpleNamespace(Text=t, Start=a, End=b) for t, a, b in FIELDS]
+    rng = SimpleNamespace(
+        Text="\x15 and \x15\r", Start=0, End=112,
+        Document=SimpleNamespace(Range=piece),
+        Revisions=SimpleNamespace(Count=1, Item=lambda i: SimpleNamespace(
+            Type=2, Range=SimpleNamespace(Start=0, End=53))),
+        Fields=SimpleNamespace(Count=2, Item=lambda i: SimpleNamespace(Code=code[i - 1])))
+    p = SimpleNamespace(Range=rng, Style=SimpleNamespace(NameLocal="Normal"), OutlineLevel=10)
+    info = _word.paragraph_info(1, p)
+    assert info["text"] == " and NEW"
+    assert info["deleted_text"] == "OLD"
+    assert [r["text"] for r in info["ruby"]] == ["NEW"]
+
+
+def test_on_the_mac_a_ruby_word_marked_deleted_gives_way_to_the_next(monkeypatch):
+    value = lambda v: SimpleNamespace(get=lambda: v)  # noqa: E731
+    fields = {i: SimpleNamespace(field_code=SimpleNamespace(
+        content=value(t), start_of_content=value(a), end_of_content=value(b)))
+        for i, (t, a, b) in enumerate(FIELDS, 1)}
+    rng = SimpleNamespace(content=value("\x15 and \x15\r"), fields=fields,
+                          count=lambda each: 2)
+    doc = SimpleNamespace(
+        paragraphs={1: SimpleNamespace(
+            text_object=rng, style=SimpleNamespace(name_local=value("Normal")),
+            outline_level=value(SimpleNamespace(name="outline_level_body_text")))},
+        create_range=lambda start, end_: SimpleNamespace(
+            content=value({(0, 53): "\x15", (53, 112): " and \x15\r"}[(start, end_)])))
+    monkeypatch.setattr(mac, "_k", lambda: SimpleNamespace(field="field"))
+    monkeypatch.setattr(mac, "_bounds", lambda d, i: (0, 112))
+    info = mac._info(doc, 1, spans=[(0, 53)])
+    assert info["text"] == " and NEW"
+    assert info["deleted_text"] == "OLD"
+    assert [r["text"] for r in info["ruby"]] == ["NEW"]
+
+
+def test_ruby_with_nothing_deleted_reads_as_before():
+    info = {"text": "\x15と\x15"}
+    _word.expand_ruby(info, lambda: [(_ruby_code("漢字"), False), (_ruby_code("文章"), False)])
+    assert info["text"] == "漢字と文章"
+    assert [r["text"] for r in info["ruby"]] == ["漢字", "文章"]
+
+
+def test_fields_are_not_read_without_a_ruby_mark():
+    def boom():
+        raise AssertionError("no field should be read")
+
+    info = {"text": "plain", "deleted_text": "gone"}
+    _word.expand_ruby(info, boom)
+    assert info == {"text": "plain", "deleted_text": "gone"}

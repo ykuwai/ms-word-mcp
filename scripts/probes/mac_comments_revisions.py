@@ -2,6 +2,7 @@
 
     uv run python scripts/probes/mac_comments_revisions.py tracking
     uv run python scripts/probes/mac_comments_revisions.py tools
+    uv run python scripts/probes/mac_comments_revisions.py ruby
     uv run python scripts/probes/mac_comments_revisions.py comment-at-document
     uv run python scripts/probes/mac_comments_revisions.py comment-read
     uv run python scripts/probes/mac_comments_revisions.py comment-edit
@@ -292,7 +293,51 @@ def comment_delete():
         d.close(saving=k.no)
 
 
-SECTIONS = {"tracking": tracking, "tools": tools, "comment-at-document": comment_at_document,
+def ruby():
+    """A ruby word marked deleted: is its field still listed, and where is its code?"""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+    from ms_word_mcp import backend
+    from ms_word_mcp.backend import call_document
+    from ms_word_mcp.tools import _common, documents, page, text
+
+    def run(label, impl, *args, undo=None):
+        out = json.loads(_common.run(impl, *args, undo=undo))
+        print(f"{label}\n   {json.dumps(out, ensure_ascii=False)[:900]}")
+        return out
+
+    def fields(d):
+        t = d.paragraphs[1].text_object
+        out = []
+        for i in range(1, int(t.count(each=k.field)) + 1):
+            c = t.fields[i].field_code
+            out.append((c.content.get(), c.start_of_content.get(), c.end_of_content.get()))
+        return out
+
+    backend.word.start()
+    made = run("create", documents._create_document_impl, None, None)
+    token = call_document.set(made["name"])
+    try:
+        run("insert", text._insert_paragraphs_impl, [{"text": "OLD and NEW and END"}], None, None,
+            undo="Insert")
+        run("ruby", page._add_ruby_impl, 1,
+            [{"text": "OLD", "ruby": "o"}, {"text": "NEW", "ruby": "n"}, {"text": "END", "ruby": "e"}],
+            "center", None, undo="Ruby")
+        d = w.documents[made["name"]]
+        print("before", repr(para(d, 1)), bounds(d, 1), fields(d))
+        d.track_revisions.set(True)
+        attempt("delete the first field", lambda: d.paragraphs[1].text_object.fields[1].delete())
+        print("after", repr(para(d, 1)), bounds(d, 1))
+        attempt("fields", lambda: fields(d))
+        attempt("revisions", lambda: revisions(d))
+        run("read", text._get_paragraphs_impl, 1, 1, False)
+        d.track_revisions.set(False)
+    finally:
+        run("close", documents._close_document_impl, False)
+        call_document.reset(token)
+        backend.word.stop()
+
+
+SECTIONS = {"tracking": tracking, "tools": tools, "ruby": ruby, "comment-at-document": comment_at_document,
             "comment-read": comment_read, "comment-edit": comment_edit,
             "comment-delete": comment_delete}
 

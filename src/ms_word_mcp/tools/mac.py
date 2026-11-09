@@ -26,7 +26,7 @@ from . import shapes as shapes_tools
 from . import text as text_tools
 from ._common import mac_impl
 from . import _props as P
-from ._word import BUILTIN_STYLES, inside_spans, spacing_in_lines, tracked_text, with_ruby
+from ._word import BUILTIN_STYLES, expand_ruby, inside_spans, spacing_in_lines, tracked_text
 
 MAX_PARAGRAPHS_PER_READ = text_tools.MAX_PARAGRAPHS_PER_READ
 
@@ -161,17 +161,17 @@ def _visible(doc, index: int, content, spans) -> tuple[str, dict]:
 def _info(doc, index: int, detail: bool = False, spans=None) -> dict:
     """`spans`: the document's tracked deletions, when the caller has read them."""
     p = doc.paragraphs[index]
-    text, tracked = _visible(doc, index, p.text_object.content.get(),
-                             _deletions(doc) if spans is None else spans)
+    spans = _deletions(doc) if spans is None else spans
+    text, tracked = _visible(doc, index, p.text_object.content.get(), spans)
     out = {"index": index, "text": _clean(text), "style": p.style.name_local.get(), **tracked}
-    if "\x15" in out["text"]:
-        k = _k()
+
+    def fields():
         rng = p.text_object
-        out["text"], rubies = with_ruby(out["text"], [
-            rng.fields[i].field_code.content.get()
-            for i in range(1, int(rng.count(each=k.field)) + 1)])
-        if rubies:
-            out["ruby"] = rubies
+        codes = [rng.fields[i].field_code for i in range(1, int(rng.count(each=_k().field)) + 1)]
+        return [(c.content.get(), bool(spans) and inside_spans(
+            c.start_of_content.get(), c.end_of_content.get(), spans)) for c in codes]
+
+    expand_ruby(out, fields)
     level = _name(p.outline_level.get())
     if level != "outline_level_body_text":
         out["outline_level"] = int(level.rsplit("level", 1)[1])

@@ -501,6 +501,22 @@ def run_revision_steps() -> None:
              == ["Alpha beta gamma", "Third dog and dog", "Fourth"])
         step("tracking off", revisions._set_track_changes_impl, False, undo="Track changes",
              check=lambda o: o["tracking"] is False)
+        ruby = step("a paragraph with ruby", text._insert_paragraphs_impl,
+                    [{"text": "OLD and NEW", "style": "Normal"}], None, None)
+        if "error" not in ruby:
+            at = ruby["inserted"][0]["index"]
+            step("two words get ruby", page._add_ruby_impl, at,
+                 [{"text": "OLD", "ruby": "o"}, {"text": "NEW", "ruby": "n"}], "center", None,
+                 undo="Add ruby", check=lambda o: len(o["ruby"]) == 2)
+            step("tracking on again", revisions._set_track_changes_impl, True,
+                 undo="Track changes", check=lambda o: o["tracking"] is True)
+            step("ruby marked deleted reads as words, apart", text._set_paragraph_text_impl, at,
+                 "Plain", undo="Set paragraph",
+                 check=lambda o: o["paragraph"]["text"] == "Plain"
+                 and o["paragraph"]["deleted_text"] == "OLD and NEW"
+                 and "ruby" not in o["paragraph"])
+            step("tracking off again", revisions._set_track_changes_impl, False,
+                 undo="Track changes", check=lambda o: o["tracking"] is False)
         step("close the document of changes", documents._close_document_impl, False)
     finally:
         call_document.reset(token)

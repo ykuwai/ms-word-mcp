@@ -188,6 +188,25 @@ def with_ruby(text: str, codes: list[str]) -> tuple[str, list[dict]]:
     return text.replace("\x15", ""), rubies
 
 
+def expand_ruby(info: dict, read_fields) -> None:
+    """Put the ruby words in a paragraph's description in place of their \\x15 marks.
+
+    `read_fields()` answers the paragraph's fields in order, each as (code,
+    whether a tracked deletion covers it). A field marked deleted stays in
+    Word's list (measured on both platforms), so its word belongs to
+    `deleted_text`, and only the others to `text`.
+    """
+    if "\x15" not in info["text"] + info.get("deleted_text", ""):
+        return
+    fields = read_fields()
+    info["text"], rubies = with_ruby(info["text"], [c for c, gone in fields if not gone])
+    if rubies:
+        info["ruby"] = rubies
+    if "deleted_text" in info:
+        info["deleted_text"], _ = with_ruby(info["deleted_text"],
+                                            [c for c, gone in fields if gone])
+
+
 def check_spans(text: str, spans: list[str]) -> None:
     """Refuse spans that are not all in `text`, one after the other."""
     cursor = 0
@@ -404,16 +423,22 @@ def fonts_of(rng) -> dict:
     }
 
 
+def _field_codes(rng) -> list[tuple[str, bool]]:
+    """Each field of a range: its code, and whether a tracked deletion covers it."""
+    spans = deletion_spans(rng)
+    fields = rng.Fields
+    out = []
+    for i in range(1, fields.Count + 1):
+        code = fields.Item(i).Code
+        out.append((code.Text, inside_spans(code.Start, code.End, spans)))
+    return out
+
+
 def paragraph_info(index: int, p, detail: bool = False) -> dict:
     rng = p.Range
     text, tracked = visible_text(rng)
     info = {"index": index, "text": clean_text(text), "style": style_name(p.Style), **tracked}
-    if "\x15" in info["text"]:
-        fields = rng.Fields
-        info["text"], rubies = with_ruby(
-            info["text"], [fields.Item(i).Code.Text for i in range(1, fields.Count + 1)])
-        if rubies:
-            info["ruby"] = rubies
+    expand_ruby(info, lambda: _field_codes(rng))
     level = p.OutlineLevel
     if level != WD_OUTLINE_BODY:
         info["outline_level"] = level

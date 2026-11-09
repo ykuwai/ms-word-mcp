@@ -3,6 +3,7 @@
     uv run --no-sync python scripts/probes/windows_comments_revisions.py comments
     uv run --no-sync python scripts/probes/windows_comments_revisions.py tracking
     uv run --no-sync python scripts/probes/windows_comments_revisions.py tools
+    uv run --no-sync python scripts/probes/windows_comments_revisions.py ruby
 
 A scratch document, closed unsaved. Nothing runs while any other document is
 open: creating a comment ended the Word process on the Mac, and a crash would
@@ -205,7 +206,50 @@ def run_tools(w):
         backend.word.stop()
 
 
-SECTIONS = {"comments": run_comments, "tracking": run_tracking, "tools": run_tools}
+def run_ruby(w):
+    """A ruby word marked deleted: is its field still listed, and where is its code?"""
+    from ms_word_mcp import backend
+    from ms_word_mcp.backend import call_document
+    from ms_word_mcp.tools import _common, documents, page, text
+
+    def run(label, impl, *args, undo=None):
+        out = json.loads(_common.run(impl, *args, undo=undo))
+        print(f"{label}\n   {json.dumps(out, ensure_ascii=False)[:900]}")
+        return out
+
+    def fields(d):
+        f = d.Paragraphs(1).Range.Fields
+        return [(f.Item(i).Code.Text, f.Item(i).Code.Start, f.Item(i).Code.End)
+                for i in range(1, f.Count + 1)]
+
+    backend.word.start()
+    made = run("create", documents._create_document_impl, None, None)
+    token = call_document.set(made["name"])
+    try:
+        run("insert", text._insert_paragraphs_impl, [{"text": "OLD and NEW and END"}], None, None,
+            undo="Insert")
+        run("ruby", page._add_ruby_impl, 1,
+            [{"text": "OLD", "ruby": "o"}, {"text": "NEW", "ruby": "n"}, {"text": "END", "ruby": "e"}],
+            "center", None, undo="Ruby")
+        d = w.Documents(made["name"])
+        r = d.Paragraphs(1).Range
+        print("before", repr(r.Text), r.Start, r.End, fields(d))
+        d.TrackRevisions = True
+        attempt("delete the first field", lambda: d.Paragraphs(1).Range.Fields.Item(1).Delete())
+        r = d.Paragraphs(1).Range
+        print("after", repr(r.Text), r.Start, r.End)
+        attempt("fields", lambda: fields(d))
+        attempt("revisions", lambda: revisions(d))
+        run("read", text._get_paragraphs_impl, 1, 1, False)
+        d.TrackRevisions = False
+    finally:
+        run("close", documents._close_document_impl, False)
+        call_document.reset(token)
+        backend.word.stop()
+
+
+SECTIONS = {"comments": run_comments, "tracking": run_tracking, "tools": run_tools,
+            "ruby": run_ruby}
 
 if __name__ == "__main__":
     if len(sys.argv) != 2 or sys.argv[1] not in SECTIONS:
