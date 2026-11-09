@@ -26,7 +26,7 @@ from . import shapes as shapes_tools
 from . import text as text_tools
 from ._common import mac_impl
 from . import _props as P
-from ._word import BUILTIN_STYLES, spacing_in_lines, with_ruby
+from ._word import BUILTIN_STYLES, inside_spans, spacing_in_lines, tracked_text, with_ruby
 
 MAX_PARAGRAPHS_PER_READ = text_tools.MAX_PARAGRAPHS_PER_READ
 
@@ -133,10 +133,37 @@ def _style_value(doc, name: str):
     return style
 
 
-def _info(doc, index: int, detail: bool = False) -> dict:
+def _deletions(doc) -> list[tuple[int, int]]:
+    """(start, end) of each tracked deletion in the document."""
+    k = _k()
+    count = int(doc.count(each=k.revision))
+    out = []
+    for i in range(1, count + 1):
+        revision = doc.revisions[i]
+        if revision.revision_type.get() in (k.revision_delete, k.revision_move_from):
+            rng = revision.text_object
+            out.append((rng.start_of_content.get(), rng.end_of_content.get()))
+    return out
+
+
+def _visible(doc, index: int, content, spans) -> tuple[str, dict]:
+    """A paragraph's text without its tracked deletions (_word.tracked_text)."""
+    if not spans:
+        return content, {}
+    start, end = _bounds(doc, index)
+    within = [s for s in spans if s[0] < end and s[1] > start]
+    if not within:
+        return content, {}
+    return tracked_text(lambda a, b: doc.create_range(start=a, end_=b).content.get(),
+                        start, end, within)
+
+
+def _info(doc, index: int, detail: bool = False, spans=None) -> dict:
+    """`spans`: the document's tracked deletions, when the caller has read them."""
     p = doc.paragraphs[index]
-    out = {"index": index, "text": _clean(p.text_object.content.get()),
-           "style": p.style.name_local.get()}
+    text, tracked = _visible(doc, index, p.text_object.content.get(),
+                             _deletions(doc) if spans is None else spans)
+    out = {"index": index, "text": _clean(text), "style": p.style.name_local.get(), **tracked}
     if "\x15" in out["text"]:
         k = _k()
         rng = p.text_object
@@ -354,8 +381,9 @@ def get_paragraphs(start, end, detail):
     from .tables import mac_mark_tables
 
     read = []
+    spans = _deletions(doc)
     for i in range(start, last + 1):
-        read.append(_info(doc, i, detail))
+        read.append(_info(doc, i, detail, spans))
         if time.monotonic() > began + text_tools.READ_SECONDS:
             break
     out = {"success": True, "paragraphs": read, "count": count}
@@ -483,7 +511,7 @@ def set_paragraph_text(index, text):
     _para(doc, index)
     start, end = _bounds(doc, index)
     content = doc.paragraphs[index].text_object.content.get()
-    old = _clean(content)
+    old = _clean(_visible(doc, index, content, _deletions(doc))[0])
     value = text.replace("\n", "\v")
     shapes = int(doc.count(each=_k().shape))
     hidden = max(0, end - start - _u16(content, len(content)))
@@ -509,8 +537,10 @@ def delete_paragraphs(start, end):
     start, end = _span(doc, start, end)
     before = _count(doc)
     shapes = int(doc.count(each=_k().shape))
-    removed = [_clean(doc.paragraphs[i].text_object.content.get())
+    spans = _deletions(doc)
+    removed = [_clean(_visible(doc, i, doc.paragraphs[i].text_object.content.get(), spans)[0])
                for i in range(start, end + 1)]
+    tracking = bool(doc.track_revisions.get())
     first, _ = _bounds(doc, start)
     _, last = _bounds(doc, end)
     if end == before and start > 1:
@@ -530,7 +560,9 @@ def delete_paragraphs(start, end):
     out = {"success": True, "deleted": end - start + 1, "texts": removed,
            "paragraphs": after}
     warnings = text_tools.lost_shapes(shapes - int(doc.count(each=_k().shape)))
-    if before - after != end - start + 1 and not (start == 1 and end == before):
+    if tracking:
+        out["note"] = text_tools.TRACKED_DELETE
+    elif before - after != end - start + 1 and not (start == 1 and end == before):
         warnings.append(f"The document went from {before} to {after} paragraphs.")
     if warnings:
         out["warnings"] = warnings
@@ -539,6 +571,12 @@ def delete_paragraphs(start, end):
 
 def _matches(doc, find, match_case, whole_word):
     return _matches_until(doc, find, match_case, whole_word, None)[0]
+
+
+def _live(doc, found):
+    """The matches that are not in text marked as a tracked deletion."""
+    spans = _deletions(doc)
+    return [m for m in found if not inside_spans(m[0], m[1], spans)] if spans else found
 
 
 def _matches_until(doc, find, match_case, whole_word, deadline):
@@ -603,6 +641,7 @@ def find_replace(find, replace, match_case, whole_word, wildcards):
     began = time.monotonic()
     found, searched_all = _matches_until(doc, find, match_case, whole_word,
                                          began + text_tools.SEARCH_SECONDS)
+    found = _live(doc, found)
     listed = found[:text_tools.LISTED_MATCHES]
     out = {"success": True, "matches": len(found),
            "paragraphs": sorted({_index_at(doc, s) for s, _ in listed})}
@@ -620,6 +659,7 @@ def find_replace(find, replace, match_case, whole_word, wildcards):
     out["replaced"] = done
     if searched_all and done == len(found) and time.monotonic() < until:
         left, _ = _matches_until(doc, find, match_case, whole_word, until)
+        left = _live(doc, left)
         if left and find.lower() not in value.lower():
             out["warnings"] = [f"{len(left)} matches are still there after replacing."]
     text_tools.replace_outcome(out, len(listed), searched_all, done, find, replace)

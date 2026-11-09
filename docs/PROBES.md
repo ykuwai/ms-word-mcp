@@ -334,3 +334,25 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | Updating an INCLUDETEXT field | Not seen to ask | Word can stop on a dialog of its own ("contains fields that can share data with external files or websites"), Yes or No, and the call waits. Seen in one run of two, so the live check no longer makes such a field. |
 | Whether a real macro stays off | Not measured: making a macro-enabled test document needs access to the VBA project | Not measured |
 
+
+## Tracked changes and comments (Word 16, both platforms)
+
+`scripts/probes/windows_comments_revisions.py` and
+`scripts/probes/mac_comments_revisions.py`, measured 2026-11-09. Each runs only
+while no other document is open.
+
+| What | Windows | Mac |
+|---|---|---|
+| A paragraph with a tracked deletion, markup shown | `Range.Text` holds the deleted text | The same |
+| The same with the markup hidden | The text Word shows; `Range.End` does not move | The same |
+| Taking the deletions' spans out of the range | Equals the text with the markup hidden | The same |
+| A replacement through a range | The new text goes in front of the text marked deleted | The same |
+| A whole paragraph deleted | It stays, and `Paragraphs.Count` does not change | The same |
+| Accepting or rejecting one change | The ones after it renumber | The same |
+| `For Each` over changes that include a format change | Two format changes both answered `Index` 1 | Not seen |
+| `Range.Revisions.AcceptAll` | Works | Refused (-1708), so a change is accepted by number |
+| Making a comment | `Comments.Add`, with `Replies.Add`, `Done`, `DeleteRecursively` | `make new Word comment` ended the Word process, both `at` a range and `at` the document with `scope` as a property |
+| Opening a file Word did not make | Opens | Word asks for access in a dialog of its own, and the Apple event times out (-1712) until someone answers |
+
+Because a search matches text marked deleted, a replacement run a second time
+would replace it again. The search leaves those matches out.

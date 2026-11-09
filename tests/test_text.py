@@ -144,6 +144,7 @@ def test_a_search_that_stops_moving_changes_nothing(make_doc, monkeypatch):
             return self
 
         Text = "cat"
+        Revisions = SimpleNamespace(Count=0)
 
         def Collapse(self, direction):
             pass
@@ -216,7 +217,8 @@ def test_a_read_in_time_is_not_marked(make_doc):
 def test_a_mac_read_out_of_time_answers_what_it_has(monkeypatch):
     monkeypatch.setattr(mac.backend, "word", SimpleNamespace(document=lambda: None))
     monkeypatch.setattr(mac, "_count", lambda doc: 3)
-    monkeypatch.setattr(mac, "_info", lambda doc, i, detail=False: {"index": i})
+    monkeypatch.setattr(mac, "_deletions", lambda doc: [])
+    monkeypatch.setattr(mac, "_info", lambda doc, i, detail=False, spans=None: {"index": i})
     monkeypatch.setattr(tables, "mac_mark_tables", lambda doc, paragraphs: None)
     monkeypatch.setattr(text, "READ_SECONDS", -1.0)
     out = mac.get_paragraphs(1, 3, False)

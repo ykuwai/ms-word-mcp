@@ -24,6 +24,7 @@ another conversation has chosen.
 | Footnotes and endnotes | `word_insert_note`, `word_list_notes`, `word_set_note`, `word_delete_note` |
 | Hyperlinks and bookmarks | `word_insert_hyperlink`, `word_list_hyperlinks`, `word_set_hyperlink`, `word_remove_hyperlink`, `word_add_bookmark`, `word_list_bookmarks`, `word_delete_bookmark` |
 | Fields and tables of contents | `word_insert_table_of_contents`, `word_insert_field`, `word_list_fields`, `word_update_fields` |
+| Tracked changes | `word_set_track_changes`, `word_list_revisions`, `word_accept_revisions`, `word_reject_revisions` |
 | View | `word_get_view`, `word_set_view` |
 | Seeing a page | `word_get_page_image`: a picture of a page as Word lays it out, so the model can check the layout |
 | Undo | `word_undo`, `word_redo` |

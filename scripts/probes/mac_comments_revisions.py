@@ -3,6 +3,9 @@
     uv run python scripts/probes/mac_comments_revisions.py tracking
     uv run python scripts/probes/mac_comments_revisions.py tools
     uv run python scripts/probes/mac_comments_revisions.py comment-at-document
+    uv run python scripts/probes/mac_comments_revisions.py comment-read
+    uv run python scripts/probes/mac_comments_revisions.py comment-edit
+    uv run python scripts/probes/mac_comments_revisions.py comment-delete
 
 A scratch document, closed unsaved. Each way of doing it is tried and its
 answer printed, since the dictionary names the classes but not how to make one
@@ -19,6 +22,7 @@ import json
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 import appscript
@@ -202,7 +206,95 @@ def comment_at_document():
         d.close(saving=k.no)
 
 
-SECTIONS = {"tracking": tracking, "tools": tools, "comment-at-document": comment_at_document}
+SAMPLE = Path(__file__).resolve().parents[2] / ".word-test" / "comment-sample.docx"
+W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+
+
+def write_sample() -> None:
+    """A .docx that holds two comments, so Word for Mac need not make one."""
+    def comment(i, text):
+        return (f'<w:comment w:id="{i}" w:author="Reviewer" w:initials="R" '
+                f'w:date="2026-11-09T10:00:00Z"><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:comment>')
+
+    def anchored(i, text):
+        return (f'<w:commentRangeStart w:id="{i}"/><w:r><w:t xml:space="preserve">{text}</w:t></w:r>'
+                f'<w:commentRangeEnd w:id="{i}"/><w:r><w:commentReference w:id="{i}"/></w:r>')
+
+    parts = {
+        "[Content_Types].xml": (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+            '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>'
+            '</Types>'),
+        "_rels/.rels": (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+            '</Relationships>'),
+        "word/_rels/document.xml.rels": (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/>'
+            '</Relationships>'),
+        "word/comments.xml": (
+            f'<?xml version="1.0" encoding="UTF-8"?><w:comments {W}>'
+            + comment(0, "最初の 𠮷 コメント") + comment(1, "Second comment") + '</w:comments>'),
+        "word/document.xml": (
+            f'<?xml version="1.0" encoding="UTF-8"?><w:document {W}><w:body><w:p>'
+            '<w:r><w:t xml:space="preserve">Alpha </w:t></w:r>' + anchored(0, "beta")
+            + '<w:r><w:t xml:space="preserve"> gamma</w:t></w:r></w:p><w:p>'
+            + anchored(1, "二段落目") + '</w:p></w:body></w:document>'),
+    }
+    SAMPLE.parent.mkdir(exist_ok=True)
+    with zipfile.ZipFile(SAMPLE, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in parts.items():
+            z.writestr(name, data)
+
+
+def open_sample():
+    write_sample()
+    w.open(file_name=str(SAMPLE), add_to_recent_files=False)
+    return w.documents[SAMPLE.name]
+
+
+def comment_read():
+    d = open_sample()
+    try:
+        print("count", d.count(each=k.Word_comment))
+        attempt("list", lambda: comments(d))
+        print("paragraphs", [para(d, i) for i in (1, 2)], [bounds(d, i) for i in (1, 2)])
+        c = d.Word_comments[1]
+        attempt("all properties", lambda: sorted(str(x) for x in c.properties.get()))
+    finally:
+        d.close(saving=k.no)
+
+
+def comment_edit():
+    d = open_sample()
+    try:
+        c = d.Word_comments[1]
+        attempt("set the text", lambda: c.comment_text.content.set("書いた 𠮷 text"))
+        attempt("list", lambda: comments(d))
+    finally:
+        d.close(saving=k.no)
+
+
+def comment_delete():
+    d = open_sample()
+    try:
+        attempt("delete the first", lambda: d.Word_comments[1].delete())
+        attempt("list", lambda: comments(d))
+        print("paragraphs", [para(d, i) for i in (1, 2)], [bounds(d, i) for i in (1, 2)])
+    finally:
+        d.close(saving=k.no)
+
+
+SECTIONS = {"tracking": tracking, "tools": tools, "comment-at-document": comment_at_document,
+            "comment-read": comment_read, "comment-edit": comment_edit,
+            "comment-delete": comment_delete}
 
 if __name__ == "__main__":
     if len(sys.argv) != 2 or sys.argv[1] not in SECTIONS:
