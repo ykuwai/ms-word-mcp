@@ -167,10 +167,7 @@ stop the server first.
 
 ## Credits
 
-Built with [ppt-mcp](https://github.com/ykuwai/ppt-mcp)'s design. AlonSoko
-measured Word on both platforms for his own Word server and shared the
-measurements and code with this project ([ykuwai/ppt-mcp#352](https://github.com/ykuwai/ppt-mcp/issues/352));
-what this project took from them is noted in [docs/PROBES.md](docs/PROBES.md).
+Built with [ppt-mcp](https://github.com/ykuwai/ppt-mcp)'s design.
 
 ## License
 

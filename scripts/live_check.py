@@ -636,6 +636,11 @@ def run_shape_steps() -> None:
              undo="Change shape",
              check=lambda o: not backend.IS_MACOS
              or any("does not fit" in w for w in o["warnings"]))
+        step("the text's lines closed up", change, "縦", {
+            "text": "二行\n目です", "paragraph": {"snap_to_grid": False, "space_after": 0.0,
+                                                "line_spacing_rule": "exactly", "line_spacing": 14.0}},
+             undo="Change shape", check=lambda o: not any("reads" in w or "read back" in w
+                                                          for w in o.get("warnings", [])))
         step("a line from left to right", shapes._insert_line_impl, 4, 72.0, 500.0, 300.0, 550.0,
              {"name": "Line", "horizontal_from": "page", "vertical_from": "page",
               "line_color": "#C00000", "line_weight": 2.0, "end_arrow": "triangle",
@@ -740,6 +745,9 @@ def run_floating_picture_steps(folder: Path) -> None:
                               o["width"], o["height"], o["horizontal_from"])
              == ("picture", "背景", 2, "behind", 100.0, 200.0, 120.0, 60.0, "page")
              and "warnings" not in o)
+        step("faded to go behind the text", change, "背景",
+             {"brightness": 0.85, "contrast": 0.15}, undo="Change shape",
+             check=lambda o: (o["brightness"], o["contrast"]) == (0.85, 0.15))
         step("it added no paragraph, and left the text", text._get_paragraphs_impl, 2, 2, False,
              check=lambda o: o["paragraphs"][0]["text"] == "二つ目の段落です。" and o["count"] == 3)
         pic = step("a picture in the text", references._insert_picture_impl, str(picture), 3,
@@ -751,12 +759,16 @@ def run_floating_picture_steps(folder: Path) -> None:
         step("and the crop taken away", set_picture, pic.get("picture", 1), None, None, None,
              None, {"crop_left": 0.0}, undo="Change picture",
              check=lambda o: abs(o["width"] - 150.0) < 0.6)
+        step("a picture in the text is faded too", set_picture, pic.get("picture", 1), None, None,
+             None, None, {"brightness": 0.7, "contrast": 0.3}, undo="Change picture",
+             check=lambda o: (o["brightness"], o["contrast"]) == (0.7, 0.3))
         step("out of the text, with text round it", set_picture, pic.get("picture", 1), None, None,
              None, None, {"wrap": "square", "left": 40.0, "top": 10.0, "name": "Moved"},
              undo="Change picture",
              check=lambda o: (o["now"], o["kind"], o["name"], o["wrap"], o["left"], o["top"],
                               o["horizontal_from"], o["vertical_from"])
-             == ("floating", "picture", "Moved", "square", 40.0, 10.0, "margin", "paragraph"))
+             == ("floating", "picture", "Moved", "square", 40.0, 10.0, "margin", "paragraph")
+             and o["brightness"] == 0.7)
         step("no picture is left in the text", references._list_pictures_impl,
              check=lambda o: o["pictures"] == [])
         step("the floating ones are listed in reading order", shapes._list_shapes_impl, 1, 50,

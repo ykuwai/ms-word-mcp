@@ -369,6 +369,50 @@ def test_a_line_can_be_made_level(make_doc):
     assert shapes.SetShapeInput(shape="A", height=0).height == 0
 
 
+def test_a_picture_is_faded_in_the_text_and_keeps_it_when_it_floats(make_doc, picture):
+    doc = make_doc("One.")
+    answer(references._insert_picture_impl, picture, None, None, None, None, None, None)
+    out = answer(references._set_picture_impl, 1, None, None, None, None,
+                 {"brightness": 0.85, "contrast": 0.15})
+    assert (out["brightness"], out["contrast"]) == (0.85, 0.15)
+    format_ = doc.InlineShapes.Item(1).PictureFormat
+    assert (format_.Brightness, format_.Contrast) == (0.85, 0.15)
+
+
+def test_a_floating_picture_is_faded(make_doc, picture):
+    make_doc("One.")
+    out = floating(picture, wrap="behind", brightness=0.85, contrast=0.15, name="Pic")
+    assert (out["brightness"], out["contrast"]) == (0.85, 0.15)
+    out = answer(shapes._set_shape_impl, "Pic", {"brightness": 0.5, "contrast": 0.5})
+    assert "brightness" not in out
+
+
+def test_only_a_picture_is_faded(make_doc):
+    make_doc("One.")
+    add(name="Box")
+    assert "Only a picture" in answer(shapes._set_shape_impl, "Box", {"brightness": 0.8})["error"]
+
+
+def test_the_text_in_a_shape_takes_paragraph_settings(make_doc):
+    doc = make_doc("One.")
+    out = answer(shapes._insert_text_box_impl, 1, 100.0, 60.0,
+                 {"text": "A\nB", "paragraph": {"snap_to_grid": False, "space_after": 0.0}})
+    assert "error" not in out
+    assert doc.Shapes.Item(1).TextFrame.TextRange.ParagraphFormat.DisableLineHeightGrid is True
+
+
+def test_a_line_takes_no_paragraph_settings(make_doc):
+    make_doc("One.")
+    name = answer(shapes._insert_line_impl, 1, 0.0, 0.0, 10.0, 10.0, {})["name"]
+    out = answer(shapes._set_shape_impl, name, {"paragraph": {"space_after": 0.0}})
+    assert "holds no text" in out["error"]
+
+
+def test_borders_are_not_for_the_text_in_a_shape():
+    with pytest.raises(ValidationError, match="not set on the text in a shape"):
+        shapes.SetShapeInput(shape="A", paragraph={"shading": "#FFFFFF"})
+
+
 def test_only_a_picture_is_cropped(make_doc):
     make_doc("One.")
     add(name="Box")

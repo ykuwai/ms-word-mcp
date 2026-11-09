@@ -232,9 +232,26 @@ class _Text(Input):
     orientation: Literal[tuple(ORIENTATIONS)] | None = Field(None, description=(  # type: ignore[valid-type]
         "vertical is East Asian vertical text (縦書き). rotate_right and rotate_left "
         "turn horizontal text a quarter turn."))
+    paragraph: P.ParagraphSpec | None = Field(None, description=(
+        "The text's paragraphs, as in word_set_paragraph_format: line_spacing_rule, "
+        "line_spacing, space_before, space_after, snap_to_grid... In a Japanese "
+        "document the grid spaces lines apart: snap_to_grid false closes them up."))
+
+    @model_validator(mode="after")
+    def _a_paragraph_in_a_shape(self):
+        given = self.paragraph.model_dump(exclude_none=True) if self.paragraph else {}
+        extra = [n for n in ("tab_stops", "borders", "shading") if n in given]
+        if extra:
+            raise ValueError(f"{', '.join(extra)} are not set on the text in a shape here. "
+                             "Its own outline and fill are line_color and fill.")
+        return self
 
 
-class _Crop(Input):
+class _PictureLook(Input):
+    brightness: float | None = Field(None, ge=0, le=1, description=(
+        "0 is black, 0.5 as it was taken, 1 white. A picture faded to go behind text: "
+        "brightness 0.85 with contrast 0.15."))
+    contrast: float | None = Field(None, ge=0, le=1, description="0.5 is as it was taken.")
     crop_left: float | None = Field(None, ge=0, le=1584, description=(
         "Points to cut off the left of a picture, as it is shown now. 0 takes the cut away."))
     crop_top: float | None = Field(None, ge=0, le=1584, description="Likewise the top.")
@@ -317,7 +334,7 @@ class InsertLineInput(_Made):
         return self
 
 
-class InsertFloatingPictureInput(_Made, _Crop):
+class InsertFloatingPictureInput(_Made, _PictureLook):
     path: Trimmed = Field(..., min_length=1, description="Full path of the picture file.")
     width: float | None = Field(None, gt=0, le=1584, description=(
         "Width in points. Given alone, the height follows in proportion."))
@@ -356,7 +373,7 @@ class ShapeRef(Input):
         return value
 
 
-class SetShapeInput(ShapeRef, _Position, _Wrap, _Common, _Look, _Text, _Crop):
+class SetShapeInput(ShapeRef, _Position, _Wrap, _Common, _Look, _Text, _PictureLook):
     dleft: float | None = Field(None, description=(
         "Move it this many points right (negative: left) from where it is."))
     dtop: float | None = Field(None, description=(
@@ -463,7 +480,15 @@ def off_page_warnings(got: dict, page: dict) -> list[str]:
 CROPS = ("crop_left", "crop_right", "crop_top", "crop_bottom")
 CROP_MEMBERS = {"crop_left": "CropLeft", "crop_right": "CropRight", "crop_top": "CropTop",
                 "crop_bottom": "CropBottom"}
-NOT_A_PICTURE = "Only a picture can be cropped; this is a {kind}."
+PICTURE_LOOK = (*CROPS, "brightness", "contrast")
+NOT_A_PICTURE = "Only a picture can be cropped or faded; this is a {kind}."
+
+
+def faded(brightness: float, contrast: float) -> dict:
+    """Brightness and contrast for an answer, when they are not as the picture was."""
+    if abs(brightness - 0.5) < 0.005 and abs(contrast - 0.5) < 0.005:
+        return {}
+    return {"brightness": round(brightness, 2), "contrast": round(contrast, 2)}
 
 
 def apply_crop(spec: dict, read, write, size) -> None:
@@ -514,8 +539,8 @@ def _check_text_allowed(kind: str, spec: dict) -> None:
     if kind in ("picture", "linked_picture") and any(
             key in spec for key in ("fill", "fill_transparency")):
         raise ValueError("A picture has no fill to change, and Word took a transparency for it "
-                         "without doing anything. To fade a picture behind the text, put a "
-                         "white shape with fill_transparency over it.")
+                         "without doing anything. To fade a picture, give brightness and "
+                         "contrast.")
 
 
 def _finished(got: dict, spec: dict, page: dict, warnings: list[str],
@@ -598,8 +623,11 @@ def _describe(doc, s, number: int) -> dict:
         out["line_color"] = "none" if not s.Line.Visible else P.hex_of(s.Line.ForeColor.RGB)
         out["line_weight"] = round(s.Line.Weight, 2)
         out["line_dash"] = _name_for(DASHES, s.Line.DashStyle)
-    if kind == "picture" and any(getattr(s.PictureFormat, m) for m in CROP_MEMBERS.values()):
-        out["cropped"] = True
+    if kind == "picture":
+        fmt = s.PictureFormat
+        out.update(faded(fmt.Brightness, fmt.Contrast))
+        if any(getattr(fmt, m) for m in CROP_MEMBERS.values()):
+            out["cropped"] = True
     if kind == "line":
         out["begin_arrow"] = _name_for(ARROWS, s.Line.BeginArrowheadStyle)
         out["end_arrow"] = _name_for(ARROWS, s.Line.EndArrowheadStyle)
@@ -612,7 +640,7 @@ def _describe(doc, s, number: int) -> dict:
     return out
 
 
-TEXT_KEYS = ("text", "font", "alignment", "vertical_anchor", "orientation")
+TEXT_KEYS = ("text", "font", "alignment", "vertical_anchor", "orientation", "paragraph")
 
 
 def _apply_text(s, spec: dict) -> list[str]:
@@ -629,6 +657,13 @@ def _apply_text(s, spec: dict) -> list[str]:
         warnings += P.mismatches(wanted, P.com_read(text.Font, P.FONT_PROPS), refused)
     if "alignment" in spec:
         text.ParagraphFormat.Alignment = ALIGNMENTS[spec["alignment"]]
+    if spec.get("paragraph"):
+        wanted = P.given(spec["paragraph"], P.PARAGRAPH_NAMES)
+        fmt = text.ParagraphFormat
+        refused = P.com_apply(fmt, P.PARAGRAPH_PROPS, wanted)
+        P.com_apply_line_spacing(fmt, wanted.get("line_spacing_rule"), wanted.get("line_spacing"))
+        warnings += P.mismatches(wanted, {**P.com_read(fmt, P.PARAGRAPH_PROPS),
+                                          **P.com_read_line_spacing(fmt)}, refused)
     if "orientation" in spec:
         frame.Orientation = ORIENTATIONS[spec["orientation"]]
     if "vertical_anchor" in spec:
@@ -692,19 +727,23 @@ def _place(s, spec: dict) -> None:
         s.Top = _moved(position_name(s.Top, NAMED_TOP), spec["dtop"], "dtop")
 
 
-def crop_picture(target, spec: dict) -> None:
-    """Crop an inline picture or a floating one."""
+def adjust_picture(target, spec: dict) -> None:
+    """Crop or fade an inline picture or a floating one."""
     fmt = target.PictureFormat
     apply_crop(spec, lambda side: getattr(fmt, CROP_MEMBERS[side]),
                lambda side, value: setattr(fmt, CROP_MEMBERS[side], value),
                lambda axis: target.Width if axis == "width" else target.Height)
+    if "brightness" in spec:
+        fmt.Brightness = spec["brightness"]
+    if "contrast" in spec:
+        fmt.Contrast = spec["contrast"]
 
 
 def _crop(s, spec: dict, kind: str) -> None:
-    if any(side in spec for side in CROPS):
+    if any(key in spec for key in PICTURE_LOOK):
         if kind not in ("picture", "linked_picture"):
             raise ValueError(NOT_A_PICTURE.format(kind=kind))
-        crop_picture(s, spec)
+        adjust_picture(s, spec)
 
 
 def _apply(s, spec: dict, kind: str) -> list[str]:
@@ -992,8 +1031,11 @@ def _mac_describe(doc, s, number: int) -> dict:
         out["line_color"] = "none" if not line.visible.get() else P._mac_hex(line.fore_color.get())
         out["line_weight"] = round(line.weight.get(), 2)
         out["line_dash"] = m._name(line.dash_style_.get()).removeprefix("line_dash_style_")
-    if kind == "picture" and any(getattr(s.picture_format, side).get() for side in CROPS):
-        out["cropped"] = True
+    if kind == "picture":
+        fmt = s.picture_format
+        out.update(faded(fmt.brightness.get(), fmt.contrast.get()))
+        if any(getattr(fmt, side).get() for side in CROPS):
+            out["cropped"] = True
     if kind == "line":
         out["begin_arrow"] = _mac_key(ARROWS_MAC, s.line_format.begin_arrowhead_style.get())
         out["end_arrow"] = _mac_key(ARROWS_MAC, s.line_format.end_arrowhead_style.get())
@@ -1024,6 +1066,13 @@ def _mac_apply_text(s, spec: dict) -> list[str]:
     if "alignment" in spec:
         text.paragraph_format.alignment.set(
             getattr(k, P.ALIGNMENTS_MAC[spec["alignment"]]))
+    if spec.get("paragraph"):
+        wanted = P.given(spec["paragraph"], P.PARAGRAPH_NAMES)
+        fmt = text.paragraph_format
+        refused = P.mac_apply(fmt, P.PARAGRAPH_PROPS, wanted)
+        P.mac_apply_line_spacing(fmt, wanted.get("line_spacing_rule"), wanted.get("line_spacing"))
+        warnings += P.mismatches(wanted, {**P.mac_read(fmt, P.PARAGRAPH_PROPS),
+                                          **P.mac_read_line_spacing(fmt)}, refused)
     if "orientation" in spec:
         frame.orientation.set(getattr(k, ORIENTATIONS_MAC[spec["orientation"]]))
     if "vertical_anchor" in spec:
@@ -1093,22 +1142,26 @@ def _mac_place(s, spec: dict) -> None:
         s.top.set(_moved(position_name(s.top.get(), NAMED_TOP), spec["dtop"], "dtop"))
 
 
-def mac_crop_picture(target, spec: dict) -> None:
-    """Crop an inline picture or a floating one."""
+def mac_adjust_picture(target, spec: dict) -> None:
+    """Crop or fade an inline picture or a floating one."""
     fmt = target.picture_format
     apply_crop(spec, lambda side: getattr(fmt, side).get(),
                lambda side, value: getattr(fmt, side).set(value),
                lambda axis: getattr(target, axis).get())
+    if "brightness" in spec:
+        fmt.brightness.set(spec["brightness"])
+    if "contrast" in spec:
+        fmt.contrast.set(spec["contrast"])
 
 
 def _mac_apply(s, spec: dict, kind: str) -> list[str]:
     from appscript import k
 
     _check_text_allowed(kind, spec)
-    if any(side in spec for side in CROPS):  # first: if it is refused, nothing else has changed
+    if any(key in spec for key in PICTURE_LOOK):  # first: if refused, nothing else has changed
         if kind not in ("picture", "linked_picture"):
             raise ValueError(NOT_A_PICTURE.format(kind=kind))
-        mac_crop_picture(s, spec)
+        mac_adjust_picture(s, spec)
     warnings = []
     if "kind" in spec:
         s.auto_shape_type.set(_mac_kind(spec["kind"]))
@@ -1371,7 +1424,8 @@ def register(mcp) -> None:
     async def word_insert_floating_picture(params: InsertFloatingPictureInput) -> str:
         """Put a picture from a file on the page, anchored to a paragraph: text flows
         round it (wrap square), or it sits behind the text (wrap behind, 背面) or over
-        it (wrap front). It takes the same placing as word_insert_shape. It goes in the
+        it (wrap front), faded with brightness and contrast if you like. It takes the
+        same placing as word_insert_shape. It goes in the
         paragraph you name and adds none; word_insert_picture is for a picture in
         line with the text. Answers its name, for word_set_shape."""
         p = params
@@ -1393,7 +1447,8 @@ def register(mcp) -> None:
         """Change a floating shape, text box, line or picture: move it (left, top,
         or by dleft, dtop), resize it, change its wrap (behind, front, square,
         inline...), its order among shapes, rotation, fill, outline, text, font,
-        kind or name; crop a picture. Only what is given changes, and it is read back.
+        kind or name; crop or fade a picture. Only what is given changes, and it is
+        read back.
 
         A picture set to wrap inline goes into the text as an inline picture. A
         shape stays anchored to its paragraph: to take it to another paragraph,

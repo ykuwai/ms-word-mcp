@@ -69,7 +69,8 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
   order with their text. Rewriting a paragraph keeps a shape anchored at its start.
   Pictures float too: put on the page directly, or taken out of the text and back
   (`word_set_picture` and `word_set_shape`), behind or in front of the text; a crop
-  in points as the picture is shown, in the text or floating.
+  in points as the picture is shown, in the text or floating; brightness and
+  contrast to fade one behind the text.
 
 - Pictures in line with the text, numbered captions under any label in any
   language, live cross-references to captions, equations and headings.
@@ -115,9 +116,8 @@ Then, ordered roughly by what the owner stressed.
 5. **Japanese typography, the rest.** Removing ruby outright, tate-chu-yoko.
 6. **View.** Zoom (percentage, page width, whole page), view type, follow
    edits in a second window.
-7. Shapes, the rest. A picture faded for a background (brightness, contrast);
-   paragraph settings for the text inside a shape; grouping; shapes in headers
-   and footers; moving a shape to another paragraph.
+7. Shapes, the rest. Grouping; shapes in headers and footers; moving a shape to
+   another paragraph.
 8. Adding sections (section breaks); a header of several paragraphs.
 9. Comments and tracked changes; spelling and a document health check.
 10. Page previews.
