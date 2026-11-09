@@ -59,7 +59,7 @@ Standard config — works in Claude Desktop, Cursor, `.mcp.json`, and most other
 
 **User-scoped** (available in all projects)
 ```bash
-claude mcp add word uvx ms-word-mcp
+claude mcp add --scope user word uvx ms-word-mcp
 ```
 
 **Project-scoped** (stored in `.mcp.json`, shared with your team)

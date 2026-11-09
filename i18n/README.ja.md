@@ -59,7 +59,7 @@ macOS では、最初のツール呼び出しでシステムのオートメー�
 
 **ユーザー単位**（すべてのプロジェクトで使用）
 ```bash
-claude mcp add word uvx ms-word-mcp
+claude mcp add --scope user word uvx ms-word-mcp
 ```
 
 **プロジェクト単位**（`.mcp.json` に保存してチームで共有）
