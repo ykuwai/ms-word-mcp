@@ -22,6 +22,7 @@ import time
 
 from .. import backend
 from . import documents, edit, formatting
+from . import shapes as shapes_tools
 from . import text as text_tools
 from ._common import mac_impl
 from . import _props as P
@@ -481,16 +482,24 @@ def set_paragraph_text(index, text):
     doc = backend.word.document()
     _para(doc, index)
     start, end = _bounds(doc, index)
-    old = _clean(doc.paragraphs[index].text_object.content.get())
+    content = doc.paragraphs[index].text_object.content.get()
+    old = _clean(content)
     value = text.replace("\n", "\v")
+    shapes = int(doc.count(each=_k().shape))
+    hidden = max(0, end - start - _u16(content, len(content)))
+    # A shape anchored at the paragraph's start stays; its anchor is not text.
+    kept = shapes_tools.mac_leading_anchors(doc, start, end, hidden)
     # To the paragraph's real end: a field hides its code from the text, and
     # a range that stopped inside one was refused (-1708, seen in a trial).
-    doc.create_range(start=start, end_=end - 1).content.set(value)
+    doc.create_range(start=start + kept, end_=end - 1).content.set(value)
     info = _info(doc, index)
     _scroll(doc, *_bounds(doc, index))
     out = {"success": True, "paragraph": info, "was": old}
+    warnings = text_tools.lost_shapes(shapes - int(doc.count(each=_k().shape)))
     if info["text"] != value:
-        out["warnings"] = [f"It reads back as {info['text']!r}."]
+        warnings.append(f"It reads back as {info['text']!r}.")
+    if warnings:
+        out["warnings"] = warnings
     return out
 
 
@@ -499,6 +508,7 @@ def delete_paragraphs(start, end):
     doc = backend.word.document()
     start, end = _span(doc, start, end)
     before = _count(doc)
+    shapes = int(doc.count(each=_k().shape))
     removed = [_clean(doc.paragraphs[i].text_object.content.get())
                for i in range(start, end + 1)]
     first, _ = _bounds(doc, start)
@@ -519,8 +529,11 @@ def delete_paragraphs(start, end):
     after = _count(doc)
     out = {"success": True, "deleted": end - start + 1, "texts": removed,
            "paragraphs": after}
+    warnings = text_tools.lost_shapes(shapes - int(doc.count(each=_k().shape)))
     if before - after != end - start + 1 and not (start == 1 and end == before):
-        out["warnings"] = [f"The document went from {before} to {after} paragraphs."]
+        warnings.append(f"The document went from {before} to {after} paragraphs.")
+    if warnings:
+        out["warnings"] = warnings
     return out
 
 

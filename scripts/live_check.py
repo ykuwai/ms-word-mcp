@@ -24,7 +24,7 @@ from ms_word_mcp import backend  # noqa: E402
 from ms_word_mcp.backend import call_document  # noqa: E402
 from ms_word_mcp.tools import (  # noqa: E402
     _common, documents, edit, equations, fields, formatting, links, lists, notes, page,
-    references, screen, tables, text)
+    references, screen, shapes, tables, text)
 
 results: list[tuple[str, bool]] = []
 
@@ -263,6 +263,7 @@ def run_steps(path: str) -> None:
     run_border_steps()
     run_note_steps()
     run_link_steps()
+    run_shape_steps()
     step("picture of page 1", screen._get_page_image_impl, 1, None,
          check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)
     step("picture of the page a paragraph is on", screen._get_page_image_impl, None, 5,
@@ -554,6 +555,158 @@ def run_link_steps() -> None:
              check=lambda o: "no bookmark named 'Whole'" in o["error"])
         step("close the document of links", documents._close_document_impl, False)
     finally:
+        call_document.reset(token)
+
+
+def run_shape_steps() -> None:
+    """Shapes, text boxes and lines, and text that shares a paragraph with an anchor."""
+    other = step("a document for shapes", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    insert = shapes._insert_shape_impl
+    change = shapes._set_shape_impl
+    try:
+        made = step("paragraphs for shapes", text._insert_paragraphs_impl,
+                    [{"text": "Alpha beta gamma delta epsilon.", "style": "Normal"},
+                     {"text": "二つ目の段落です。", "style": "Normal"},
+                     {"text": "Third paragraph.", "style": "Normal"},
+                     {"text": "Fourth paragraph.", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        step("a shape where it was asked for, from the page", insert, "rounded_rectangle", 2,
+             150.0, 60.0, {"name": "箱", "left": 200.0, "top": 300.0, "horizontal_from": "page",
+                           "vertical_from": "page", "fill": "#FF8040", "line_color": "#102030",
+                           "line_weight": 2.5, "text": "中身\nSecond", "alignment": "center",
+                           "font": {"size": 9.0, "bold": True, "color": "#FFFFFF"},
+                           "corner_radius": 0.5, "rotation": 15.0},
+             undo="Insert shape",
+             check=lambda o: (o["name"], o["kind"], o["index"], o["left"], o["top"], o["width"],
+                              o["height"], o["horizontal_from"], o["vertical_from"], o["wrap"],
+                              o["fill"], o["line_color"], o["line_weight"], o["text"],
+                              o["rotation"], o["page"])
+             == ("箱", "rounded_rectangle", 2, 200.0, 300.0, 150.0, 60.0, "page", "page", "square",
+                 "#FF8040", "#102030", 2.5, "中身\nSecond", 15.0, 1) and "warnings" not in o)
+        step("the default place is the margin and the paragraph", insert, "oval", 3, 80.0, 40.0,
+             {"name": "Oval"}, undo="Insert shape",
+             check=lambda o: (o["index"], o["left"], o["top"], o["horizontal_from"],
+                              o["vertical_from"], o["wrap"]) == (3, 0.0, 0.0, "margin",
+                                                                 "paragraph", "square"))
+        step("a name in use is refused", insert, "oval", 3, 80.0, 40.0, {"name": "箱"},
+             check=lambda o: "already named" in o["error"])
+        step("centered between the margins", change, "Oval", {"left": "center",
+                                                              "horizontal_from": "margin"},
+             undo="Change shape", check=lambda o: (o["left"], o["horizontal_from"])
+             == ("center", "margin"))
+        step("a center cannot be moved by points", change, "Oval", {"dleft": 5.0},
+             check=lambda o: "It is at center" in o["error"])
+        step("placed, then moved by points", change, "Oval", {"left": 100.0, "top": 10.0},
+             undo="Change shape", check=lambda o: (o["left"], o["top"]) == (100.0, 10.0))
+        step("moved by points from where it is", change, "Oval", {"dleft": 20.0, "dtop": -5.0},
+             undo="Change shape", check=lambda o: (o["left"], o["top"]) == (120.0, 5.0))
+        for wrap in ("behind", "front", "tight", "through", "top_and_bottom", "square"):
+            step(f"wrap {wrap}", change, "Oval", {"wrap": wrap}, undo="Change shape",
+                 check=lambda o, wrap=wrap: o["wrap"] == wrap and "warnings" not in o)
+        step("the side and distance of the wrap", change, "Oval",
+             {"wrap_side": "left", "wrap_distance": 9.0}, undo="Change shape")
+        step("to the back among shapes", change, "Oval", {"z_order": "back"}, undo="Change shape",
+             check=lambda o: o["z"] == 1)
+        step("to the front among shapes", change, "Oval", {"z_order": "front"},
+             undo="Change shape", check=lambda o: o["z"] == 2)
+        step("the kind changes, and it still answers by name", change, "Oval",
+             {"kind": "right_arrow", "fill": "none", "line_dash": "dash"}, undo="Change shape",
+             check=lambda o: (o["kind"], o["fill"], o["line_dash"]) == ("right_arrow", "none", "dash"))
+        step("a number finds the first in reading order", change, 1, {"name": "First"},
+             undo="Change shape", check=lambda o: (o["name"], o["number"]) == ("First", 1))
+        step("off the page warns", change, "Oval", {"left": 590.0, "horizontal_from": "page"},
+             undo="Change shape",
+             check=lambda o: any("runs off the page" in w for w in o["warnings"]))
+        step("back on the page", change, "Oval", {"left": 100.0}, undo="Change shape",
+             check=lambda o: "warnings" not in o)
+        step("a text box in vertical text", shapes._insert_text_box_impl, 3, 60.0, 150.0,
+             {"name": "縦", "text": "縦書きです", "orientation": "vertical", "left": 300.0,
+              "top": 100.0, "horizontal_from": "page", "vertical_from": "page"},
+             undo="Insert text box",
+             check=lambda o: (o["kind"], o["text"], o["orientation"], o["left"], o["top"])
+             == ("text_box", "縦書きです", "vertical", 300.0, 100.0) and "warnings" not in o)
+        step("too much text warns", change, "縦", {"orientation": "horizontal",
+                                                   "text": "長い文章です。" * 40},
+             undo="Change shape", check=lambda o: any("does not fit" in w for w in o["warnings"]))
+        step("a line from left to right", shapes._insert_line_impl, 4, 72.0, 500.0, 300.0, 550.0,
+             {"name": "Line", "horizontal_from": "page", "vertical_from": "page",
+              "line_color": "#C00000", "line_weight": 2.0, "end_arrow": "triangle",
+              "line_dash": "dash"},
+             undo="Insert line",
+             check=lambda o: (o["kind"], o["left"], o["top"], o["width"], o["height"], o["wrap"],
+                              o["line_color"], o["end_arrow"], o["line_dash"])
+             == ("line", 72.0, 500.0, 228.0, 50.0, "front", "#C00000", "triangle", "dash"))
+        step("a line drawn backwards lands in the same box", shapes._insert_line_impl, 4, 300.0,
+             650.0, 72.0, 600.0, {"name": "Back", "horizontal_from": "page",
+                                  "vertical_from": "page"},
+             undo="Insert line",
+             check=lambda o: (o["left"], o["top"], o["width"], o["height"]) ==
+             (72.0, 600.0, 228.0, 50.0))
+        step("a line holds no text", change, "Line", {"text": "x"},
+             check=lambda o: "A line holds no text" in o["error"])
+        step("the shapes in reading order, with their text", shapes._list_shapes_impl, 1, 50,
+             check=lambda o: o["count"] == 5 and o["shapes"][0]["name"] == "First"
+             and o["shapes"][0]["text"] == "中身\nSecond"
+             and [s["index"] for s in o["shapes"]] == sorted(s["index"] for s in o["shapes"]))
+        if not backend.IS_MACOS:
+            step("alternative text", change, "Line", {"alt_text": "矢印"}, undo="Change shape",
+                 check=lambda o: o["alt_text"] == "矢印")
+            step("vertical anchor", change, "First", {"vertical_anchor": "top"},
+                 undo="Change shape")
+        else:
+            step("alternative text says it cannot", change, "Line", {"alt_text": "矢印"},
+                 undo="Change shape",
+                 check=lambda o: any("no alternative text" in w for w in o["warnings"]))
+            step("a vertical anchor says it cannot", change, "First",
+                 {"vertical_anchor": "top"}, undo="Change shape",
+                 check=lambda o: any("no vertical_anchor" in w for w in o["warnings"]))
+
+        step("a shape anchored to the paragraph with the text", insert, "rectangle", 1, 40.0, 20.0,
+             {"name": "Anchor", "left": 300.0, "top": 0.0}, undo="Insert shape",
+             check=lambda o: o["index"] == 1)
+        step("the anchor is not in its text", text._get_paragraphs_impl, 1, 1, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "Alpha beta gamma delta epsilon.")
+        step("a match past an anchor: format", formatting._format_text_impl, 1, None, "beta",
+             {"bold": True}, undo="Format text",
+             check=lambda o: o["read_back"][0]["text"] == "beta")
+        step("a match past an anchor: link", links._insert_hyperlink_impl, 1,
+             "https://example.com", None, "gamma", None, None, undo="Insert hyperlink",
+             check=lambda o: o["text"] == "gamma")
+        step("a match past an anchor: bookmark", links._add_bookmark_impl, "Spot", 1, "delta",
+             undo="Add bookmark", check=lambda o: o["text"] == "delta")
+        step("a note after text past an anchor", notes._insert_note_impl, 1, "A note", "footnote",
+             "epsilon", undo="Insert note")
+        step("the note landed after that word", text._get_paragraphs_impl, 1, 1, False,
+             check=lambda o: "epsilon\x02" in o["paragraphs"][0]["text"])
+        step("a field in place of text past an anchor", fields._insert_field_impl, 1,
+             'QUOTE "Omega"', "end", "Alpha", undo="Insert field")
+        step("the field took that word's place", text._get_paragraphs_impl, 1, 1, False,
+             check=lambda o: o["paragraphs"][0]["text"].startswith("Omega beta"))
+        step("rewriting a paragraph keeps the shape anchored at its start",
+             text._set_paragraph_text_impl, 3, "Rewritten text.", undo="Rewrite paragraph",
+             check=lambda o: o["paragraph"]["text"] == "Rewritten text." and "warnings" not in o)
+        step("and it is still there", shapes._list_shapes_impl, 1, 50,
+             check=lambda o: "縦" in [s["name"] for s in o["shapes"]])
+        step("deleting the paragraph says the shapes went", text._delete_paragraphs_impl, 3, None,
+             undo="Delete paragraphs",
+             check=lambda o: any("floating shape" in w for w in o["warnings"]))
+        step("deleting a shape by name", shapes._delete_shape_impl, "Back", undo="Delete shape",
+             check=lambda o: o["deleted"] == "Back")
+        step("a shape that is not there is refused", shapes._delete_shape_impl, "Back",
+             check=lambda o: "no shape named" in o["error"])
+        if not backend.IS_MACOS:
+            before = step("before a shape and its undo", shapes._list_shapes_impl, 1, 50)
+            step("a new shape", insert, "star", 2, 40.0, 40.0, {"name": "Gone"},
+                 undo="Insert shape", check=lambda o: o["name"] == "Gone")
+            step("one undo takes it back", edit._undo_impl, 1)
+            step("and it is gone", shapes._list_shapes_impl, 1, 50,
+                 check=lambda o, n=before.get("count"): o["count"] == n)
+    finally:
+        step("close the document for shapes", documents._close_document_impl, False)
         call_document.reset(token)
 
 
