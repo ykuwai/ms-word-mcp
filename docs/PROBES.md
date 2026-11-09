@@ -272,6 +272,6 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | Removing a link | `Hyperlink.Delete`: the text stays, and goes from Hyperlink back to Default Paragraph Font, with no underline and the automatic color | `delete`: the text stays, and goes from Hyperlink back to Normal |
 | A bookmark's name again | `Bookmarks.Add` moves it | `make new bookmark` moves it |
 | A name with a space | | -1708 (refused by the tool before it reaches Word) |
-| Hidden bookmarks (`_...`) | Not in `Bookmarks` unless `ShowHidden` | Not counted |
+| Hidden bookmarks (`_...`) | Not in `Bookmarks` unless `ShowHidden`, so the tools leave them out by name | Not counted |
 | Order of the bookmarks | By name unless asked; the tool sorts by place | The tool sorts by place |
 

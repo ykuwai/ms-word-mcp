@@ -6,7 +6,8 @@ https://learn.microsoft.com/en-us/office/vba/api/word.hyperlinks.add
 https://learn.microsoft.com/en-us/office/vba/api/word.bookmarks.add
 
 Bookmarks whose names start with an underscore are hidden: Word keeps them for
-cross-references and tables of contents, and they are not listed here.
+cross-references and tables of contents. They are left out here by name, since
+Word itself lists them when the user has turned on Show Hidden Bookmarks.
 
 Word keeps a link's address once it has one: setting it to "" leaves it as it
 was, on Windows and the Mac (measured). So a link to an address that is to go
@@ -230,6 +231,12 @@ def _remove_hyperlink_impl(number):
     return {"success": True, "removed": number, "text_kept": text, "left": doc.Hyperlinks.Count}
 
 
+def _shown_bookmarks(doc) -> list:
+    marks = doc.Bookmarks
+    found = (marks.Item(i) for i in range(1, marks.Count + 1))
+    return [b for b in found if not b.Name.startswith("_")]
+
+
 def _describe_bookmark(doc, mark) -> dict:
     return {"name": mark.Name, "index": doc.Range(0, mark.Start + 1).Paragraphs.Count,
             "text": clean_text(mark.Range.Text)[:SHOWN], "empty": bool(mark.Empty)}
@@ -245,8 +252,7 @@ def _add_bookmark_impl(name, index, match):
 
 def _list_bookmarks_impl():
     doc = backend.word.document()
-    marks = doc.Bookmarks
-    found = sorted((marks.Item(i) for i in range(1, marks.Count + 1)), key=lambda b: b.Start)
+    found = sorted(_shown_bookmarks(doc), key=lambda b: b.Start)
     return {"success": True, "bookmarks": [_describe_bookmark(doc, b) for b in found]}
 
 
@@ -255,7 +261,7 @@ def _delete_bookmark_impl(name):
     if not doc.Bookmarks.Exists(name):
         raise no_bookmark(name)
     doc.Bookmarks.Item(name).Delete()
-    return {"success": True, "deleted": name, "left": doc.Bookmarks.Count}
+    return {"success": True, "deleted": name, "left": len(_shown_bookmarks(doc))}
 
 
 # -- Mac -------------------------------------------------------------------------------
@@ -392,6 +398,13 @@ def _mac_remove_hyperlink(number):
     return {"success": True, "removed": number, "text_kept": text, "left": _mac_link_count(doc)}
 
 
+def _mac_shown_bookmarks(doc) -> list:
+    from appscript import k
+
+    found = [doc.bookmarks[i] for i in range(1, int(doc.count(each=k.bookmark)) + 1)]
+    return [b for b in found if not b.name.get().startswith("_")]
+
+
 def _mac_describe_bookmark(doc, mark) -> dict:
     from appscript import k
 
@@ -418,23 +431,18 @@ def _mac_add_bookmark(name, index, match):
 
 @mac_impl(_list_bookmarks_impl)
 def _mac_list_bookmarks():
-    from appscript import k
-
     doc = backend.word.document()
-    found = [doc.bookmarks[i] for i in range(1, int(doc.count(each=k.bookmark)) + 1)]
-    found.sort(key=lambda b: b.start_of_bookmark.get())
+    found = sorted(_mac_shown_bookmarks(doc), key=lambda b: b.start_of_bookmark.get())
     return {"success": True, "bookmarks": [_mac_describe_bookmark(doc, b) for b in found]}
 
 
 @mac_impl(_delete_bookmark_impl)
 def _mac_delete_bookmark(name):
-    from appscript import k
-
     doc = backend.word.document()
     if not _mac_has_bookmark(doc, name):
         raise no_bookmark(name)
     doc.bookmarks[name].delete()
-    return {"success": True, "deleted": name, "left": int(doc.count(each=k.bookmark))}
+    return {"success": True, "deleted": name, "left": len(_mac_shown_bookmarks(doc))}
 
 
 def register(mcp) -> None:

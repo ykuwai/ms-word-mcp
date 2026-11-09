@@ -131,6 +131,15 @@ def test_bookmarks_are_listed_by_place_not_by_name(make_doc):
     assert [b["name"] for b in answer(links._list_bookmarks_impl)["bookmarks"]] == ["Zed", "Abc"]
 
 
+def test_words_hidden_bookmarks_are_left_out_even_when_word_shows_them(make_doc):
+    doc = make_doc("One.")
+    mark("Spot", 1)
+    mark("Other", 1)
+    doc.Bookmarks.Add("_Ref123", doc.Range(0, 3))
+    assert {b["name"] for b in answer(links._list_bookmarks_impl)["bookmarks"]} == {"Other", "Spot"}
+    assert answer(links._delete_bookmark_impl, "Spot")["left"] == 1
+
+
 def test_deleting_a_bookmark(make_doc):
     make_doc("One.")
     mark("Spot", 1)
