@@ -1,9 +1,11 @@
 name: Tests
 
-# Run by hand while the repository is private: macOS runners count ten times
-# against a private repository's Actions minutes. Add push and pull_request
-# once it is public.
+# Runs on every push and pull request, and is called by publish.yml so a
+# release cannot ship without passing the same checks.
 on:
+  push:
+    branches: [main, develop]
+  pull_request:
   workflow_dispatch:
   workflow_call:
 

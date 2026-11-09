@@ -3,7 +3,7 @@
 An MCP server that drives a live Microsoft Word on Windows and macOS, so an AI
 can write and format a document while you work in it.
 
-> **Status:** pre-release, in development on `develop`. Not on PyPI yet.
+> **Status:** early release (0.x). Tool names and arguments may still change.
 
 ## What it is for
 
@@ -25,9 +25,10 @@ can write and format a document while you work in it.
   editor, numbered (1), (2)... at the right margin by fields that renumber
   themselves.
 - **Official sources.** Every member and constant is checked against
-  Microsoft's documentation ([docs/reference](docs/reference)), and what the
-  documentation leaves unstated is measured on a real Word
-  ([docs/PROBES.md](docs/PROBES.md)).
+  Microsoft's documentation
+  ([docs/reference](https://github.com/ykuwai/ms-word-mcp/tree/main/docs/reference)),
+  and what the documentation leaves unstated is measured on a real Word
+  ([docs/PROBES.md](https://github.com/ykuwai/ms-word-mcp/blob/main/docs/PROBES.md)).
 
 ## Tools
 
@@ -65,18 +66,10 @@ another conversation has chosen.
 Requirements: Microsoft Word (Microsoft 365 or 2021+) on Windows 10/11 or
 macOS, and [uv](https://docs.astral.sh/uv/).
 
-From source:
-
-```bash
-git clone https://github.com/ykuwai/ms-word-mcp.git
-cd ms-word-mcp
-uv sync
-```
-
 Claude Code:
 
 ```bash
-claude mcp add word -- uv --directory /path/to/ms-word-mcp run ms-word-mcp
+claude mcp add word uvx ms-word-mcp
 ```
 
 Other clients (Claude Desktop, Cursor, `.mcp.json`):
@@ -85,8 +78,8 @@ Other clients (Claude Desktop, Cursor, `.mcp.json`):
 {
   "mcpServers": {
     "word": {
-      "command": "uv",
-      "args": ["--directory", "/path/to/ms-word-mcp", "run", "ms-word-mcp"]
+      "command": "uvx",
+      "args": ["ms-word-mcp"]
     }
   }
 }
@@ -126,7 +119,8 @@ What the server does about it:
 What it does not do: a document opened through these tools does not get Word's
 Protected View, so open only documents you would open yourself.
 
-To report a vulnerability, see [SECURITY.md](SECURITY.md).
+To report a vulnerability, see
+[SECURITY.md](https://github.com/ykuwai/ms-word-mcp/blob/main/SECURITY.md).
 
 ## On macOS
 
@@ -153,6 +147,9 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 ## Development
 
 ```bash
+git clone https://github.com/ykuwai/ms-word-mcp.git
+cd ms-word-mcp
+uv sync
 uv run pytest -q                    # no Word needed
 uv run python scripts/live_check.py # runs every tool on a real Word, in a scratch document
 ```

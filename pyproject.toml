@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["mcp", "word", "microsoft-word", "com", "applescript", "automation", "ai-agent", "llm"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
@@ -25,7 +25,8 @@ classifiers = [
 dependencies = [
     # Both 1.x and 2.x are supported (server.py imports either module layout).
     # mcp 2.0 renamed mcp.server.fastmcp with no shim, so new majors stay opt-in.
-    "mcp[cli]>=1.0.0,<3.0.0",
+    # 1.23 is the oldest measured to work with a current pydantic.
+    "mcp[cli]>=1.23.0,<3.0.0",
     "pydantic>=2.0.0",
     # Tool handlers hand their blocking Word work to anyio.to_thread.
     "anyio>=4.0.0",
@@ -33,7 +34,7 @@ dependencies = [
     # installable on the other platform, so both carry a marker.
     "pywin32>=306; sys_platform == 'win32'",
     "appscript>=1.4.0; sys_platform == 'darwin'",
-    # Word's window is found by its window id for a screenshot on the Mac.
+    # The Mac draws a page of the PDF Word saves into a PNG with Quartz.
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
 ]
 
