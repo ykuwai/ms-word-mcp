@@ -4,6 +4,7 @@ refusals of unknown arguments, and failures marked as errors."""
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -163,6 +164,23 @@ def test_catalog_mode_is_the_default(mode, expected):
         assert listed == ["word_describe", "word_run", "word_run_steps"]
     else:
         assert "word_describe" not in listed and len(listed) > 15
+
+
+def test_the_docs_name_every_tool():
+    env = dict(os.environ, WORD_TOOL_MODE="full", PYTHONPATH=str(ROOT / "src"))
+    script = (
+        "import asyncio\n"
+        "from ms_word_mcp.server import mcp\n"
+        "print(','.join(t.name for t in asyncio.run(mcp.list_tools())))\n")
+    out = subprocess.run([sys.executable, "-c", script], env=env, cwd=ROOT,
+                         capture_output=True, text=True, encoding="utf-8", check=True)
+    tools = set(out.stdout.strip().split(","))
+    table = [line for line in (ROOT / "TOOLS.md").read_text(encoding="utf-8").splitlines()
+             if line.startswith("|")]
+    assert set(re.findall(r"`(word_[a-z_]+)`", "\n".join(table))) == tools
+    for readme in (ROOT / "README.md", ROOT / "i18n" / "README.ja.md"):
+        count = re.search(r"<!--tools-->(\d+)<!--/tools-->", readme.read_text(encoding="utf-8"))
+        assert int(count.group(1)) == len(tools), readme.name
 
 
 def test_describe_lists_every_tool_a_line_each():
