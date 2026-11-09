@@ -3,6 +3,7 @@
     uv run python scripts/probes/mac_comments_revisions.py tracking
     uv run python scripts/probes/mac_comments_revisions.py tools
     uv run python scripts/probes/mac_comments_revisions.py ruby
+    uv run python scripts/probes/mac_comments_revisions.py revision-reads
     uv run python scripts/probes/mac_comments_revisions.py comment-at-document
     uv run python scripts/probes/mac_comments_revisions.py comment-read
     uv run python scripts/probes/mac_comments_revisions.py comment-edit
@@ -337,7 +338,82 @@ def ruby():
         backend.word.stop()
 
 
-SECTIONS = {"tracking": tracking, "tools": tools, "ruby": ruby, "comment-at-document": comment_at_document,
+def revision_reads():
+    """How to read the deletions of a part of a document, and what each way costs.
+
+    Asking for a property of every revision at once (`d.revisions.revision_type`)
+    ran past the 60 s timeout on 200 revisions and left Word busy for minutes
+    (measured 2026-11-10), so that is not tried again. Counting the revisions
+    of a range answers 0 even with deletions in it; its `revisions` list is right.
+    """
+    def timed(label, f):
+        began = time.monotonic()
+        out = attempt(label, f)
+        print(f"   {time.monotonic() - began:.3f} s")
+        return out
+
+    def where(d, i):
+        t = d.revisions[i].text_object
+        return t.start_of_content.get(), t.end_of_content.get()
+
+    for size in (20, 180):
+        print(f"\n== {size} deletions")
+        d = w.make(new=k.document)
+        try:
+            d.text_object.content.set(
+                "\r".join(f"Paragraph {i:03} alpha beta" for i in range(1, size + 21)))
+            d.track_revisions.set(True)
+            for i in range(size, 0, -1):
+                a, _ = bounds(d, i)
+                d.create_range(start=a + 14, end_=a + 20).content.set("")
+            a, _ = bounds(d, size + 5)
+            _, b = bounds(d, size + 7)
+            d.create_range(start=a + 5, end_=b - 5).content.set("")  # across three paragraphs
+            n = int(d.count(each=k.revision))
+            print("revisions", n)
+            timed("count", lambda: d.count(each=k.revision))
+            for i in (1, n // 2, n):
+                timed(f"where is {i}", lambda: where(d, i))
+                timed(f"type of {i}", lambda: d.revisions[i].revision_type.get())
+            def in_range(r):
+                listed = r.revisions.get()
+                print("   listed", type(listed).__name__, str(listed)[:160])
+                out = []
+                for i in range(1, len(listed) + 1 if isinstance(listed, list) else 1):
+                    t = r.revisions[i].text_object
+                    out.append((_name_of(r.revisions[i].revision_type.get()),
+                                t.start_of_content.get(), t.end_of_content.get()))
+                return out
+
+            para = lambda i: d.paragraphs[i].text_object  # noqa: E731
+            span = lambda i, j: d.create_range(  # noqa: E731
+                start=bounds(d, i)[0], end_=bounds(d, j)[1])
+            print("paragraph 5", bounds(d, 5))
+            timed("paragraph 5", lambda: in_range(para(5)))
+            print("paragraphs 5-8", bounds(d, 5)[0], bounds(d, 8)[1])
+            timed("paragraphs 5-8", lambda: in_range(span(5, 8)))
+            last = size - 2
+            print(f"paragraphs {last}-{size}", bounds(d, last)[0], bounds(d, size)[1])
+            timed("near the end", lambda: in_range(span(last, size)))
+            print("the middle of three", bounds(d, size + 6))
+            timed("the middle of three", lambda: in_range(para(size + 6)))
+            timed("paragraphs around the three", lambda: in_range(span(size + 4, size + 8)))
+            timed("none", lambda: in_range(para(size + 12)))
+            timed("a match inside a deletion", lambda: in_range(d.create_range(
+                start=bounds(d, 3)[0] + 15, end_=bounds(d, 3)[0] + 18)))
+            timed("text next to a deletion", lambda: in_range(d.create_range(
+                start=bounds(d, 3)[0], end_=bounds(d, 3)[0] + 14)))
+            timed("the whole document", lambda: len(in_range(d.text_object)) if size == 20 else None)
+            d.track_revisions.set(False)
+        finally:
+            d.close(saving=k.no)
+
+
+def _name_of(value):
+    return getattr(value, "name", str(value))
+
+
+SECTIONS = {"tracking": tracking, "tools": tools, "ruby": ruby, "revision-reads": revision_reads, "comment-at-document": comment_at_document,
             "comment-read": comment_read, "comment-edit": comment_edit,
             "comment-delete": comment_delete}
 

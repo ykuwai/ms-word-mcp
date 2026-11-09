@@ -1,12 +1,13 @@
 """Tracked changes: the tools for them, and the other tools while tracking is on."""
 
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
-from ms_word_mcp.tools import _common, _word, mac, revisions, text
+from ms_word_mcp.tools import _common, _word, mac, revisions, tables, text
 
 
 def answer(impl, *args):
@@ -228,3 +229,86 @@ def test_fields_are_not_read_without_a_ruby_mark():
     info = {"text": "plain", "deleted_text": "gone"}
     _word.expand_ruby(info, boom)
     assert info == {"text": "plain", "deleted_text": "gone"}
+
+
+# -- on the Mac, only the changes near what is read ---------------------------------
+
+def _mac_kinds():
+    return SimpleNamespace(revision="revision", revision_delete="delete",
+                           revision_move_from="move", revision_insert="insert", field="field")
+
+
+def _mac_range(changes):
+    """A text range whose `revisions` list holds (kind, start, end); none is the missing value."""
+    value = lambda v: SimpleNamespace(get=lambda: v)  # noqa: E731
+    items = {i: SimpleNamespace(revision_type=value(kind), text_object=SimpleNamespace(
+        start_of_content=value(a), end_of_content=value(b)))
+        for i, (kind, a, b) in enumerate(changes, 1)}
+
+    class Listed(dict):
+        def get(self):
+            return list(self.values()) if self else "missing value"
+
+    return SimpleNamespace(revisions=Listed(items))
+
+
+def test_a_range_with_no_changes_answers_the_missing_value(monkeypatch):
+    monkeypatch.setattr(mac, "_k", _mac_kinds)
+    assert mac._deletions(_mac_range([])) == []
+
+
+def test_only_deletions_of_the_range_are_read(monkeypatch):
+    monkeypatch.setattr(mac, "_k", _mac_kinds)
+    rng = _mac_range([("insert", 1, 3), ("delete", 5, 9), ("move", 12, 15)])
+    assert mac._deletions(rng) == [(5, 9), (12, 15)]
+
+
+def test_a_mac_read_asks_about_changes_only_where_it_reads(monkeypatch):
+    """The document's own list of changes is never walked."""
+    asked = []
+    monkeypatch.setattr(mac.backend, "word", SimpleNamespace(document=lambda: "doc"))
+    monkeypatch.setattr(mac, "_count", lambda doc: 500)
+    monkeypatch.setattr(mac, "_has_revisions", lambda doc: True)
+    monkeypatch.setattr(mac, "_info", lambda doc, i, detail=False, spans=None: (
+        asked.append((i, spans)) or {"index": i}))
+    monkeypatch.setattr(tables, "mac_mark_tables", lambda doc, paragraphs: None)
+    mac.get_paragraphs(3, 4, False)
+    assert asked == [(3, None), (4, None)]  # None: each reads its own paragraph's
+
+
+def test_a_mac_read_with_no_changes_asks_once(monkeypatch):
+    asked = []
+    monkeypatch.setattr(mac.backend, "word", SimpleNamespace(document=lambda: "doc"))
+    monkeypatch.setattr(mac, "_count", lambda doc: 500)
+    monkeypatch.setattr(mac, "_has_revisions", lambda doc: False)
+    monkeypatch.setattr(mac, "_info", lambda doc, i, detail=False, spans=None: (
+        asked.append(spans) or {"index": i}))
+    monkeypatch.setattr(tables, "mac_mark_tables", lambda doc, paragraphs: None)
+    mac.get_paragraphs(3, 4, False)
+    assert asked == [[], []]
+
+
+def _mac_doc(deleted):
+    """create_range answers a range holding the deletion, if the match lies in one."""
+    def create_range(start, end_):
+        return _mac_range([("delete", a, b) for a, b in deleted if a <= start and end_ <= b])
+    return SimpleNamespace(create_range=create_range)
+
+
+def test_a_match_marked_deleted_is_left_out_at_its_own_place(monkeypatch):
+    monkeypatch.setattr(mac, "_k", _mac_kinds)
+    monkeypatch.setattr(mac, "_has_revisions", lambda doc: True)
+    doc = _mac_doc([(10, 20)])
+    assert mac._live(doc, [(1, 3), (12, 15), (30, 33)], time.monotonic() + 60) == (
+        [(1, 3), (30, 33)], True)
+
+
+def test_a_match_not_reached_in_time_is_not_taken_as_live(monkeypatch):
+    monkeypatch.setattr(mac, "_k", _mac_kinds)
+    monkeypatch.setattr(mac, "_has_revisions", lambda doc: True)
+    assert mac._live(_mac_doc([]), [(1, 3), (5, 7)], time.monotonic() - 1) == ([], False)
+
+
+def test_a_document_with_no_changes_is_not_asked_about_each_match(monkeypatch):
+    monkeypatch.setattr(mac, "_has_revisions", lambda doc: False)
+    assert mac._live(None, [(1, 3)], time.monotonic() - 1) == ([(1, 3)], True)
