@@ -369,9 +369,9 @@ def register(mcp) -> None:
     async def word_apply_list(params: ApplyListInput) -> str:
         """Make paragraphs a bulleted or numbered list, with each level's bullet
         character or number format, the bullet's own font, color and size, and
-        the positions of the number and the text. `levels` defines the look of
-        levels 1 to 9; every paragraph is at level 1 until word_set_list_level
-        moves it.
+        the positions of the number and the text. `levels` is required even
+        for a plain list ([{"bullet": "●"}]). It defines the look of levels 1
+        to 9; every paragraph is at level 1 until word_set_list_level moves it.
 
         Numbered headings: apply it to the first heading alone, each level
         with `linked_style` ("Heading 1", "Heading 2"...) and a format such as

@@ -277,7 +277,8 @@ warning says so. bold, italic and size cover right-to-left text too unless
 its own value is given. A right-to-left paragraph also needs
 `direction: "right_to_left"` (Windows). A document from a Japanese or
 Chinese template justifies Normal and fits it to a grid, which stretches
-Latin text: give Normal `alignment: "left"` and `snap_to_grid: false` for a
+Latin text, and the grid also spaces lines apart in a Japanese document:
+`snap_to_grid: false` closes them up. Give Normal `alignment: "left"` and `snap_to_grid: false` for a
 mainly Latin document. East Asian layouts measure spacing in grid lines
 (`space_before_lines`) and indents in character widths
 (`first_line_indent_chars`); both are there as well as points.
