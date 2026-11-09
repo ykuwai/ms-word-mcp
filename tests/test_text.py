@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ms_word_mcp.tools import _common, mac, text
+from ms_word_mcp.tools import _common, mac, tables, text
 
 
 def answer(impl, *args):
@@ -195,6 +195,33 @@ def test_calling_again_is_not_offered_for_a_wildcard_pattern(make_doc, monkeypat
     assert out["complete"] is False
     assert "wildcard pattern can match" in out["warnings"][0]
     assert "same arguments" not in out["warnings"][0]
+
+
+def test_a_read_out_of_time_answers_what_it_has(make_doc, monkeypatch):
+    make_doc("one", "two", "three")
+    monkeypatch.setattr(text, "READ_SECONDS", -1.0)
+    out = answer(text._get_paragraphs_impl, 1, 3, False)
+    assert [p["text"] for p in out["paragraphs"]] == ["one"]
+    assert out["complete"] is False and "start=2" in out["warnings"][0]
+    assert "pass start=2" in out["more"]
+
+
+def test_a_read_in_time_is_not_marked(make_doc):
+    make_doc("one", "two", "three")
+    out = answer(text._get_paragraphs_impl, 1, 2, False)
+    assert "complete" not in out and "warnings" not in out
+    assert "pass start=3" in out["more"]
+
+
+def test_a_mac_read_out_of_time_answers_what_it_has(monkeypatch):
+    monkeypatch.setattr(mac.backend, "word", SimpleNamespace(document=lambda: None))
+    monkeypatch.setattr(mac, "_count", lambda doc: 3)
+    monkeypatch.setattr(mac, "_info", lambda doc, i, detail=False: {"index": i})
+    monkeypatch.setattr(tables, "mac_mark_tables", lambda doc, paragraphs: None)
+    monkeypatch.setattr(text, "READ_SECONDS", -1.0)
+    out = mac.get_paragraphs(1, 3, False)
+    assert [p["index"] for p in out["paragraphs"]] == [1]
+    assert out["complete"] is False and "pass start=2" in out["more"]
 
 
 def _mac_text(content):

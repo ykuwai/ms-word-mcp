@@ -325,6 +325,11 @@ def register(mcp) -> None:
         levels 1 to 9; every paragraph is at level 1 until word_set_list_level
         moves it.
 
+        Numbered headings: apply it to the first heading alone, each level
+        with `linked_style` ("Heading 1", "Heading 2"...) and a format such as
+        "%1.%2". Every paragraph in those styles is then numbered, at its
+        style's level, including headings added later.
+
         The list gets a template of its own, so no other list in the document
         changes. Reads back each paragraph's list text (ListString) and each
         level as Word holds it.
