@@ -468,8 +468,17 @@ class FakeNotes:
 
 class FakeHyperlink:
     def __init__(self, links, rng, address, sub):
-        self.links, self.Range, self.Address, self.SubAddress = links, rng, address, sub
+        self.links, self.Range, self._address, self.SubAddress = links, rng, address, sub
         self.ScreenTip = ""
+
+    @property
+    def Address(self):
+        return self._address
+
+    @Address.setter
+    def Address(self, value):
+        if value:  # Word keeps the address when it is set to "" (measured)
+            self._address = value
 
     @property
     def TextToDisplay(self):

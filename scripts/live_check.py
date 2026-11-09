@@ -535,14 +535,12 @@ def run_link_steps() -> None:
         step("a bookmark link goes to an address", links._set_hyperlink_impl, 3,
              "https://example.com/z", None, None, None, undo="Change hyperlink",
              check=lambda o: (o["address"], o["bookmark"]) == ("https://example.com/z", None))
-        if backend.IS_MACOS:
-            step("on the Mac an address link cannot become a bookmark link",
-                 links._set_hyperlink_impl, 1, None, "Whole", None, None,
-                 check=lambda o: "On macOS" in o["error"])
-        else:
-            step("an address link becomes a bookmark link", links._set_hyperlink_impl, 1, None,
-                 "Whole", None, None, undo="Change hyperlink",
-                 check=lambda o: (o["address"], o["bookmark"]) == (None, "Whole"))
+        step("an address link becomes a bookmark link, its tip kept", links._set_hyperlink_impl,
+             1, None, "Whole", None, None, undo="Change hyperlink",
+             check=lambda o: (o["number"], o["text"], o["address"], o["bookmark"], o["screen_tip"])
+             == (1, "beta", None, "Whole", "A tip"))
+        step("the paragraph has not moved", text._get_paragraphs_impl, 1, 1, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "Alpha beta GAMMA. 続き")
         step("a link comes off, its text stays", links._remove_hyperlink_impl, 2,
              undo="Remove hyperlink",
              check=lambda o: (o["removed"], o["text_kept"], o["left"]) == (2, "GAMMA", 2))

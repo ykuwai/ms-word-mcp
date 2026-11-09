@@ -268,8 +268,8 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | The Hyperlink style | | The visible text takes it |
 | Order of the links | | By place in the text |
 | Counting links in a range | | `count range each hyperlink object` answers 0 whatever is in the range |
-| Emptying the address | `Address = ""` | Setting `""` leaves it as it was, so a link to an address cannot become a link to a bookmark |
-| Removing a link | `Hyperlink.Delete`: the text stays | `delete`: the text stays, and goes from Hyperlink back to Normal |
+| Emptying the address | `Address = ""` leaves it as it was | Setting `""` leaves it as it was. So a link to an address that is to go to a bookmark is taken off and made again. |
+| Removing a link | `Hyperlink.Delete`: the text stays, and goes from Hyperlink back to Default Paragraph Font, with no underline and the automatic color | `delete`: the text stays, and goes from Hyperlink back to Normal |
 | A bookmark's name again | `Bookmarks.Add` moves it | `make new bookmark` moves it |
 | A name with a space | | -1708 (refused by the tool before it reaches Word) |
 | Hidden bookmarks (`_...`) | Not in `Bookmarks` unless `ShowHidden` | Not counted |

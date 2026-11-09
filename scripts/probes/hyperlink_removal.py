@@ -7,7 +7,6 @@ text before and after Hyperlink.Delete. On the Mac the same was measured with
 the dictionary: the text goes from Hyperlink back to Normal.
 """
 
-import json
 import sys
 from pathlib import Path
 
@@ -36,4 +35,8 @@ def measure():
 if backend.IS_MACOS:
     print("Windows only.")
 else:
-    print(json.dumps(json.loads(_common.run(measure)), ensure_ascii=False))
+    backend.word.start()
+    try:
+        print(_common.run(measure))
+    finally:
+        backend.word.stop()

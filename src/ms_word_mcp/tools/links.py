@@ -8,9 +8,10 @@ https://learn.microsoft.com/en-us/office/vba/api/word.bookmarks.add
 Bookmarks whose names start with an underscore are hidden: Word keeps them for
 cross-references and tables of contents, and they are not listed here.
 
-On Word for Mac an address cannot be emptied (setting "" leaves it as it was),
-so a link to an address cannot be turned into a link to a bookmark; and counting
-the links in a range answers 0 (both measured).
+Word keeps a link's address once it has one: setting it to "" leaves it as it
+was, on Windows and the Mac (measured). So a link to an address that is to go
+to a bookmark is taken off and made again over the same text. On Word for Mac,
+counting the links in a range answers 0 (measured).
 """
 
 from __future__ import annotations
@@ -68,8 +69,7 @@ class SetHyperlinkInput(Input):
     number: int = Field(..., ge=1, description="Which link, as word_list_hyperlinks numbers them.")
     address: Trimmed | None = Field(None, min_length=1, max_length=2000, description="A new address.")
     bookmark: Trimmed | None = Field(None, description=(
-        "Or: a bookmark in this document to go to instead. On macOS a link to an address "
-        "cannot become one to a bookmark: remove it and insert a new one."))
+        "Or: a bookmark in this document to go to instead."))
     text: str | None = Field(None, min_length=1, max_length=2000, description="New visible text.")
     screen_tip: str | None = Field(None, max_length=255, description=(
         "A new screen tip; an empty string takes it off."))
@@ -193,6 +193,15 @@ def _list_hyperlinks_impl(start, limit):
     return link_listing(out, links.Count, start)
 
 
+def _remake_to_bookmark(doc, link, bookmark) -> None:
+    """Take a link to an address off, and make one to `bookmark` over its text."""
+    start, text, tip = link.Range.Start, link.TextToDisplay, link.ScreenTip
+    link.Delete()
+    made = doc.Hyperlinks.Add(doc.Range(start, start + _u16(text)), "", bookmark)
+    if tip:
+        made.ScreenTip = tip
+
+
 def _set_hyperlink_impl(number, address, bookmark, text, screen_tip):
     doc = backend.word.document()
     link = _link(doc, number)
@@ -201,7 +210,11 @@ def _set_hyperlink_impl(number, address, bookmark, text, screen_tip):
     if address is not None:
         link.Address, link.SubAddress = address, ""
     if bookmark is not None:
-        link.SubAddress, link.Address = bookmark, ""
+        if link.Address:
+            _remake_to_bookmark(doc, link, bookmark)
+            link = doc.Hyperlinks.Item(number)
+        else:
+            link.SubAddress = bookmark
     if text is not None:
         link.TextToDisplay = text
     if screen_tip is not None:
@@ -335,6 +348,19 @@ def _mac_list_hyperlinks(start, limit):
     return link_listing(out, count, start)
 
 
+def _mac_remake_to_bookmark(doc, link, bookmark) -> None:
+    from appscript import k
+
+    start = link.text_object.start_of_content.get()
+    text, tip = link.text_to_display.get(), _mac_value(link.screen_tip.get())
+    link.delete()
+    props = {k.text_object: doc.create_range(start=start, end_=start + _u16(text)),
+             k.sub_address: bookmark}
+    if tip:
+        props[k.screen_tip] = tip
+    doc.make(new=k.hyperlink_object, at=doc, with_properties=props)
+
+
 @mac_impl(_set_hyperlink_impl)
 def _mac_set_hyperlink(number, address, bookmark, text, screen_tip):
     doc = backend.word.document()
@@ -343,10 +369,10 @@ def _mac_set_hyperlink(number, address, bookmark, text, screen_tip):
         if not _mac_has_bookmark(doc, bookmark):
             raise no_bookmark(bookmark)
         if _mac_value(link.hyperlink_address.get()) is not None:
-            raise ValueError("On macOS a link to an address cannot become a link to a bookmark: "
-                             "use word_remove_hyperlink, then word_insert_hyperlink. "
-                             "Nothing was changed.")
-        link.sub_address.set(bookmark)
+            _mac_remake_to_bookmark(doc, link, bookmark)
+            link = doc.hyperlink_objects[number]
+        else:
+            link.sub_address.set(bookmark)
     if address is not None:
         link.hyperlink_address.set(address)
         link.sub_address.set("")

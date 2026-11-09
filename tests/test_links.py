@@ -84,6 +84,16 @@ def test_a_links_target_text_and_tip_change(make_doc):
     assert (out["address"], out["bookmark"]) == ("new", None)
 
 
+def test_an_address_link_is_remade_to_go_to_a_bookmark(make_doc):
+    doc = make_doc("One two.", "Three.")
+    link(1, address="old", match="two", tip="tip")
+    mark("Target", 2)
+    out = answer(links._set_hyperlink_impl, 1, None, "Target", None, None)
+    assert (out["number"], out["text"], out["address"], out["bookmark"], out["screen_tip"]) == (
+        1, "two", None, "Target", "tip")
+    assert doc.Hyperlinks.Count == 1 and doc.texts() == ["One two.", "Three."]
+
+
 def test_removing_a_link_keeps_its_text(make_doc):
     doc = make_doc("One two.")
     link(1, address="a", match="two")
