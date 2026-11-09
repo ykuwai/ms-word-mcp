@@ -32,14 +32,17 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
 - Styles: read a style whole (word_get_style) and define one (word_set_style):
   type, base and next style, gallery settings, and every character and
   paragraph property of tools/_props.py, which word_format_text and
-  word_set_paragraph_format share. On the Mac a style can be changed but not
+  word_set_paragraph_format share, paragraph borders and background color
+  among them. On the Mac a style can be changed but not
   created.
 - Lists: bulleted and numbered lists with each level's bullet character or
   number format (full-width digits, circled numbers, kanji, aiueo, iroha...),
   the bullet's own font, color and size, positions, levels; each list gets a
   template of its own so no other list changes. Read a list back, change
   levels, remove a list. Numbered headings: levels linked to the heading
-  styles number every heading, including ones added later.
+  styles number every heading, including ones added later. Restarting the
+  numbering in the middle of a list (Windows; Word for Mac's scripting gives
+  numbers that change from run to run, docs/PROBES.md).
 
 - Equations: display equations from LaTeX (converted with Word's own Math
   AutoCorrect symbols) or UnicodeMath, built by Word, numbered (1), (2)... at
@@ -84,10 +87,9 @@ First, fixes to what is there, for long documents (PROBES.md, Reading):
 
 Then, ordered roughly by what the owner stressed.
 
-1. **Styles, the rest.** Borders and shading, tab stops, list linkage, the
-   language of a style; creating a style on the Mac (through VBA).
-2. **Lists, the rest.** Restarting numbering in the middle of a list,
-   picture bullets.
+1. **Styles, the rest.** Tab stops on the Mac, list linkage, the language
+   of a style; creating a style on the Mac (through VBA).
+2. **Lists, the rest.** Picture bullets.
 3. **Equations, the rest.** Inline equations inside a paragraph,
    chapter-style numbers (2.1) with STYLEREF, cross-references to equations,
    editing an equation in place.

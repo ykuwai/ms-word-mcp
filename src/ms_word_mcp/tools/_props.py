@@ -61,6 +61,25 @@ OUTLINE = {**{str(i): i for i in range(1, 10)}, "body_text": 10}
 OUTLINE_MAC = {**{str(i): f"outline_level{i}" for i in range(1, 10)},
                "body_text": "outline_level_body_text"}
 
+# Paragraph borders. WdBorderType, WdLineStyle and WdLineWidth (eighths of a
+# point); the Mac names are from Word.sdef.
+BORDER_SIDES = {"top": -1, "left": -2, "bottom": -3, "right": -4}
+BORDER_STYLES = {"none": 0, "single": 1, "dotted": 2, "dash_small_gap": 3, "dash_large_gap": 4,
+                 "dash_dot": 5, "dash_dot_dot": 6, "double": 7, "triple": 8}
+BORDER_STYLES_MAC = {"none": "line_style_none", "single": "line_style_single",
+                     "dotted": "line_style_dot", "dash_small_gap": "line_style_dash_small_gap",
+                     "dash_large_gap": "line_style_dash_large_gap",
+                     "dash_dot": "line_style_dash_dot",
+                     "dash_dot_dot": "line_style_dash_dot_dot",
+                     "double": "line_style_double", "triple": "line_style_triple"}
+BORDER_WIDTHS = {0.25: 2, 0.5: 4, 0.75: 6, 1.0: 8, 1.5: 12, 2.25: 18, 3.0: 24, 4.5: 36, 6.0: 48}
+BORDER_WIDTHS_MAC = {0.25: "line_width25_point", 0.5: "line_width50_point",
+                     0.75: "line_width75_point", 1.0: "line_width100_point",
+                     1.5: "line_width150_point", 2.25: "line_width225_point",
+                     3.0: "line_width300_point", 4.5: "line_width450_point",
+                     6.0: "line_width600_point"}
+WD_COLOR_AUTOMATIC = -16777216
+
 FONT_PROPS = (
     Prop("latin_font", "NameAscii", "ascii_name", "font"),
     Prop("latin_font_extended", "NameOther", "other_name", "font"),
@@ -146,7 +165,8 @@ PAIRED_UNITS = {"space_before": "space_before_lines", "space_after": "space_afte
 
 FONT_NAMES = tuple(p.name for p in FONT_PROPS)
 PARAGRAPH_NAMES = tuple(p.name for p in PARAGRAPH_PROPS) + ("line_spacing_rule",
-                                                            "line_spacing", "tab_stops")
+                                                            "line_spacing", "tab_stops",
+                                                            "borders", "shading")
 LINE_SPACING = {"single": 0, "one_and_half": 1, "double": 2, "at_least": 3, "exactly": 4,
                 "multiple": 5}
 LINE_SPACING_MAC = {"single": "line_space_single", "one_and_half": "line_space1_pt5",
@@ -218,6 +238,30 @@ class TabStop(Input):
         "look."))
 
 
+class Border(Input):
+    style: Literal[tuple(BORDER_STYLES)] = Field("single", description=(  # type: ignore[valid-type]
+        "The line; none takes this side's border off."))
+    width: float | None = Field(None, description=(
+        "Points: 0.25, 0.5, 0.75, 1, 1.5, 2.25, 3, 4.5 or 6."))
+    color: Trimmed | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description="#RRGGBB.")
+
+    @model_validator(mode="after")
+    def _a_width_word_has(self):
+        if self.width is not None and self.width not in BORDER_WIDTHS:
+            raise ValueError(f"A border's width is one of {sorted(BORDER_WIDTHS)} points, "
+                             f"not {self.width}.")
+        return self
+
+
+class ParagraphBorders(Input):
+    """Each side given is set; a side left out stays as it is."""
+
+    top: Border | None = None
+    bottom: Border | None = None
+    left: Border | None = None
+    right: Border | None = None
+
+
 class ParagraphSpec(Input):
     """Paragraph formatting. Every field is optional; leave out what stays."""
 
@@ -229,6 +273,11 @@ class ParagraphSpec(Input):
     tab_stops: list[TabStop] | None = Field(None, max_length=20, description=(
         "The paragraphs' own tab stops, replacing the ones they have; [] clears "
         "them. Windows only for now."))
+    borders: ParagraphBorders | None = Field(None, description=(
+        "Lines around the paragraphs, by side: {\"bottom\": {\"style\": \"single\", "
+        "\"width\": 1.5, \"color\": \"#1F4E79\"}} for a rule under a heading."))
+    shading: Trimmed | None = Field(None, pattern=r"^(none|#?[0-9A-Fa-f]{6})$", description=(
+        "The paragraphs' background color, #RRGGBB, or none to take it off."))
     line_spacing_rule: Literal[tuple(LINE_SPACING)] | None = Field(None, description=(
         "single / one_and_half / double, or at_least / exactly (line_spacing in "
         "points) or multiple (line_spacing in lines, 1.2 = 1.2 lines)."))
@@ -412,6 +461,91 @@ def com_apply_tab_stops(fmt, tab_stops) -> None:
                   TAB_LEADERS[stop["leader"]])
 
 
+def _name_of(table: dict, value):
+    return next((name for name, v in table.items() if v == value), value)
+
+
+def _border_steps(spec: dict, widths: dict) -> list[tuple[str, object]]:
+    """What to set on one side, in the order Word needs: a line before its width."""
+    if spec["style"] == "none":
+        return [("style", "none")]
+    steps = [("style", spec["style"])]
+    if spec.get("width") is not None:
+        steps.append(("width", widths[spec["width"]]))
+    if spec.get("color") is not None:
+        steps.append(("color", spec["color"]))
+    return steps
+
+
+def com_apply_borders(fmt, borders: dict | None) -> dict:
+    """Set the sides given; answers what Word refused, by name."""
+    refused = {}
+    members = {"style": "LineStyle", "width": "LineWidth", "color": "Color"}
+    for side, spec in (borders or {}).items():
+        if spec is None:
+            continue
+        line = fmt.Borders.Item(BORDER_SIDES[side])
+        for key, value in _border_steps(spec, BORDER_WIDTHS):
+            value = (BORDER_STYLES[value] if key == "style"
+                     else bgr(value) if key == "color" else value)
+            try:
+                setattr(line, members[key], value)
+            except Exception as exc:  # noqa: BLE001 - reported by name
+                refused[f"borders.{side}.{key}"] = str(exc).splitlines()[0]
+    return refused
+
+
+def com_read_borders(fmt) -> dict:
+    """The sides that have a line."""
+    out = {}
+    for side, code in BORDER_SIDES.items():
+        line = fmt.Borders.Item(code)
+        style = line.LineStyle
+        if style != BORDER_STYLES["none"]:
+            out[side] = {"style": _name_of(BORDER_STYLES, style),
+                         "width": _name_of(BORDER_WIDTHS, line.LineWidth),
+                         "color": hex_of(line.Color)}
+    return out
+
+
+def com_apply_shading(fmt, shading: str | None) -> None:
+    if shading is not None:
+        fmt.Shading.BackgroundPatternColor = (WD_COLOR_AUTOMATIC if shading == "none"
+                                              else bgr(shading))
+
+
+def com_read_shading(fmt) -> str | None:
+    return hex_of(fmt.Shading.BackgroundPatternColor)
+
+
+def border_mismatches(spec: dict, got: dict) -> list[str]:
+    """A sentence for each side or background asked for that reads back otherwise."""
+    out = []
+    for side, want in (spec.get("borders") or {}).items():
+        if want is None:
+            continue
+        have = (got.get("borders") or {}).get(side)
+        if want["style"] == "none":
+            if have:
+                out.append(f"The {side} border is still there: {have}.")
+            continue
+        for key in ("style", "width", "color"):
+            wanted = want.get(key)
+            value = (have or {}).get(key)
+            if wanted is None:
+                continue
+            same = (wanted.lstrip("#").upper() == (value or "").lstrip("#").upper()
+                    if key == "color" else value == wanted)
+            if not same:
+                out.append(f"The {side} border's {key} reads back as {value!r}, not {wanted!r}.")
+    wanted = spec.get("shading")
+    if wanted is not None:
+        have = got.get("shading")
+        if have != (None if wanted == "none" else "#" + wanted.lstrip("#").upper()):
+            out.append(f"shading reads back as {have!r}, not {wanted!r}.")
+    return out
+
+
 def com_read_tab_stops(fmt) -> list:
     """The custom tab stops. TabStops also holds Word's default ones (every
     36 pt after the last custom one, measured on Windows), which
@@ -465,7 +599,8 @@ def mismatches(spec: dict, got: dict, refused: dict) -> list[str]:
     """A sentence for each asked property that reads back otherwise."""
     out = []
     for name, wanted in spec.items():
-        if name in ("line_spacing_rule", "line_spacing", "tab_stops") or name not in got:
+        if name in ("line_spacing_rule", "line_spacing", "tab_stops", "borders", "shading") \
+                or name not in got:
             continue
         have = got[name]
         if isinstance(wanted, str) and isinstance(have, str) and name in ("color",
@@ -599,6 +734,72 @@ def mac_apply(obj, props, spec: dict) -> dict:
                 if step is spec:
                     refused[prop.name] = str(exc).splitlines()[0]
     return refused
+
+
+def _mac_rgb(hex_color: str) -> list[int]:
+    v = hex_color.lstrip("#")
+    return [int(v[i:i + 2], 16) * 257 for i in (0, 2, 4)]
+
+
+def _mac_hex(raw) -> str | None:
+    if isinstance(raw, (list, tuple)) and len(raw) == 3:
+        r, g, b = (round(int(c) / 257) for c in raw)
+        return f"#{r:02X}{g:02X}{b:02X}"
+    return None
+
+
+def mac_apply_borders(owner, borders: dict | None) -> dict:
+    """Set the sides given on a paragraph or a style.
+
+    `get border` answers a border that works from the paragraph or the style.
+    From a paragraph format it answers one that every read refuses (-1728,
+    measured on Word 16 for Mac).
+    """
+    k = _k()
+    refused = {}
+    for side, spec in (borders or {}).items():
+        if spec is None:
+            continue
+        line = owner.get_border(which_border=getattr(k, f"border_{side}"))
+        for key, value in _border_steps(spec, BORDER_WIDTHS_MAC):
+            try:
+                if key == "style":
+                    line.line_style.set(getattr(k, BORDER_STYLES_MAC[value]))
+                elif key == "width":
+                    line.line_width.set(getattr(k, value))
+                else:
+                    line.color.set(_mac_rgb(value))
+            except Exception as exc:  # noqa: BLE001 - reported by name
+                refused[f"borders.{side}.{key}"] = str(exc).splitlines()[0]
+    return refused
+
+
+def mac_read_borders(owner) -> dict:
+    k = _k()
+    out = {}
+    for side in BORDER_SIDES:
+        line = owner.get_border(which_border=getattr(k, f"border_{side}"))
+        style = _name_of(BORDER_STYLES_MAC, _kname(line.line_style.get()))
+        if style != "none":
+            out[side] = {"style": style,
+                         "width": _name_of(BORDER_WIDTHS_MAC, _kname(line.line_width.get())),
+                         "color": _mac_hex(line.color.get())}
+    return out
+
+
+def mac_apply_shading(owner, shading: str | None) -> None:
+    if shading == "none":
+        owner.shading.background_pattern_color_index.set(_k().no_highlight)
+    elif shading is not None:
+        owner.shading.background_pattern_color.set(_mac_rgb(shading))
+
+
+def mac_read_shading(owner) -> str | None:
+    """None when there is no background: the color then reads as black."""
+    shade = owner.shading
+    if shade.background_pattern_color_index.get() == _k().no_highlight:
+        return None
+    return _mac_hex(shade.background_pattern_color.get())
 
 
 def mac_read(obj, props) -> dict:

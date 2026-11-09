@@ -122,6 +122,36 @@ Measured with `scripts/probes/mac_bulk_reads.py` and
 | word_get_paragraphs, 200 of 1,000 paragraphs (`scripts/probes/paragraph_read_speed.py`) | 8.7 s and 12.9 s; with `detail` 19.8 s and 22.0 s | 11.9 s and 11.3 s; with `detail` 55.1 s and 55.3 s, close to the 69 s a call may run, so a read stops itself after 40 s |
 | word_insert_paragraphs, 1,000 paragraphs | 48.6 s, a style set and read back a paragraph at a time; 4.5 s by runs of a style, read back in one call | 57 s the same way; 6.5 s with a style set on each run of paragraphs that share it and the text read back in one call |
 
+## Paragraph borders and background color (Word for Mac 16)
+
+| What | Measured |
+|---|---|
+| `get border` of a paragraph or a style | Works: line style, line width and color can be read and set |
+| `get border` of a paragraph format | Answers a reference, and every read or write of it fails with -1728 |
+| Color | 16-bit channels, as for fonts: `[200, 220, 255]` is black, `[51400, 56540, 65535]` is #C8DCFF |
+| `shading` of a paragraph, its format, its text, or a style | All work and agree |
+| A background taken off | `background pattern color index` set to `no highlight`; the color then reads `[0, 0, 0]`, so the index is what tells |
+
+## Restarting a list's numbering (Word for Mac 16)
+
+A list numbered 1 to 5 alone in a document restarts at the third paragraph
+when `apply list template` with `list apply to this point forward` is given a
+range collapsed at that paragraph's start (1, 2, 1, 2, 3). Given the whole
+paragraph, it restarts the next one: the point is the range's end.
+
+In a document that also has numbered headings, the same steps gave different
+numbers from one identical run to the next, and they stayed that way when read
+again later. A list of four, restarting at the third:
+
+| Method | Results |
+|---|---|
+| Collapsed range, this point forward | 1, 2, 1, 2 in 3 of 8 runs; 3, 4, 1, 2 in 5 of 8 |
+| The rest of the list, `selection` | 1, 2, 1, 2 in 2 of 5 runs; unchanged in 3 of 5 |
+| A new list over the rest (`word_apply_list`) | 1, 2, 1, 2 once; 3, 4, 1, 2 once; 1, 2, 3, 1 three times out of 5 |
+
+So word_restart_numbering refuses on macOS. The last row also means
+`word_apply_list` over part of an existing list is unreliable on the Mac.
+
 ## Numbered headings (Word 16, both platforms)
 
 `scripts/probes/numbered_headings.py`: `word_apply_list` on the first heading

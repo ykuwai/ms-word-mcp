@@ -134,6 +134,8 @@ def _set_paragraph_format_impl(start, end, paragraph):
     refused = P.com_apply(fmt, P.PARAGRAPH_PROPS, spec)
     P.com_apply_line_spacing(fmt, spec.get("line_spacing_rule"), spec.get("line_spacing"))
     P.com_apply_tab_stops(fmt, spec.get("tab_stops"))
+    refused.update(P.com_apply_borders(fmt, spec.get("borders")))
+    P.com_apply_shading(fmt, spec.get("shading"))
     out = []
     warnings = []
     for index, p in paragraphs_in(doc, start, min(end, start + 49)):
@@ -141,8 +143,13 @@ def _set_paragraph_format_impl(start, end, paragraph):
                **P.com_read_line_spacing(p.Format)}
         if "tab_stops" in spec:
             got["tab_stops"] = P.com_read_tab_stops(p.Format)
+        if "borders" in spec:
+            got["borders"] = P.com_read_borders(p.Format)
+        if "shading" in spec:
+            got["shading"] = P.com_read_shading(p.Format)
         if not warnings:
-            warnings = P.mismatches(spec, got, refused) + _tab_mismatch(spec, got)
+            warnings = (P.mismatches(spec, got, refused) + _tab_mismatch(spec, got)
+                        + P.border_mismatches(spec, got))
         out.append({"index": index, "text": clean_text(p.Range.Text)[:80],
                     "style": style_name(p.Style), **paragraph_readback(got, spec)})
     follow(doc, rng)
@@ -292,6 +299,11 @@ def _describe_style(s) -> dict:
             out["paragraph"]["tab_stops"] = P.com_read_tab_stops(fmt)
         except Exception:  # noqa: BLE001
             pass
+        borders, shading = P.com_read_borders(fmt), P.com_read_shading(fmt)
+        if borders:
+            out["paragraph"]["borders"] = borders
+        if shading:
+            out["paragraph"]["shading"] = shading
     return out
 
 
@@ -425,6 +437,8 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
         P.com_apply_line_spacing(fmt, para_spec.get("line_spacing_rule"),
                                  para_spec.get("line_spacing"))
         P.com_apply_tab_stops(fmt, para_spec.get("tab_stops"))
+        para_refused.update(P.com_apply_borders(fmt, para_spec.get("borders")))
+        P.com_apply_shading(fmt, para_spec.get("shading"))
 
     described = _describe_style(s)
     warnings = [f"{k} was refused: {v}" for k, v in refused.items()]
@@ -442,6 +456,7 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
     warnings += P.mismatches(font_spec, described.get("font", {}), font_refused)
     warnings += P.mismatches(para_spec, described.get("paragraph", {}), para_refused)
     warnings += _tab_mismatch(para_spec, described.get("paragraph", {}))
+    warnings += P.border_mismatches(para_spec, described.get("paragraph", {}))
     result = {"success": True, "created": bool(create), "style": described}
     if warnings:
         result["warnings"] = warnings

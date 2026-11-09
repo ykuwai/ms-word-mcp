@@ -239,3 +239,37 @@ def test_bold_and_size_reach_right_to_left_text(make_doc):
     assert doc.attrs[0]["BoldBi"] == -1 and doc.attrs[0]["SizeBi"] == 14
     fmt(1, size=12, size_complex_script=16)
     assert doc.attrs[0]["SizeBi"] == 16
+
+
+def test_a_rule_under_a_paragraph_and_a_background(make_doc):
+    make_doc("one", "two")
+    out = para(1, borders={"bottom": {"style": "single", "width": 1.5, "color": "#1F4E79"}},
+               shading="#DDEEFF")
+    assert "warnings" not in out
+    got = out["paragraphs"][0]
+    assert got["borders"] == {"bottom": {"style": "single", "width": 1.5, "color": "#1F4E79"}}
+    assert got["shading"] == "#DDEEFF"
+
+
+def test_a_border_and_a_background_come_off(make_doc):
+    make_doc("one")
+    para(1, borders={"top": {"style": "double"}}, shading="#DDEEFF")
+    out = para(1, borders={"top": {"style": "none"}}, shading="none")
+    assert "warnings" not in out
+    assert out["paragraphs"][0]["borders"] == {}
+    assert out["paragraphs"][0]["shading"] is None
+
+
+def test_a_style_holds_borders_and_a_background(make_doc):
+    make_doc("one")
+    out = answer(formatting._set_style_impl, "Heading 1", False, None, None, None,
+                 {"borders": {"bottom": {"style": "single", "width": 0.75}}, "shading": "#FFEEDD"},
+                 None, None, None, None)
+    assert "warnings" not in out
+    assert out["style"]["paragraph"]["borders"]["bottom"]["width"] == 0.75
+    assert out["style"]["paragraph"]["shading"] == "#FFEEDD"
+
+
+def test_a_width_word_does_not_have_is_refused():
+    with pytest.raises(ValueError, match="width"):
+        _props.Border(style="single", width=2)

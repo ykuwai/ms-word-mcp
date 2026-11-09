@@ -260,6 +260,7 @@ def run_steps(path: str) -> None:
     run_picture_and_page_steps(Path(path).parent)
     run_review_steps()
     run_heading_number_steps()
+    run_border_steps()
     step("picture of page 1", screen._get_page_image_impl, 1, None,
          check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)
     step("picture of the page a paragraph is on", screen._get_page_image_impl, None, 5,
@@ -363,6 +364,24 @@ def run_heading_number_steps() -> None:
              [{"text": "Later", "style": "Heading 2"}], None, None, undo="Insert paragraphs")
         step("and reads 2.2", lists._get_list_impl, 7,
              check=lambda o: o["paragraph"].get("list_string") == "2.2")
+        step("a numbered list after the headings", text._insert_paragraphs_impl,
+             [{"text": t, "style": "Normal"} for t in ("a", "b", "c", "d")], None, None,
+             undo="Insert paragraphs")
+        step("numbered 1 to 4", lists._apply_list_impl, 8, 11,
+             [{"level": 1, "number_style": "arabic", "number_format": "%1."}], None, False,
+             undo="Apply list", check=lambda o: o["paragraphs"][3]["list_string"] == "4.")
+        if backend.IS_MACOS:
+            step("starting over is refused on the Mac", lists._restart_numbering_impl, 10,
+                 check=lambda o: "Nothing was changed" in o.get("error", ""))
+        else:
+            step("start over at the third", lists._restart_numbering_impl, 10,
+                 undo="Restart numbering",
+                 check=lambda o: "warnings" not in o and o["paragraph"]["list_string"] == "1."
+                 and o["next"]["list_string"] == "2.")
+        step("the ones before keep their numbers", lists._get_list_impl, 9,
+             check=lambda o: o["paragraph"]["list_string"] == "2.")
+        step("the headings keep theirs", lists._get_list_impl, 7,
+             check=lambda o: o["paragraph"]["list_string"] == "2.2")
         limit = text.READ_SECONDS
         text.READ_SECONDS = -1.0
         try:
@@ -372,6 +391,44 @@ def run_heading_number_steps() -> None:
         finally:
             text.READ_SECONDS = limit
         step("close the document of numbered headings", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_border_steps() -> None:
+    """Paragraph borders and background colors, directly and through a style."""
+    other = step("a document for borders", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("three paragraphs", text._insert_paragraphs_impl,
+                    [{"text": "ruled", "style": None}, {"text": "plain", "style": None},
+                     {"text": "styled", "style": "Heading 1"}], None, None)
+        if "error" in made:
+            return
+        rule = {"style": "single", "width": 1.5, "color": "#1F4E79"}
+        step("a rule under a paragraph, and a background", formatting._set_paragraph_format_impl,
+             1, 1, {"borders": {"bottom": rule}, "shading": "#DDEEFF"}, undo="Paragraph format",
+             check=lambda o: "warnings" not in o and o["paragraphs"][0]["borders"]["bottom"] == rule
+             and o["paragraphs"][0]["shading"] == "#DDEEFF")
+        step("the next paragraph is untouched", formatting._set_paragraph_format_impl, 2, 2,
+             {"borders": {"bottom": {"style": "none"}}, "shading": "none"}, undo="Paragraph format",
+             check=lambda o: "warnings" not in o and o["paragraphs"][0]["borders"] == {}
+             and o["paragraphs"][0]["shading"] is None)
+        step("a border and a background come off", formatting._set_paragraph_format_impl, 1, 1,
+             {"borders": {"bottom": {"style": "none"}}, "shading": "none"}, undo="Paragraph format",
+             check=lambda o: "warnings" not in o and o["paragraphs"][0]["borders"] == {}
+             and o["paragraphs"][0]["shading"] is None)
+        double = {"style": "double", "width": 0.75, "color": "#C00000"}
+        step("a style holds a border and a background", formatting._set_style_impl,
+             "Heading 1", False, None, None, None,
+             {"borders": {"top": double}, "shading": "#FFEEDD"}, None, None, None, None,
+             undo="Set style",
+             check=lambda o: "warnings" not in o
+             and o["style"]["paragraph"]["borders"]["top"] == double
+             and o["style"]["paragraph"]["shading"] == "#FFEEDD")
+        step("close the document of borders", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
 

@@ -43,7 +43,7 @@ every tool instead.
 | Writing | `word_insert_paragraphs`, `word_set_paragraph_text`, `word_delete_paragraphs`, `word_find_replace` |
 | Formatting | `word_format_text`, `word_set_paragraph_format` |
 | Styles | `word_apply_style`, `word_list_styles`, `word_get_style`, `word_set_style` |
-| Lists | `word_apply_list`, `word_set_list_level`, `word_remove_list`, `word_get_list` |
+| Lists | `word_apply_list`, `word_set_list_level`, `word_restart_numbering`, `word_remove_list`, `word_get_list` |
 | Tables | `word_insert_table`, `word_list_tables`, `word_get_table`, `word_set_table`, `word_set_table_cells`, `word_format_table_cells`, `word_insert_table_rows`, `word_delete_table_rows`, `word_insert_table_columns` (Windows), `word_delete_table_columns`, `word_merge_table_cells`, `word_delete_table` |
 | Pictures, captions, cross-references | `word_insert_picture`, `word_list_pictures`, `word_set_picture`, `word_insert_caption`, `word_list_captions`, `word_insert_cross_reference` |
 | The page | `word_get_page_setup`, `word_set_page_setup` (paper, margins, columns, document grid, vertical text), `word_get_headers_footers`, `word_set_header_footer`, `word_set_page_numbers`, `word_add_ruby` (furigana) |
