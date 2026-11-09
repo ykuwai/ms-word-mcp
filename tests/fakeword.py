@@ -466,11 +466,92 @@ class FakeNotes:
         return note
 
 
+class FakeHyperlink:
+    def __init__(self, links, rng, address, sub):
+        self.links, self.Range, self._address, self.SubAddress = links, rng, address, sub
+        self.ScreenTip = ""
+
+    @property
+    def Address(self):
+        return self._address
+
+    @Address.setter
+    def Address(self, value):
+        if value:  # Word keeps the address when it is set to "" (measured)
+            self._address = value
+
+    @property
+    def TextToDisplay(self):
+        return self.Range.Text
+
+    @TextToDisplay.setter
+    def TextToDisplay(self, value):
+        self.Range.Text = value
+
+    def Delete(self):
+        self.links.items.remove(self)
+
+
+class FakeHyperlinks:
+    def __init__(self):
+        self.items = []
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def Item(self, number):
+        return sorted(self.items, key=lambda h: h.Range.Start)[number - 1]
+
+    def Add(self, anchor, address, sub):
+        link = FakeHyperlink(self, anchor, address, sub)
+        self.items.append(link)
+        return link
+
+
+class FakeBookmark:
+    def __init__(self, marks, name, rng):
+        self.marks, self.Name, self.Range = marks, name, rng
+
+    @property
+    def Start(self):
+        return self.Range.Start
+
+    @property
+    def Empty(self):
+        return self.Range.Start == self.Range.End
+
+    def Delete(self):
+        del self.marks.items[self.Name]
+
+
+class FakeBookmarks:
+    """Sorted by name, as Word's own collection is by default."""
+
+    def __init__(self):
+        self.items = {}
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def Exists(self, name):
+        return name in self.items
+
+    def Item(self, key):
+        return self.items[key] if isinstance(key, str) else self.items[sorted(self.items)[key - 1]]
+
+    def Add(self, name, rng):
+        self.items[name] = FakeBookmark(self, name, rng)
+
+
 class FakeDocument:
     def __init__(self, paragraphs=("",), name="Doc1.docx", path="C:\\docs",
                  styles=None):
         self.Footnotes = FakeNotes(self)
         self.Endnotes = FakeNotes(self)
+        self.Hyperlinks = FakeHyperlinks()
+        self.Bookmarks = FakeBookmarks()
         self.Name = name
         self.Path = path
         self.FullName = f"{path}\\{name}" if path else name

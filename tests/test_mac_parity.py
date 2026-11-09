@@ -3,12 +3,12 @@
 import inspect
 
 from ms_word_mcp.tools import (  # noqa: F401
-    _common, documents, edit, equations, fields, formatting, lists, mac, notes, page, references, screen, tables,
+    _common, documents, edit, equations, fields, formatting, links, lists, mac, notes, page, references, screen, tables,
     text, view)
 
 
 def _com_impls():
-    for module in (documents, edit, equations, fields, formatting, lists, notes, page, references, screen,
+    for module in (documents, edit, equations, fields, formatting, links, lists, notes, page, references, screen,
                    tables, text, view):
         for name, value in vars(module).items():
             if name.startswith("_") and name.endswith("_impl") and callable(value):
