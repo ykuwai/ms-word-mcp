@@ -23,8 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from ms_word_mcp import backend  # noqa: E402
 from ms_word_mcp.backend import call_document  # noqa: E402
 from ms_word_mcp.tools import (  # noqa: E402
-    _common, documents, edit, equations, fields, formatting, lists, notes, page, references,
-    screen, tables, text)
+    _common, documents, edit, equations, fields, formatting, links, lists, notes, page,
+    references, screen, tables, text)
 
 results: list[tuple[str, bool]] = []
 
@@ -262,6 +262,7 @@ def run_steps(path: str) -> None:
     run_heading_number_steps()
     run_border_steps()
     run_note_steps()
+    run_link_steps()
     step("picture of page 1", screen._get_page_image_impl, 1, None,
          check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)
     step("picture of the page a paragraph is on", screen._get_page_image_impl, None, 5,
@@ -480,6 +481,80 @@ def run_note_steps() -> None:
         step("and the deleted mark is gone", text._get_paragraphs_impl, 1, 1, False,
              check=lambda o: o["paragraphs"][0]["text"] == "Alpha beta gamma.\x02")
         step("close the document of notes", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_link_steps() -> None:
+    """Hyperlinks to addresses and bookmarks, and the user's own bookmarks."""
+    other = step("a document for links", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    url = "https://example.com/a?b=1&c=2"
+    try:
+        made = step("two paragraphs for links", text._insert_paragraphs_impl,
+                    [{"text": "Alpha beta gamma.", "style": "Normal"},
+                     {"text": "日本語の本文です。", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        step("a bookmark over Japanese text", links._add_bookmark_impl, "本文_1", 2, "本文",
+             undo="Add bookmark",
+             check=lambda o: (o["name"], o["index"], o["text"], o["empty"])
+             == ("本文_1", 2, "本文", False) and "note" not in o)
+        step("a bookmark over a whole paragraph", links._add_bookmark_impl, "Whole", 1, None,
+             undo="Add bookmark", check=lambda o: o["text"] == "Alpha beta gamma.")
+        step("the same name moves it, and says so", links._add_bookmark_impl, "Whole", 2, None,
+             undo="Add bookmark",
+             check=lambda o: o["index"] == 2 and "moved" in o["note"])
+        step("bookmarks in the order of the text", links._list_bookmarks_impl,
+             check=lambda o: sorted(b["name"] for b in o["bookmarks"]) == ["Whole", "本文_1"])
+        step("a link over some text", links._insert_hyperlink_impl, 1, url, None, "gamma", None,
+             None, undo="Insert hyperlink",
+             check=lambda o: (o["number"], o["index"], o["text"], o["address"])
+             == (1, 1, "gamma", url))
+        step("a link before it takes number 1, past a field", links._insert_hyperlink_impl, 1,
+             "https://example.com/b", None, "beta", None, "A tip", undo="Insert hyperlink",
+             check=lambda o: (o["number"], o["text"], o["screen_tip"]) == (1, "beta", "A tip"))
+        step("a new link at the end, to a bookmark", links._insert_hyperlink_impl, 1, None,
+             "本文_1", None, " 続き", None, undo="Insert hyperlink",
+             check=lambda o: (o["number"], o["text"], o["address"], o["bookmark"])
+             == (3, " 続き", None, "本文_1"))
+        step("the paragraph reads as text", text._get_paragraphs_impl, 1, 1, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "Alpha beta gamma. 続き")
+        step("a bookmark that is not there is refused", links._insert_hyperlink_impl, 2, None,
+             "Nope", None, None, None, check=lambda o: "no bookmark named 'Nope'" in o["error"])
+        step("the links in order", links._list_hyperlinks_impl, 1, 100,
+             check=lambda o: [h["text"] for h in o["hyperlinks"]] == ["beta", "gamma", " 続き"])
+        step("a link's address, text and tip change", links._set_hyperlink_impl, 2,
+             "https://example.com/new", None, "GAMMA", "New tip", undo="Change hyperlink",
+             check=lambda o: (o["address"], o["text"], o["screen_tip"])
+             == ("https://example.com/new", "GAMMA", "New tip"))
+        step("a tip comes off", links._set_hyperlink_impl, 2, None, None, None, "",
+             undo="Change hyperlink", check=lambda o: o["screen_tip"] is None)
+        step("a bookmark link goes to an address", links._set_hyperlink_impl, 3,
+             "https://example.com/z", None, None, None, undo="Change hyperlink",
+             check=lambda o: (o["address"], o["bookmark"]) == ("https://example.com/z", None))
+        if backend.IS_MACOS:
+            step("on the Mac an address link cannot become a bookmark link",
+                 links._set_hyperlink_impl, 1, None, "Whole", None, None,
+                 check=lambda o: "On macOS" in o["error"])
+        else:
+            step("an address link becomes a bookmark link", links._set_hyperlink_impl, 1, None,
+                 "Whole", None, None, undo="Change hyperlink",
+                 check=lambda o: (o["address"], o["bookmark"]) == (None, "Whole"))
+        step("a link comes off, its text stays", links._remove_hyperlink_impl, 2,
+             undo="Remove hyperlink",
+             check=lambda o: (o["removed"], o["text_kept"], o["left"]) == (2, "GAMMA", 2))
+        step("and the paragraph still reads the same", text._get_paragraphs_impl, 1, 1, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "Alpha beta GAMMA. 続き")
+        step("a link that is not there is refused", links._remove_hyperlink_impl, 9,
+             check=lambda o: "There is no hyperlink 9" in o["error"])
+        step("a bookmark is deleted", links._delete_bookmark_impl, "Whole",
+             undo="Delete bookmark", check=lambda o: (o["deleted"], o["left"]) == ("Whole", 1))
+        step("a bookmark that is not there is refused", links._delete_bookmark_impl, "Whole",
+             check=lambda o: "no bookmark named 'Whole'" in o["error"])
+        step("close the document of links", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
 

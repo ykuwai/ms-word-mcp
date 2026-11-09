@@ -256,3 +256,22 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | With another document active | Not measured | Works, and the active document stays the same |
 | A note emptied | | `content` answers missing value |
 | Styles | | The note takes Footnote Text, its mark Footnote Reference |
+
+## Hyperlinks and bookmarks (Word 16)
+
+Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
+`scripts/live_check.py` and `scripts/probes/hyperlink_removal.py`.
+
+| What | Windows | Mac |
+|---|---|---|
+| Making a link | `Hyperlinks.Add(anchor, address, sub_address)`, `""` for the one not used | `make new hyperlink object at document with properties {text object, hyperlink address or sub address}` |
+| The Hyperlink style | | The visible text takes it |
+| Order of the links | | By place in the text |
+| Counting links in a range | | `count range each hyperlink object` answers 0 whatever is in the range |
+| Emptying the address | `Address = ""` | Setting `""` leaves it as it was, so a link to an address cannot become a link to a bookmark |
+| Removing a link | `Hyperlink.Delete`: the text stays | `delete`: the text stays, and goes from Hyperlink back to Normal |
+| A bookmark's name again | `Bookmarks.Add` moves it | `make new bookmark` moves it |
+| A name with a space | | -1708 (refused by the tool before it reaches Word) |
+| Hidden bookmarks (`_...`) | Not in `Bookmarks` unless `ShowHidden` | Not counted |
+| Order of the bookmarks | By name unless asked; the tool sorts by place | The tool sorts by place |
+
