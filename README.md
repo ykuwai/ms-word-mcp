@@ -48,6 +48,7 @@ every tool instead.
 | Pictures, captions, cross-references | `word_insert_picture`, `word_list_pictures`, `word_set_picture`, `word_insert_caption`, `word_list_captions`, `word_insert_cross_reference` |
 | The page | `word_get_page_setup`, `word_set_page_setup` (paper, margins, columns, document grid, vertical text), `word_get_headers_footers`, `word_set_header_footer`, `word_set_page_numbers`, `word_add_ruby` (furigana) |
 | Equations | `word_insert_equation`, `word_list_equations`, `word_get_equation` |
+| Footnotes and endnotes | `word_insert_note`, `word_list_notes`, `word_set_note`, `word_delete_note` |
 | Fields and tables of contents | `word_insert_table_of_contents`, `word_insert_field`, `word_list_fields`, `word_update_fields` |
 | View | `word_get_view`, `word_set_view` |
 | Seeing a page | `word_get_page_image`: a picture of a page as Word lays it out, so the model can check the layout |
