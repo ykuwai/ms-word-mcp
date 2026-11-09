@@ -253,9 +253,9 @@ def _set_picture_impl(picture, width, height, alignment, alt_text, spec):
     shape = _shape(doc, picture)
     if "wrap" in spec:
         _check_name(doc, spec.get("name"))
-    warnings = _apply_picture(doc, shape, width, height, alignment, alt_text)
-    if any(side in spec for side in CROPS):
+    if any(side in spec for side in CROPS):  # first: if it is refused, nothing else has changed
         crop_picture(shape, spec)
+    warnings = _apply_picture(doc, shape, width, height, alignment, alt_text)
     if "wrap" in spec:
         out = float_picture(doc, shape, {k: v for k, v in spec.items() if k not in CROPS})
         if warnings:
@@ -463,9 +463,9 @@ def _mac_set_picture(picture, width, height, alignment, alt_text, spec):
     shape = _mac_shape(doc, picture)
     if "wrap" in spec:
         _mac_check_name(doc, spec.get("name"))
-    warnings = _mac_apply_picture(doc, shape, width, height, alignment, alt_text)
-    if any(side in spec for side in CROPS):
+    if any(side in spec for side in CROPS):  # first: if it is refused, nothing else has changed
         mac_crop_picture(shape, spec)
+    warnings = _mac_apply_picture(doc, shape, width, height, alignment, alt_text)
     if "wrap" in spec:
         out = mac_float_picture(doc, picture, {k: v for k, v in spec.items() if k not in CROPS})
         if warnings:

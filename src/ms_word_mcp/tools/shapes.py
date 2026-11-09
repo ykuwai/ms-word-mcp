@@ -471,8 +471,10 @@ def apply_crop(spec: dict, read, write, size) -> None:
     Word counts a crop against the picture's own size, so one shown at twice
     that loses 10 points for a crop of 5 (measured on both platforms). The
     scale cannot be read anywhere, so it is measured: a small crop, the
-    change in the frame, and the crop put back.
+    change in the frame, and the crop put back. Both directions are checked
+    before either is cropped.
     """
+    planned = []
     for axis, sides in (("width", CROPS[:2]), ("height", CROPS[2:])):
         given = [side for side in sides if side in spec]
         if not given:
@@ -490,8 +492,9 @@ def apply_crop(spec: dict, read, write, size) -> None:
         if wanted >= whole - 1:
             raise ValueError(f"Those crops leave nothing of the picture: it is {whole:g} pt "
                              "across before cropping. Nothing was cropped.")
-        for side in given:
-            write(side, spec[side] / scale)
+        planned += [(side, spec[side] / scale) for side in given]
+    for side, value in planned:
+        write(side, value)
 
 
 NOT_FOUND = "There is no shape named '{name}'. word_list_shapes lists them."
@@ -699,11 +702,11 @@ def _crop(s, spec: dict, kind: str) -> None:
 
 def _apply(s, spec: dict, kind: str) -> list[str]:
     _check_text_allowed(kind, spec)
+    _crop(s, spec, kind)  # first: if it is refused, nothing else has changed
     warnings = []
     if "kind" in spec:
         s.AutoShapeType = KINDS[spec["kind"]]
     _place(s, spec)
-    _crop(s, spec, kind)
     if "rotation" in spec:
         s.Rotation = spec["rotation"]
     if "corner_radius" in spec:
@@ -1095,14 +1098,14 @@ def _mac_apply(s, spec: dict, kind: str) -> list[str]:
     from appscript import k
 
     _check_text_allowed(kind, spec)
+    if any(side in spec for side in CROPS):  # first: if it is refused, nothing else has changed
+        if kind not in ("picture", "linked_picture"):
+            raise ValueError(NOT_A_PICTURE.format(kind=kind))
+        mac_crop_picture(s, spec)
     warnings = []
     if "kind" in spec:
         s.auto_shape_type.set(_mac_kind(spec["kind"]))
     _mac_place(s, spec)
-    if any(side in spec for side in CROPS):
-        if kind not in ("picture", "linked_picture"):
-            raise ValueError(NOT_A_PICTURE.format(kind=kind))
-        mac_crop_picture(s, spec)
     if "rotation" in spec:
         s.rotation_.set(spec["rotation"])
     if "corner_radius" in spec:

@@ -338,6 +338,26 @@ def test_crops_that_leave_nothing_are_refused(make_doc, picture):
     assert doc.Shapes.Item(1).Width == 90.0
 
 
+def test_one_crop_too_many_leaves_the_other_undone(make_doc, picture):
+    doc = make_doc("One.")
+    name = floating(picture)["name"]
+    out = answer(shapes._set_shape_impl, name, {"crop_left": 10.0, "crop_top": 100.0})
+    assert "leave nothing" in out["error"]
+    assert (doc.Shapes.Item(1).Width, doc.Shapes.Item(1).Height) == (90.0, 45.0)
+
+
+def test_a_refused_crop_changes_nothing_else(make_doc, picture):
+    doc = make_doc("One.")
+    name = floating(picture, left=10.0, name="Pic")["name"]
+    out = answer(shapes._set_shape_impl, name, {"crop_left": 500.0, "left": 40.0, "rotation": 9.0})
+    assert "leave nothing" in out["error"]
+    assert (doc.Shapes.Item(1).Left, doc.Shapes.Item(1).Rotation) == (10.0, 0.0)
+    answer(references._insert_picture_impl, picture, None, None, None, None, None, None)
+    out = answer(references._set_picture_impl, 1, 60.0, None, None, "Alt", {"crop_left": 500.0})
+    assert "leave nothing" in out["error"]
+    assert (doc.InlineShapes.Item(1).Width, doc.InlineShapes.Item(1).AlternativeText) == (90.0, "")
+
+
 def test_only_a_picture_is_cropped(make_doc):
     make_doc("One.")
     add(name="Box")
