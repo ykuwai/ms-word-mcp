@@ -275,3 +275,34 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | Hidden bookmarks (`_...`) | Not in `Bookmarks` unless `ShowHidden`, so the tools leave them out by name | Not counted |
 | Order of the bookmarks | By name unless asked; the tool sorts by place | The tool sorts by place |
 
+## Floating shapes (Word 16, both platforms)
+
+`scripts/probes/shapes_windows.py`, `scripts/probes/mac_shapes.py`,
+`scripts/probes/mac_floating_pictures.py`, `scripts/probes/shape_kinds.py`,
+`scripts/probes/shape_look.py` (a picture of the page to look at).
+
+| What | Windows | Mac |
+|---|---|---|
+| The collection | Runs in z-order; `ZOrder` and leaving in-line change it. | The same. |
+| Two shapes with one name | Allowed; `Shapes.Item(name)` answers the first. | The same. |
+| Making one | `AddShape(type, left, top, w, h, Anchor)`, `AddTextbox`, `AddLine`, the same `Anchor` at the end, which the page omits | `make new shape at document with properties {..., anchor: range}`, likewise `text box` and `line shape`. Made `at` a range or paragraph: -1708. The answer can point at another shape (`text_boxes[4]`, `shapes[1]`): found by the name that was not there. |
+| The numbers given when making | Taken as measured from the page, turned into offsets from column and paragraph | Shape and line keep the numbers as given, a text box is converted. So: make, then set what it is measured from, then the position. |
+| Default place, wrap | Relative to column and paragraph, `wrap` 3 (in front) | The same |
+| Changing what it is measured from | The shape stays where it is on the page, its numbers change | The same |
+| An anchor | **Takes one position in the text that `Range.Text` does not show** (a paragraph of 22 characters spans 23 positions; by offset, one off). At the start of the paragraph for a paragraph's range; where given for a collapsed one. | The same. |
+| Rewriting a paragraph | Not measured apart from the live check, which passes from past the anchor | The whole range takes the anchor and its shape with it, silently; from past the anchor, it stays. |
+| Deleting its paragraph | The shape goes | The same |
+| Wrap in line, a drawn shape | `WrapFormat.Type = 7` holds; stays in `Shapes` | The same. `ConvertToInlineShape` answers an object and leaves it in `Shapes`. |
+| A line drawn backwards | `AddLine(300, 400, 50, 350)`: box at 50, 350 with both flips | Box at 300, 400 with both flips, wrong; setting left and top puts it right, the arrow still pointing the right way |
+| Colors | BGR integer | 16-bit lists; 8-bit values read back as near black |
+| Dash | `Line.DashStyle` | `dash style`, in appscript `dash_style_` |
+| Rotation | `Rotation` | In appscript `rotation_` |
+| Alternative text | Yes | `alternative text` is not a property of `shape`; read answers missing value, set -1708 |
+| Vertical anchor, auto size, word wrap of a text frame | Yes | Unknown property or missing value |
+| Vertical text | `TextFrame.Orientation = 4` | `vertical east asian`, code 4; upright kana, Latin on its side ([shape-look](probes/shape_look.py)) |
+| Whether the text fits | `TextFrame.Overflowing` answered True for an empty shape and for two lines of 9 pt in a 60 pt high shape, so it is not used | `overflowing` agrees with the page; `has text` is true for an empty shape, so the text is read instead |
+| A line's text frame | Touching `TextRange` is refused, even to read | Read answers nothing |
+| Undo | One undo takes a new shape back (live check) | Two undos did not take a new shape back |
+| Document not active | Works, active document unchanged | Works, active document unchanged |
+| A table cell, a later page | Works; `LayoutInCell` -1 | Works |
+| Kinds | 177 of 181 read back as themselves. `line callout two` reads as `one`; `line callout one no border` and `two no border` read as `one accent bar`; `callout one border and accent bar` reads as `line callout one`. `balloon` reads back as `rounded rectangular callout`, so it is taken as that name. | The same 177 of 181, the same four. |

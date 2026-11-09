@@ -1431,6 +1431,17 @@ Reading a list back: `ListFormat.ListType` (WdListType: wdListBullet 2, wdListPi
 - ListFormat.ApplyOutlineNumberDefault "doesn't remove built-in heading styles that have been applied to paragraphs" (https://learn.microsoft.com/en-us/office/vba/api/word.listformat.applyoutlinenumberdefault).
 - Toggles: ApplyBulletDefault and ApplyNumberDefault **remove** the list if the paragraphs already have one ("If the paragraphs are already formatted with bullets, this method removes the bullets and formatting", https://learn.microsoft.com/en-us/office/vba/api/word.listformat.applybulletdefault). Use `RemoveNumbers(NumberType?)` to remove a list explicitly (https://learn.microsoft.com/en-us/office/vba/api/word.listformat.removenumbers).
 
+## D.3 Shapes (floating)
+
+Pages: [Shapes](https://learn.microsoft.com/en-us/office/vba/api/word.shapes), [Shape](https://learn.microsoft.com/en-us/office/vba/api/word.shape), [Shapes.AddShape](https://learn.microsoft.com/en-us/office/vba/api/word.shapes.addshape), [Shapes.AddTextbox](https://learn.microsoft.com/en-us/office/vba/api/word.shapes.addtextbox), [Shapes.AddLine](https://learn.microsoft.com/en-us/office/vba/api/word.shapes.addline), [WrapFormat](https://learn.microsoft.com/en-us/office/vba/api/word.wrapformat), [WdWrapType](https://learn.microsoft.com/en-us/office/vba/api/word.wdwraptype), [WdRelativeHorizontalPosition](https://learn.microsoft.com/en-us/office/vba/api/word.wdrelativehorizontalposition), [WdRelativeVerticalPosition](https://learn.microsoft.com/en-us/office/vba/api/word.wdrelativeverticalposition), [WdShapePosition](https://learn.microsoft.com/en-us/office/vba/api/word.wdshapeposition), [Shape.ZOrder](https://learn.microsoft.com/en-us/office/vba/api/word.shape.zorder), [TextFrame](https://learn.microsoft.com/en-us/office/vba/api/word.textframe), [MsoAutoShapeType](https://learn.microsoft.com/en-us/office/vba/api/office.msoautoshapetype).
+
+- "A shape is always attached to an anchoring range", "anchored to the beginning of the first paragraph that contains the anchoring range", and "will always remain on the same page as its anchor" (Shape). Measured: a collapsed anchor inside a paragraph stays where it was given (docs/PROBES.md).
+- `Shapes.Count` is the main story only; `Shapes` does not include InlineShape objects (Shapes).
+- The pages for AddShape, AddTextbox and AddLine leave out the final `Anchor` argument. It works (measured, both platforms).
+- WdWrapType: inline 7, none 3, square 0, through 2, tight 1, top-bottom 4, behind 5, front 3.
+- WdShapePosition: bottom -999997, center -999995, inside -999994, left -999998, outside -999993, right -999996, top -999999.
+- ConvertToInlineShape: "You can convert only shapes that represent pictures, OLE objects, or ActiveX controls"; on a drawn shape, measured, it answers an object and the shape stays in `Shapes`.
+
 ## E. Behaviour questions
 
 | Question | What the documentation says | Source URL |

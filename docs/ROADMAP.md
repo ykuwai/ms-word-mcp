@@ -61,6 +61,13 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
 - Hyperlinks to an address or a bookmark, over some text or as new text; list,
   change and remove them. The user's own bookmarks: add, list, delete.
 
+- Floating shapes: the shapes of Word's gallery, text boxes (vertical text too),
+  lines and arrows, anchored to a paragraph; placed from the page, the margins or
+  the paragraph, by points or by name (center, right...); text wrap including
+  behind and in front of the text, order among shapes, fill, outline, rotation,
+  and text inside with the same font settings as the body. Listed in reading
+  order with their text. Rewriting a paragraph keeps a shape anchored at its start.
+
 - Pictures in line with the text, numbered captions under any label in any
   language, live cross-references to captions, equations and headings.
 - The page: paper, margins, columns, document grid, vertical text; headers,
@@ -99,14 +106,16 @@ Then, ordered roughly by what the owner stressed.
 3. **Equations, the rest.** Inline equations inside a paragraph,
    chapter-style numbers (2.1) with STYLEREF, cross-references to equations,
    editing an equation in place.
-4. **Figures and tables, the rest.** Floating pictures, cropping, a list of
+4. **Figures and tables, the rest.** A list of
    figures, numbers with the chapter (2.1); splitting cells, sorting, table
    borders one side at a time.
-5. **Japanese typography, the rest.** Removing ruby outright, vertical text
-   in part of a page (text boxes), tate-chu-yoko.
+5. **Japanese typography, the rest.** Removing ruby outright, tate-chu-yoko.
 6. **View.** Zoom (percentage, page width, whole page), view type, follow
    edits in a second window.
-7. Adding sections (section breaks); a header of several paragraphs.
+7. Shapes, the rest. Pictures that float (a picture out of the text and back),
+   cropping; grouping; shapes in headers and footers; moving a shape to another
+   paragraph.
+8. Adding sections (section breaks); a header of several paragraphs.
 9. Comments and tracked changes; spelling and a document health check.
 10. Page previews.
 

@@ -13,6 +13,7 @@ from pydantic import Field, model_validator
 
 from .. import backend
 from ._common import DESTRUCTIVE, READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow
+from .shapes import leading_anchors
 from ._word import (
     WD_COLLAPSE_END, WD_FIND_STOP, WD_OUTLINE_BODY,
     WD_STATISTIC_CHARACTERS, WD_STATISTIC_PAGES, WD_STATISTIC_WORDS,
@@ -314,19 +315,34 @@ class SetParagraphTextInput(Input):
         return self
 
 
+def lost_shapes(count: int) -> list[str]:
+    """A warning when floating shapes went with the text they were anchored in."""
+    if count <= 0:
+        return []
+    return [f"{count} floating shape(s) anchored in this text went with it: word_undo brings "
+            "them back on Windows; on the Mac insert them again."]
+
+
 def _set_paragraph_text_impl(index: int, text: str):
     doc = backend.word.document()
     p = paragraph(doc, index)
     rng = p.Range
     old = clean_text(rng.Text)
-    target = doc.Range(rng.Start, rng.End - 1)  # a field hides its code from the text
+    shapes = doc.Shapes.Count
+    hidden = max(0, rng.End - rng.Start - len(rng.Text.encode("utf-16-le")) // 2)
+    # A shape anchored at the paragraph's start stays; its anchor is not text.
+    kept = leading_anchors(doc, rng.Start, rng.End, hidden)
+    target = doc.Range(rng.Start + kept, rng.End - 1)  # a field hides its code from the text
     target.Text = text.replace("\n", "\v")
     p = paragraph(doc, index)
     info = paragraph_info(index, p)
     follow(doc, p.Range)
     result = {"success": True, "paragraph": info, "was": old}
+    warnings = lost_shapes(shapes - doc.Shapes.Count)
     if info["text"] != text.replace("\n", "\v"):
-        result["warnings"] = [f"It reads back as {info['text']!r}."]
+        warnings.append(f"It reads back as {info['text']!r}.")
+    if warnings:
+        result["warnings"] = warnings
     return result
 
 
@@ -339,6 +355,7 @@ def _delete_paragraphs_impl(start: int, end: int | None):
     doc = backend.word.document()
     start, end = check_span(doc, start, end)
     before = doc.Paragraphs.Count
+    shapes = doc.Shapes.Count
     removed = [clean_text(p.Range.Text) for _, p in paragraphs_in(doc, start, end)]
     first = paragraph(doc, start).Range.Start
     last = paragraph(doc, end).Range.End
@@ -350,10 +367,13 @@ def _delete_paragraphs_impl(start: int, end: int | None):
     after = doc.Paragraphs.Count
     result = {"success": True, "deleted": end - start + 1, "texts": removed,
               "paragraphs": after}
+    warnings = lost_shapes(shapes - doc.Shapes.Count)
     if before - after != end - start + 1:
-        result["warnings"] = [
+        warnings.append(
             f"The document went from {before} to {after} paragraphs, not "
-            f"{before - (end - start + 1)}. Read it back with word_get_paragraphs."]
+            f"{before - (end - start + 1)}. Read it back with word_get_paragraphs.")
+    if warnings:
+        result["warnings"] = warnings
     if after:
         follow(doc, paragraph(doc, min(start, after)).Range)
     return result

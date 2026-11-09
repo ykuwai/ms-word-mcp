@@ -227,7 +227,8 @@ user to stop typing.
 4. Lists (`word_apply_list`), tables (`word_insert_table` with all the
    cells at once), footnotes and endnotes (`word_insert_note`), links
    (`word_insert_hyperlink`), equations (`word_insert_equation`, LaTeX or UnicodeMath,
-   `numbered` for (1), (2)...), fields and tables of contents.
+   `numbered` for (1), (2)...), floating shapes (`word_insert_shape`,
+   `word_insert_text_box`, `word_insert_line`), fields and tables of contents.
    Insert a table of contents last, since it adds paragraphs above the rest.
 5. Look at the result: `word_get_page_image` shows a page as Word lays it
    out. Use it after layout changes, equations and lists; reading the text
@@ -283,10 +284,10 @@ mainly Latin document. East Asian layouts measure spacing in grid lines
 mcp = WordServer("ms_word_mcp", lifespan=app_lifespan, instructions=INSTRUCTIONS)
 
 from .tools import (  # noqa: E402,F401 - mac registers the Mac halves
-    documents, edit, equations, fields, formatting, links, lists, mac, notes, page, references, screen,
+    documents, edit, equations, fields, formatting, links, lists, mac, notes, page, references, screen, shapes,
     tables, text, view)
 
-for module in (documents, text, formatting, lists, tables, references, notes, links, equations,
+for module in (documents, text, formatting, lists, tables, references, shapes, notes, links, equations,
                fields, page, view, screen, edit):
     module.register(mcp)
 
@@ -396,6 +397,7 @@ def summary(description):
 AREAS = {"documents": "Documents", "text": "Reading and writing text",
          "formatting": "Formatting and styles", "lists": "Lists", "tables": "Tables",
          "references": "Pictures, captions and cross-references",
+         "shapes": "Floating shapes, text boxes and lines",
          "notes": "Footnotes and endnotes", "links": "Hyperlinks and bookmarks",
          "page": "The page: setup, vertical text, headers, footers, ruby",
          "equations": "Equations", "fields": "Fields and tables of contents",

@@ -346,6 +346,15 @@ class FakeRange:
         self.search_end = self.doc.end_of_content
 
     @property
+    def Sections(self):
+        setup = SimpleNamespace(PageWidth=595.3, PageHeight=841.9, LeftMargin=85.05,
+                                TopMargin=99.25)
+        return SimpleNamespace(Item=lambda i: SimpleNamespace(PageSetup=setup))
+
+    def Information(self, kind):
+        return 1
+
+    @property
     def Font(self):
         return FakeFont(self)
 
@@ -545,9 +554,125 @@ class FakeBookmarks:
         self.items[name] = FakeBookmark(self, name, rng)
 
 
+class FakeTextRange:
+    """The text in a shape: its own little story."""
+
+    def __init__(self, frame):
+        self.frame = frame
+        self.Font = AttrBag(Name="", Size=11.0)
+        self.ParagraphFormat = AttrBag(Alignment=0)
+
+    @property
+    def Text(self):
+        return self.frame.text
+
+    @Text.setter
+    def Text(self, value):
+        self.frame.text = value + "\r"
+
+
+class AttrBag:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+class FakeTextFrame:
+    def __init__(self):
+        self.text = "\r"
+        self.TextRange = FakeTextRange(self)
+        self.Orientation = 1
+        self.VerticalAnchor = 3
+        self.Overflowing = False
+
+    @property
+    def HasText(self):
+        return -1 if self.text != "\r" else 0
+
+
+class FakeLineFrame:
+    """A line has a TextFrame, and Word refuses everything asked of it."""
+
+    @property
+    def TextRange(self):
+        raise RuntimeError("This object does not support attached text.")
+
+
+class FakeShape:
+    next_id = 100
+
+    def __init__(self, shapes, type_, auto, width, height, anchor):
+        self.shapes = shapes
+        FakeShape.next_id += 1
+        self.ID = FakeShape.next_id
+        self.Name = f"Shape {self.ID}"
+        self.Type = type_
+        self.AutoShapeType = auto
+        self.Left = 0.0
+        self.Top = 0.0
+        self.Width = float(width)
+        self.Height = float(height)
+        self.RelativeHorizontalPosition = 2
+        self.RelativeVerticalPosition = 2
+        self.Rotation = 0.0
+        self.LockAspectRatio = 0
+        self.AlternativeText = ""
+        self.Anchor = anchor
+        self.WrapFormat = AttrBag(Type=3, Side=0, DistanceLeft=0, DistanceRight=0,
+                                  DistanceTop=0, DistanceBottom=0)
+        self.Fill = AttrBag(Visible=-1, Transparency=0.0, ForeColor=AttrBag(RGB=0xC47244),
+                            Solid=lambda: None)
+        self.Line = AttrBag(Visible=-1, Weight=1.0, DashStyle=1, ForeColor=AttrBag(RGB=0x000000),
+                            BeginArrowheadStyle=1, EndArrowheadStyle=1)
+        self.Adjustments = {1: 0.16667}
+        self.TextFrame = FakeLineFrame() if type_ == 9 else FakeTextFrame()
+
+    @property
+    def ZOrderPosition(self):
+        return self.shapes.items.index(self) + 1
+
+    def ZOrder(self, command):
+        items = self.shapes.items
+        at = items.index(self)
+        items.remove(self)
+        items.insert({0: len(items), 1: 0, 2: min(at + 1, len(items)), 3: max(at - 1, 0)}[command],
+                     self)
+
+    def Delete(self):
+        self.shapes.items.remove(self)
+
+    def ConvertToInlineShape(self):
+        raise NotImplementedError
+
+
+class FakeShapes:
+    def __init__(self):
+        self.items = []
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def Item(self, i):
+        return self.items[i - 1]
+
+    def _add(self, *args):
+        self.items.append(FakeShape(self, *args))
+        return self.items[-1]
+
+    def AddShape(self, kind, left, top, width, height, anchor):
+        return self._add(1, kind, width, height, anchor)
+
+    def AddTextbox(self, orientation, left, top, width, height, anchor):
+        return self._add(17, 1, width, height, anchor)
+
+    def AddLine(self, x1, y1, x2, y2, anchor):
+        return self._add(9, -2, abs(x2 - x1), abs(y2 - y1), anchor)
+
+
 class FakeDocument:
     def __init__(self, paragraphs=("",), name="Doc1.docx", path="C:\\docs",
                  styles=None):
+        self.Shapes = FakeShapes()
         self.Footnotes = FakeNotes(self)
         self.Endnotes = FakeNotes(self)
         self.Hyperlinks = FakeHyperlinks()
@@ -578,6 +703,9 @@ class FakeDocument:
         self.Saved = False
 
     def replace(self, start, end, value):
+        if end > start:  # text taken away takes the shapes anchored in it
+            self.Shapes.items[:] = [s for s in self.Shapes.items
+                                    if not start <= s.Anchor.Start < end]
         template = self.attrs[min(start, len(self.attrs) - 1)]
         self.text = self.text[:start] + value + self.text[end:]
         self.attrs[start:end] = [dict(template) for _ in value]
