@@ -330,5 +330,6 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | `\\x13 ... \\x15` written as text | Plain characters: no field | The same |
 | `Fields.Update` over a locked field | Passes over it and answers 0 | Fields are updated one at a time |
 | `AutomationSecurity` | Default low, by the page | Measured low; `automation security` reads and writes |
+| Updating an INCLUDETEXT field | Not seen to ask | Word can stop on a dialog of its own ("contains fields that can share data with external files or websites"), Yes or No, and the call waits. Seen in one run of two, so the live check no longer makes such a field. |
 | Whether a real macro stays off | Not measured: making a macro-enabled test document needs access to the VBA project | Not measured |
 

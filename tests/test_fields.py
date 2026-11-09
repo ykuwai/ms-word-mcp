@@ -74,6 +74,20 @@ def test_numbers_and_references_leave_a_field_hidden_inside(make_doc):
     assert calls == ["plain"] and "1 field(s)" in out["warnings"][0]
 
 
+def test_a_table_of_contents_with_a_field_hidden_inside_is_left(make_doc):
+    doc = make_doc("One.")
+    calls = []
+    toc = SimpleNamespace(Update=lambda: calls.append("hidden"))
+    fine = SimpleNamespace(Update=lambda: calls.append("fine"))
+    tocs = [toc, fine]
+    doc.TablesOfContents = SimpleNamespace(Count=2, Item=lambda i: tocs[i - 1])
+    doc.Fields = FakeFields(FakeField('TOC \\o "1-3" \x13 INCLUDETEXT "a" \x15'),
+                            FakeField('TOC \\o "1-3"'))
+    out = answer(fields._update_fields_impl, "tables_of_contents", None, None)
+    assert calls == ["fine"] and out["updated"] == 1
+    assert "INCLUDETEXT" in out["warnings"][0]
+
+
 def test_the_setting_allows_them(monkeypatch):
     monkeypatch.setattr(_common, "ALLOW_ACTIVE_FIELDS", True)
     fields.check_field_code('INCLUDETEXT "a"')

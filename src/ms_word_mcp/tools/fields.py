@@ -209,7 +209,12 @@ def _update_fields_impl(what, start, end):
     count = 0
     if what in ("tables_of_contents", "page_numbers") and start is None:
         tocs = doc.TablesOfContents
+        # TablesOfContents and the document's TOC fields run in the same order.
+        codes = [f.Code.Text for f in _fields_in(doc, None, None) if _kind(f.Code.Text) == "TOC"]
         for i in range(1, tocs.Count + 1):
+            if i <= len(codes) and not may_update(codes[i - 1]):
+                skipped.append(active_kind(codes[i - 1]))
+                continue
             toc = tocs.Item(i)
             try:
                 if what == "page_numbers":

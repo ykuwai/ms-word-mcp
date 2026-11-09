@@ -811,12 +811,14 @@ def _make_saved(path: str, words: str) -> None:
 
 
 def run_safety_steps(folder: Path) -> None:
-    """Macros stay off while a file opens; fields that reach outside are left alone."""
-    # Word for Mac asks about a file outside its own folder, and would wait for an answer.
+    """Macros stay off while a file opens; fields that reach outside are refused.
+
+    No such field is made here: Word stops on a dialog of its own when one is
+    updated, and a live check nobody is watching would wait there.
+    """
     place = Path(references.CONTAINER) if backend.IS_MACOS else folder
-    outer, inner = str(place / "live-safety.docx"), str(place / "live-safety-include.docx")
+    outer = str(place / "live-safety.docx")
     _make_saved(outer, "The document.")
-    _make_saved(inner, "First words.")
     before = step("the macro setting before opening", _macro_setting)
     opened = step("open a document", documents._open_document_impl, outer, False, True,
                   check=lambda o: "error" not in o)
@@ -826,45 +828,19 @@ def run_safety_steps(folder: Path) -> None:
         return
     token = call_document.set(opened["full_name"])
     insert = fields._insert_field_impl
-    code = 'INCLUDETEXT "' + inner.replace("\\", "\\\\") + '"'
-    def reads(words):
-        return lambda o: words in o["paragraphs"][0]["text"]
     try:
-        step("a field that reaches outside is refused", insert, 1, code, "end", None,
-             check=lambda o: "are refused" in o["error"])
+        step("a field that reaches outside is refused", insert, 1, 'INCLUDETEXT "a.docx"', "end",
+             None, check=lambda o: "are refused" in o["error"])
         step("in small letters, and quoted, too", insert, 1, '"ddeauto" x', "end", None,
              check=lambda o: "are refused" in o["error"])
         step("nothing was inserted", text._get_paragraphs_impl, 1, 1, False,
              check=lambda o: o["paragraphs"][0]["text"] == "The document.")
-        _common.ALLOW_ACTIVE_FIELDS = True
-        step("with the setting it goes in", insert, 1, code, "end", None, undo="Insert field",
-             check=lambda o: "First words." in o["result"])
-        step("and shows the other file", text._get_paragraphs_impl, 1, 1, False,
-             check=reads("First words."))
-        _common.ALLOW_ACTIVE_FIELDS = False
-        token2 = None
-        changed = step("open the other file", documents._open_document_impl, inner, False, True)
-        token2 = call_document.set(changed["full_name"])
-        step("change its words", text._set_paragraph_text_impl, 1, "Second words.")
-        step("save it", documents._save_document_impl)
-        step("close it", documents._close_document_impl, True)
-        call_document.reset(token2)
-        step("updating everything leaves that field", fields._update_fields_impl, "all", None,
-             None, undo="Update fields",
-             check=lambda o: any("reach outside" in w for w in o["warnings"]))
-        step("so it still shows the old words", text._get_paragraphs_impl, 1, 1, False,
-             check=reads("First words."))
-        _common.ALLOW_ACTIVE_FIELDS = True
-        step("with the setting it is updated", fields._update_fields_impl, "all", None, None,
-             undo="Update fields", check=lambda o: "warnings" not in o)
-        step("and shows the new words", text._get_paragraphs_impl, 1, 1, False,
-             check=reads("Second words."))
+        step("an ordinary field still goes in", insert, 1, "NUMPAGES", "end", None,
+             undo="Insert field", check=lambda o: "error" not in o)
     finally:
-        _common.ALLOW_ACTIVE_FIELDS = False
         step("close the document", documents._close_document_impl, False)
         call_document.reset(token)
-        for path in (outer, inner):
-            Path(path).unlink(missing_ok=True)
+        Path(outer).unlink(missing_ok=True)
 
 
 def run_picture_and_page_steps(folder: Path) -> None:

@@ -98,7 +98,7 @@ Other clients (Claude Desktop, Cursor, `.mcp.json`):
 |---|---|---|
 | `WORD_TOOL_MODE` | `catalog` | `catalog` lists three tools that reach the rest; `full` lists every tool. |
 | `WORD_MAC_FILES_DIR` | the document's folder | macOS: where Word writes the PDF a page picture is drawn from, for a moment. By default the document's own folder (Word already has access there), or Word's own folder for a document never saved. |
-| `WORD_ALLOW_ACTIVE_FIELDS` | `off` | Allow fields that reach outside the document: INCLUDETEXT, INCLUDEPICTURE, INCLUDE, LINK, IMPORT, RD, EMBED, DATABASE, DDE, DDEAUTO, MACROBUTTON, PRINT, ASK, FILLIN. Off, `word_insert_field` refuses them and `word_update_fields` leaves the ones already in a document as they are. |
+| `WORD_ALLOW_ACTIVE_FIELDS` | `off` | Allow fields that reach outside the document: INCLUDETEXT, INCLUDEPICTURE, INCLUDE, LINK, IMPORT, RD, EMBED, DATABASE, DDE, DDEAUTO, MACROBUTTON, PRINT, ASK, FILLIN. Off, `word_insert_field` refuses them and `word_update_fields` leaves the ones already in a document as they are. On, Word may stop and ask you about them in a dialog of its own, and the tool waits until you answer. |
 | `WORD_ALLOW_NETWORK_PATHS` | `off` | Allow files named by a network path (`\\\\server\\share\\...`). Off, they are refused: saving to one sends the document to that server, and even checking for the file connects to it with your credentials. |
 | `WORD_FOLLOW_EDITS` | `on` | Scroll the document's window to each change. With a second window open on the document (View > New Window), the last one follows and the first stays where you are. |
 
