@@ -264,6 +264,7 @@ def run_steps(path: str) -> None:
     run_note_steps()
     run_link_steps()
     run_shape_steps()
+    run_floating_picture_steps(Path(path).parent)
     step("picture of page 1", screen._get_page_image_impl, 1, None,
          check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)
     step("picture of the page a paragraph is on", screen._get_page_image_impl, None, 5,
@@ -712,6 +713,79 @@ def run_shape_steps() -> None:
         call_document.reset(token)
 
 
+def run_floating_picture_steps(folder: Path) -> None:
+    """Pictures out of the text and back, behind it and over it, and cropped."""
+    other = step("a document for floating pictures", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    picture = folder / "live-floating.png"
+    picture.write_bytes(screen.png(60, 30, [b"\x40\x80\xc0" * 60] * 30))
+    change = shapes._set_shape_impl
+    set_picture = references._set_picture_impl
+    try:
+        made = step("paragraphs for floating pictures", text._insert_paragraphs_impl,
+                    [{"text": "Alpha beta gamma.", "style": "Normal"},
+                     {"text": "二つ目の段落です。", "style": "Normal"},
+                     {"text": "Third paragraph.", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        step("a floating picture behind the text", shapes._insert_floating_picture_impl,
+             str(picture), 2, 120.0, None,
+             {"name": "背景", "wrap": "behind", "left": 100.0, "top": 200.0,
+              "horizontal_from": "page", "vertical_from": "page", "alt_text": "青い箱"},
+             undo="Insert floating picture",
+             check=lambda o: (o["kind"], o["name"], o["index"], o["wrap"], o["left"], o["top"],
+                              o["width"], o["height"], o["horizontal_from"])
+             == ("picture", "背景", 2, "behind", 100.0, 200.0, 120.0, 60.0, "page")
+             and "warnings" not in o)
+        step("it added no paragraph, and left the text", text._get_paragraphs_impl, 2, 2, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "二つ目の段落です。" and o["count"] == 3)
+        pic = step("a picture in the text", references._insert_picture_impl, str(picture), 3,
+                   None, 150.0, None, None, "Inline box", undo="Insert picture",
+                   check=lambda o: o["width"] == 150.0)
+        step("cropped by points as it is shown", set_picture, pic.get("picture", 1), None, None,
+             None, None, {"crop_left": 10.0}, undo="Change picture",
+             check=lambda o: abs(o["width"] - 140.0) < 0.6)
+        step("and the crop taken away", set_picture, pic.get("picture", 1), None, None, None,
+             None, {"crop_left": 0.0}, undo="Change picture",
+             check=lambda o: abs(o["width"] - 150.0) < 0.6)
+        step("out of the text, with text round it", set_picture, pic.get("picture", 1), None, None,
+             None, None, {"wrap": "square", "left": 40.0, "top": 10.0, "name": "Moved"},
+             undo="Change picture",
+             check=lambda o: (o["now"], o["kind"], o["name"], o["wrap"], o["left"], o["top"],
+                              o["horizontal_from"], o["vertical_from"])
+             == ("floating", "picture", "Moved", "square", 40.0, 10.0, "margin", "paragraph"))
+        step("no picture is left in the text", references._list_pictures_impl,
+             check=lambda o: o["pictures"] == [])
+        step("the floating ones are listed in reading order", shapes._list_shapes_impl, 1, 50,
+             check=lambda o: [(s["name"], s["kind"]) for s in o["shapes"]]
+             == [("背景", "picture"), ("Moved", "picture")])
+        step("a floating picture is cropped too", change, "Moved", {"crop_top": 6.0},
+             undo="Change shape",
+             check=lambda o: o["cropped"] is True and o["height"] < 75.0)
+        step("the crop comes off a floating picture", change, "Moved", {"crop_top": 0.0},
+             undo="Change shape", check=lambda o: "cropped" not in o)
+        step("moved in front of the text", change, "背景", {"wrap": "front"}, undo="Change shape",
+             check=lambda o: o["wrap"] == "front" and o["left"] == 100.0)
+        step("a drawn shape cannot be cropped", shapes._insert_shape_impl, "rectangle", 1, 40.0,
+             20.0, {"name": "Box", "crop_left": 1.0},
+             check=lambda o: "Only a picture" in o["error"])
+        step("and the failed shape did not stay", shapes._list_shapes_impl, 1, 50,
+             check=lambda o: o["count"] == 2)
+        step("back into the text", change, "Moved", {"wrap": "inline"}, undo="Change shape",
+             check=lambda o: (o["now"], o["alt_text"]) == ("inline", "Inline box"))
+        step("it is a picture in the text again", references._list_pictures_impl,
+             check=lambda o: len(o["pictures"]) == 1
+             and o["pictures"][0]["alt_text"] == "Inline box")
+        step("a floating picture is deleted by name", shapes._delete_shape_impl, "背景",
+             undo="Delete shape", check=lambda o: (o["deleted"], o["left"]) == ("背景", 0))
+    finally:
+        picture.unlink(missing_ok=True)
+        step("close the document for floating pictures", documents._close_document_impl, False)
+        call_document.reset(token)
+
+
 def run_picture_and_page_steps(folder: Path) -> None:
     picture = folder / "live-picture.png"
     picture.write_bytes(screen.png(60, 30, [b"\x40\x80\xc0" * 60] * 30))
@@ -725,9 +799,9 @@ def run_picture_and_page_steps(folder: Path) -> None:
     step("picture read back", references._list_pictures_impl,
          check=lambda o: o["pictures"][-1]["alt_text"] == "A blue box")
     step("a picture wider than the text warns", references._set_picture_impl, pic["picture"],
-         900.0, None, None, None, undo="Change picture",
+         900.0, None, None, None, {}, undo="Change picture",
          check=lambda o: "right margin" in " ".join(o.get("warnings", [])))
-    step("and back", references._set_picture_impl, pic["picture"], 150.0, None, None, None,
+    step("and back", references._set_picture_impl, pic["picture"], 150.0, None, None, None, {},
          undo="Change picture", check=lambda o: "warnings" not in o)
     cap = step("a caption under the picture", references._insert_caption_impl, "A blue box",
                "Figure", ": ", pic["picture"], None, None, None, undo="Insert caption",

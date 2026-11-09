@@ -306,3 +306,16 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | Document not active | Works, active document unchanged | Works, active document unchanged |
 | A table cell, a later page | Works; `LayoutInCell` -1 | Works |
 | Kinds | 177 of 181 read back as themselves. `line callout two` reads as `one`; `line callout one no border` and `two no border` read as `one accent bar`; `callout one border and accent bar` reads as `line callout one`. `balloon` reads back as `rounded rectangular callout`, so it is taken as that name. | The same 177 of 181, the same four. |
+
+### Pictures that float, and cropping (`scripts/probes/picture_crop.py`)
+
+| What | Windows | Mac |
+|---|---|---|
+| Made floating directly | `Shapes.AddPicture` with the `Anchor` argument: anchored at 0, not where it was given | `make new picture`: likewise anchored at 0 |
+| So | Inline first, at the paragraph's start, then `ConvertToShape`: anchored there | The same; `convert to shape` answers a reference to another shape, so found by the new name |
+| Position after converting | Named: left and top (-999998, -999999) | -999998 and 0.75 |
+| Alt text | Kept both ways | Set while in line; kept through the round trip, and cannot be read while it floats |
+| `wrap` 7 on a floating picture | Becomes an InlineShape | The same; `convert to inline shape` too |
+| A crop | Counts the picture's own size: 5 on a picture shown at twice its size takes 10 points off the frame, in line and floating (90 to 80) | The same (120 to 110) |
+| A crop taken off | Width comes back 0.05 short | The same |
+

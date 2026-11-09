@@ -3,7 +3,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from ms_word_mcp.tools import _common, shapes, text
+from ms_word_mcp.tools import _common, references, shapes, text
 
 
 def answer(impl, *args):
@@ -267,3 +267,102 @@ def test_a_change_changes_something():
 def test_corners_are_for_a_rounded_rectangle():
     with pytest.raises(ValidationError, match="rounded_rectangle"):
         shapes.InsertShapeInput(kind="oval", index=1, width=1, height=1, corner_radius=0.5)
+
+
+@pytest.fixture
+def picture(tmp_path):
+    path = tmp_path / "a.png"
+    path.write_bytes(b"not read by the fake")
+    return str(path)
+
+
+def floating(path, index=1, width=None, height=None, **spec):
+    return answer(shapes._insert_floating_picture_impl, path, index, width, height, spec)
+
+
+def test_a_floating_picture_goes_in_the_paragraph_named(make_doc, picture):
+    doc = make_doc("One.", "Two.")
+    out = floating(picture, 2, width=180.0, name="Pic", wrap="behind", left=10.0, alt_text="Box")
+    assert (out["kind"], out["name"], out["index"], out["wrap"], out["left"], out["width"],
+            out["height"], out["alt_text"]) == (
+        "picture", "Pic", 2, "behind", 10.0, 180.0, 90.0, "Box")
+    assert doc.Paragraphs.Count == 2 and doc.InlineShapes.Count == 0
+
+
+def test_a_floating_picture_needs_its_file(make_doc):
+    make_doc("One.")
+    assert "There is no file" in floating("/no/such.png")["error"]
+
+
+def test_a_picture_in_the_text_comes_out_of_it(make_doc, picture):
+    doc = make_doc("One.")
+    answer(references._insert_picture_impl, picture, None, None, None, None, None, "Box")
+    out = answer(references._set_picture_impl, 1, None, None, None, None,
+                 {"wrap": "behind", "left": 20.0, "top": 30.0, "horizontal_from": "page",
+                  "vertical_from": "page", "name": "Moved"})
+    assert (out["now"], out["kind"], out["name"], out["wrap"], out["left"], out["alt_text"]) == (
+        "floating", "picture", "Moved", "behind", 20.0, "Box")
+    assert doc.InlineShapes.Count == 0 and doc.Shapes.Count == 1
+
+
+def test_a_floating_picture_goes_back_into_the_text(make_doc, picture):
+    doc = make_doc("One.")
+    floating(picture, name="Pic", alt_text="Box")
+    out = answer(shapes._set_shape_impl, "Pic", {"wrap": "inline"})
+    assert (out["now"], out["picture"], out["alt_text"]) == ("inline", 1, "Box")
+    assert doc.Shapes.Count == 0 and doc.InlineShapes.Count == 1
+
+
+def test_a_crop_counts_points_as_the_picture_is_shown(make_doc, picture):
+    doc = make_doc("One.")
+    answer(references._insert_picture_impl, picture, None, None, None, None, None, None)
+    out = answer(references._set_picture_impl, 1, None, None, None, None, {"crop_left": 10.0})
+    assert out["width"] == 80.0
+    assert doc.InlineShapes.Item(1).PictureFormat.CropLeft == 5.0  # shown at twice its size
+    assert answer(references._set_picture_impl, 1, None, None, None, None,
+                  {"crop_left": 0.0})["width"] == 90.0
+
+
+def test_a_floating_picture_is_cropped_and_says_so(make_doc, picture):
+    make_doc("One.")
+    name = floating(picture)["name"]
+    out = answer(shapes._set_shape_impl, name, {"crop_top": 6.0})
+    assert out["height"] == 39.0 and out["cropped"] is True
+
+
+def test_crops_that_leave_nothing_are_refused(make_doc, picture):
+    doc = make_doc("One.")
+    name = floating(picture)["name"]
+    out = answer(shapes._set_shape_impl, name, {"crop_left": 50.0, "crop_right": 50.0})
+    assert "leave nothing" in out["error"]
+    assert doc.Shapes.Item(1).Width == 90.0
+
+
+def test_only_a_picture_is_cropped(make_doc):
+    make_doc("One.")
+    add(name="Box")
+    assert "Only a picture" in answer(shapes._set_shape_impl, "Box", {"crop_left": 1.0})["error"]
+
+
+def test_a_picture_that_is_not_in_the_text_is_pointed_at(make_doc):
+    make_doc("One.")
+    error = answer(references._set_picture_impl, 1, 10.0, None, None, None, {})["error"]
+    assert "word_list_shapes" in error
+
+
+def test_a_picture_is_placed_only_when_it_floats():
+    assert references.SetPictureInput(picture=1, crop_left=1).crop_left == 1
+    assert references.SetPictureInput(picture=1, wrap="behind", left=3).left == 3
+    with pytest.raises(ValidationError, match="Give `wrap` too"):
+        references.SetPictureInput(picture=1, left=3)
+    with pytest.raises(ValidationError, match="in line with the text already"):
+        references.SetPictureInput(picture=1, wrap="inline")
+    with pytest.raises(ValidationError, match="at least one"):
+        references.SetPictureInput(picture=1)
+
+
+def test_a_floating_picture_takes_a_full_path_and_floats():
+    with pytest.raises(ValidationError, match="full path"):
+        shapes.InsertFloatingPictureInput(path="a.png", index=1)
+    with pytest.raises(ValidationError, match="word_insert_picture"):
+        shapes.InsertFloatingPictureInput(path="/a.png", index=1, wrap="inline")
