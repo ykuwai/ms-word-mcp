@@ -105,11 +105,8 @@ def test_a_failure_answer_is_marked_as_an_error(word):
             "word_get_paragraphs", {"params": {"start": 99}})
 
     result = asyncio.run(go())
-    if hasattr(result, "is_error"):
-        assert result.is_error
-    else:
-        blocks = result[0] if isinstance(result, tuple) else result
-        assert "error" in json.loads(server.text_of(blocks))
+    # mcp 2.x calls the field is_error, 1.x isError.
+    assert getattr(result, "is_error", getattr(result, "isError", False))
 
 
 def test_run_steps_passes_results_on_and_stops_at_a_failure(word, make_doc):
@@ -150,6 +147,9 @@ def test_macos_refuses_tools_without_a_mac_half(word, monkeypatch):
     (None, "catalog"), ("catalog", "catalog"), ("full", "full"), ("ful", "full")])
 def test_catalog_mode_is_the_default(mode, expected):
     env = {k: v for k, v in os.environ.items() if k != "WORD_TOOL_MODE"}
+    # pytest's pythonpath does not reach a child process, and CI's mcp 1.x run
+    # does not install the package.
+    env["PYTHONPATH"] = str(ROOT / "src")
     if mode is not None:
         env["WORD_TOOL_MODE"] = mode
     script = (

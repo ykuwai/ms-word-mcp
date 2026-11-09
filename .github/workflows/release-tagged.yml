@@ -37,7 +37,8 @@ jobs:
           if ! git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
             echo "::error::No tag v$version. publish.yml only runs on a pushed" \
                  "tag, so this version would reach main without reaching PyPI." \
-                 "Tag it on develop first: git tag v$version && git push origin v$version"
+                 "Tag it on develop first: git tag v$version && git push origin v$version." \
+                 "A tag does not rerun this check: rerun it on the pull request afterwards."
             exit 1
           fi
           echo "tag v$version exists"

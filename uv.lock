@@ -537,7 +537,7 @@ dev = [
 requires-dist = [
     { name = "anyio", specifier = ">=4.0.0" },
     { name = "appscript", marker = "sys_platform == 'darwin'", specifier = ">=1.4.0" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.0.0,<3.0.0" },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.23.0,<3.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'", specifier = ">=10.0" },
     { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=306" },
