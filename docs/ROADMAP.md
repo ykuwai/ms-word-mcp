@@ -115,8 +115,9 @@ Then, ordered roughly by what the owner stressed.
 5. **Japanese typography, the rest.** Removing ruby outright, tate-chu-yoko.
 6. **View.** Zoom (percentage, page width, whole page), view type, follow
    edits in a second window.
-7. Shapes, the rest. Grouping; shapes in headers and footers; moving a shape to
-   another paragraph.
+7. Shapes, the rest. A picture faded for a background (brightness, contrast);
+   paragraph settings for the text inside a shape; grouping; shapes in headers
+   and footers; moving a shape to another paragraph.
 8. Adding sections (section breaks); a header of several paragraphs.
 9. Comments and tracked changes; spelling and a document health check.
 10. Page previews.

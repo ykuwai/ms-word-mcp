@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -48,3 +49,87 @@ def test_save_refuses_a_document_without_a_file(word):
     word.doc.Path = ""
     out = json.loads(_common.run(documents._save_document_impl))
     assert "word_save_document_as" in out["error"]
+
+
+
+class _App:
+    """Records the macro setting at the moment a file is opened."""
+
+    def __init__(self, doc):
+        self.AutomationSecurity = 1
+        self.seen = []
+        self.Documents = self
+        self.doc = doc
+
+    def Open(self, **kwargs):
+        self.seen.append(self.AutomationSecurity)
+        return self.doc
+
+    def Add(self, **kwargs):
+        self.seen.append(self.AutomationSecurity)
+        return self.doc
+
+
+def _with_app(word, doc):
+    from types import SimpleNamespace
+
+    doc.Paragraphs  # the fake document stands in for the opened one
+    app = _App(doc)
+    word.get_app = lambda allow_launch=False: app
+    word.open_documents = lambda: []
+    doc.__dict__.setdefault("Windows_", SimpleNamespace())
+    return app
+
+
+def test_a_document_opens_with_macros_off_and_the_setting_comes_back(make_doc, word, tmp_path):
+    path = tmp_path / "a.docx"
+    path.write_bytes(b"x")
+    app = _with_app(word, make_doc("One."))
+    out = json.loads(_common.run(documents._open_document_impl, str(path), False, True))
+    assert "error" not in out
+    assert app.seen == [3] and app.AutomationSecurity == 1
+
+
+def test_a_template_opens_with_macros_off(make_doc, word, tmp_path):
+    path = tmp_path / "a.dotm"
+    path.write_bytes(b"x")
+    app = _with_app(word, make_doc("One."))
+    out = json.loads(_common.run(documents._create_document_impl, str(path), None))
+    assert "error" not in out
+    assert app.seen == [3] and app.AutomationSecurity == 1
+
+
+def test_the_macro_setting_comes_back_when_opening_fails(make_doc, word, tmp_path):
+    path = tmp_path / "a.docx"
+    path.write_bytes(b"x")
+    app = _with_app(word, make_doc("One."))
+
+    def refuses(**kwargs):
+        raise RuntimeError("The file is damaged.")
+
+    app.Open = refuses
+    assert "damaged" in json.loads(_common.run(
+        documents._open_document_impl, str(path), False, True))["error"]
+    assert app.AutomationSecurity == 1
+
+
+@pytest.mark.parametrize("path", ["\\\\\\\\evil\\\\share\\\\a.docx", "//evil/share/a.docx"])
+def test_a_network_path_is_refused(path):
+    with pytest.raises(ValueError, match="network path"):
+        _common.local_path(path)
+
+
+def test_the_setting_allows_a_network_path(monkeypatch):
+    monkeypatch.setattr(_common, "ALLOW_NETWORK_PATHS", True)
+    assert _common.local_path("//server/a.docx") == "//server/a.docx"
+
+
+def test_a_local_path_is_left_alone():
+    assert _common.local_path("C:\\\\a.docx") == "C:\\\\a.docx"
+    assert _common.local_path("/Users/a/b.docx") == "/Users/a/b.docx"
+
+
+def test_a_new_document_saves_only_as_a_format_word_writes():
+    with pytest.raises(ValueError, match="must end in"):
+        documents.CreateDocumentInput(save_as=os.path.abspath("a.exe"))
+    assert documents.CreateDocumentInput(save_as=os.path.abspath("a.docx")).save_as

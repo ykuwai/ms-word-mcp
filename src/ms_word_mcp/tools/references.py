@@ -20,13 +20,15 @@ from __future__ import annotations
 import itertools
 import os
 import shutil
+import tempfile
 import time
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
 from .. import backend
-from ._common import READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow, mac_impl
+from ._common import (READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow, local_path,
+                      mac_impl)
 from ._word import ALIGNMENTS, clean_text, paragraph
 from .shapes import CROPS, _Crop, _Position, _Wrap
 
@@ -64,7 +66,7 @@ class InsertPictureInput(Input):
     def _absolute(cls, value: str) -> str:
         if not os.path.isabs(value):
             raise ValueError("path must be a full path.")
-        return value
+        return local_path(value)
 
     @model_validator(mode="after")
     def _where(self):
@@ -360,8 +362,9 @@ def _mac_stage(path: str) -> tuple[str, bool]:
     """A copy inside Word's container, and whether one was made."""
     if os.path.realpath(path).startswith(os.path.realpath(CONTAINER) + os.sep):
         return path, False
-    ext = os.path.splitext(path)[1]
-    staged = os.path.join(CONTAINER, f"ms-word-mcp-picture-{os.getpid()}{ext}")
+    handle, staged = tempfile.mkstemp(prefix="ms-word-mcp-picture-",
+                                      suffix=os.path.splitext(path)[1], dir=CONTAINER)
+    os.close(handle)
     shutil.copyfile(path, staged)
     return staged, True
 
@@ -392,7 +395,7 @@ def _mac_apply_picture(doc, shape, width, height, alignment, alt_text) -> list[s
 
     width, height = proportional(width, height, shape.width.get(), shape.height.get())
     # Setting one side does not keep the proportions even with the lock on
-    # (measured on the reference branch), so both are set.
+    # (measured), so both are set.
     if width is not None:
         shape.width.set(width)
     if height is not None:

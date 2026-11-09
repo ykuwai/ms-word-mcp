@@ -358,6 +358,17 @@ def test_a_refused_crop_changes_nothing_else(make_doc, picture):
     assert (doc.InlineShapes.Item(1).Width, doc.InlineShapes.Item(1).AlternativeText) == (90.0, "")
 
 
+def test_a_picture_has_no_fill_to_change(make_doc, picture):
+    make_doc("One.")
+    name = floating(picture)["name"]
+    assert "no fill to change" in answer(shapes._set_shape_impl, name,
+                                         {"fill_transparency": 0.8})["error"]
+
+
+def test_a_line_can_be_made_level(make_doc):
+    assert shapes.SetShapeInput(shape="A", height=0).height == 0
+
+
 def test_only_a_picture_is_cropped(make_doc):
     make_doc("One.")
     add(name="Box")

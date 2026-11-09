@@ -12,7 +12,7 @@ permission:
   drawn into a PNG with GDI+.
 - macOS: Word saves the document as a PDF (it keeps its own file), and
   Quartz draws the page into a PNG. Word for Mac's PDF shows comments and
-  tracked changes in a margin (measured on the reference branch).
+  tracked changes in a margin (measured).
 """
 
 from __future__ import annotations
@@ -129,6 +129,13 @@ def emf_to_png(emf: bytes, width: int, height: int, path: str) -> None:
         gdiplus.GdiplusShutdown(token)
 
 
+def _new_png() -> str:
+    """A file of its own, so that two calls at once cannot answer each other's page."""
+    handle, path = tempfile.mkstemp(prefix="ms-word-mcp-page-", suffix=".png")
+    os.close(handle)
+    return path
+
+
 def _get_page_image_impl(page, paragraph_index):
     doc = backend.word.document()
     if not doc.Windows.Count:
@@ -147,7 +154,7 @@ def _get_page_image_impl(page, paragraph_index):
             view.Type = was
     setup = doc.PageSetup
     height = round(WIDTH * setup.PageHeight / setup.PageWidth)
-    path = os.path.join(tempfile.gettempdir(), f"ms-word-mcp-page-{os.getpid()}.png")
+    path = _new_png()
     emf_to_png(emf, WIDTH, height, path)
     return {"success": True, "page": page, "pages": total, "path": path,
             "width": WIDTH, "height": height}
@@ -199,7 +206,7 @@ def _mac_get_page_image(page, paragraph_index):
     # Word for Mac is sandboxed and writes in its own folder without asking;
     # WORD_MAC_FILES_DIR names another folder Word has been allowed into, so
     # the server does not read Word's container. Saving as PDF does not change
-    # the document's own file (measured on the reference branch).
+    # the document's own file (measured).
     doc.save_as(file_name=pdf, file_format=k.format_PDF)
     try:
         url = NSURL.fileURLWithPath_(pdf)
@@ -218,7 +225,7 @@ def _mac_get_page_image(page, paragraph_index):
         Quartz.CGContextScaleCTM(context, scale, scale)
         Quartz.CGContextDrawPDFPage(context, pdf_page)
         image = Quartz.CGBitmapContextCreateImage(context)
-        path = os.path.join(tempfile.gettempdir(), f"ms-word-mcp-page-{os.getpid()}.png")
+        path = _new_png()
         destination = Quartz.CGImageDestinationCreateWithURL(
             NSURL.fileURLWithPath_(path), "public.png", 1, None)
         Quartz.CGImageDestinationAddImage(destination, image, None)

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import os
 
 from pydantic import Field, field_validator
 
 from .. import backend
-from ._common import READ_ONLY, WRITES, DESTRUCTIVE, Input, Trimmed, annotations, call
+from ._common import READ_ONLY, WRITES, DESTRUCTIVE, Input, Trimmed, annotations, call, local_path
 
 # WdSaveFormat values for the formats save-as takes, by file extension.
 SAVE_FORMATS = {".docx": 16, ".docm": 13, ".dotx": 14, ".doc": 0, ".rtf": 6,
@@ -20,7 +21,7 @@ def _doc_summary(doc) -> dict:
 
 
 def _require_absolute(path: str) -> str:
-    path = os.path.expanduser(path)
+    path = local_path(os.path.expanduser(path))
     if not os.path.isabs(path):
         raise ValueError(f"'{path}' is not a full path. Pass the whole path to the file.")
     return path
@@ -61,6 +62,9 @@ def _list_documents_impl():
     return {"success": True, "documents": out, "target_document": word.target_full_name}
 
 
+MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
+
+
 class ActivateDocumentInput(Input):
     document: Trimmed = Field(..., min_length=1, description=(
         "The document to work on from now on: its full path, file name, or file "
@@ -92,6 +96,25 @@ class OpenDocumentInput(Input):
         return _require_absolute(value)
 
 
+@contextmanager
+def macros_off(app):
+    """Word with macros disabled for files opened inside this block.
+
+    Word opens a file from a program with macros enabled, whatever the user's
+    Trust Center says: AutomationSecurity starts at msoAutomationSecurityLow
+    (https://learn.microsoft.com/en-us/office/vba/api/word.application.automationsecurity).
+    A document someone sent could run its AutoOpen macro. The setting is the
+    application's, so the user's value is put back. If it cannot be set, the
+    error stops the call and nothing is opened.
+    """
+    was = app.AutomationSecurity
+    app.AutomationSecurity = MSO_AUTOMATION_SECURITY_FORCE_DISABLE
+    try:
+        yield
+    finally:
+        app.AutomationSecurity = was
+
+
 def _open_document_impl(path: str, read_only: bool, visible: bool):
     if not os.path.exists(path):
         raise ValueError(f"There is no file at '{path}'.")
@@ -104,8 +127,9 @@ def _open_document_impl(path: str, read_only: bool, visible: bool):
             doc = app.Documents.Item(d.index)
             word.target_full_name = doc.FullName
             return {"success": True, **_doc_summary(doc), "already_open": True}
-    doc = app.Documents.Open(FileName=path, ConfirmConversions=False, ReadOnly=read_only,
-                             AddToRecentFiles=False, Visible=visible)
+    with macros_off(app):
+        doc = app.Documents.Open(FileName=path, ConfirmConversions=False, ReadOnly=read_only,
+                                 AddToRecentFiles=False, Visible=visible)
     word.target_full_name = doc.FullName
     return {"success": True, **_doc_summary(doc), "paragraphs": doc.Paragraphs.Count,
             "note": "This document is now the target of calls without `document`."}
@@ -123,6 +147,13 @@ class CreateDocumentInput(Input):
     def _absolute(cls, value: str | None) -> str | None:
         return None if value is None else _require_absolute(value)
 
+    @field_validator("save_as")
+    @classmethod
+    def _a_format_word_saves(cls, value: str | None) -> str | None:
+        if value is not None and os.path.splitext(value)[1].lower() not in SAVE_FORMATS:
+            raise ValueError("save_as must end in one of " + ", ".join(sorted(SAVE_FORMATS)) + ".")
+        return value
+
 
 def _create_document_impl(template: str | None, save_as: str | None):
     if template and not os.path.exists(template):
@@ -132,7 +163,8 @@ def _create_document_impl(template: str | None, save_as: str | None):
             f"'{save_as}' already exists. Choose another name; nothing was created.")
     word = backend.word
     app = word.get_app(allow_launch=True)
-    doc = app.Documents.Add(Template=template) if template else app.Documents.Add()
+    with macros_off(app):  # a template can hold an AutoNew macro
+        doc = app.Documents.Add(Template=template) if template else app.Documents.Add()
     if save_as:
         doc.SaveAs2(FileName=save_as, FileFormat=SAVE_FORMATS.get(
             os.path.splitext(save_as)[1].lower(), 16))
@@ -227,7 +259,7 @@ def register(mcp) -> None:
         return await call(_list_documents_impl)
 
     @mcp.tool(name="word_activate_document",
-              annotations=annotations("Choose the document", READ_ONLY))
+              annotations=annotations("Choose the document", WRITES))
     async def word_activate_document(params: ActivateDocumentInput) -> str:
         """Choose the document that calls without `document` work on.
 
@@ -258,7 +290,7 @@ def register(mcp) -> None:
         """Save the document to its own file."""
         return await call(_save_document_impl)
 
-    @mcp.tool(name="word_save_document_as", annotations=annotations("Save as", WRITES))
+    @mcp.tool(name="word_save_document_as", annotations=annotations("Save as", DESTRUCTIVE))
     async def word_save_document_as(params: SaveDocumentAsInput) -> str:
         """Save the document under a new path, or export it as PDF.
 

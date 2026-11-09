@@ -36,10 +36,27 @@ def _bookmark_name(name: str | None) -> str | None:
     return name
 
 
+_SCHEME = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*):")
+SAFE_SCHEMES = ("http", "https", "mailto", "tel")
+
+
+def _safe_address(value: str | None) -> str | None:
+    """Refuse an address that a click would open as a local file or a program."""
+    if value is None:
+        return value
+    scheme = _SCHEME.match(value)
+    if value[:2] in ("\\\\", "//") or (scheme and scheme.group(1).lower() not in SAFE_SCHEMES):
+        raise ValueError(f"'{value[:80]}' is refused: a link goes to http, https, mailto or tel. "
+                         "Others (file:, javascript:, network paths...) could open something "
+                         "on the reader's computer. A person can add one in Word.")
+    return value
+
+
 class InsertHyperlinkInput(Input):
     index: int = Field(..., ge=1, description="The paragraph the link goes in.")
     address: Trimmed | None = Field(None, min_length=1, max_length=2000, description=(
-        "Where it goes: a full address (https://..., mailto:...) or a file path."))
+        "Where it goes: a full address (https://..., mailto:...) or a path relative to "
+        "the document."))
     bookmark: Trimmed | None = Field(None, description=(
         "Or: the name of a bookmark in this document."))
     match: str | None = Field(None, min_length=1, max_length=255, description=(
@@ -51,6 +68,7 @@ class InsertHyperlinkInput(Input):
         "Shown when the pointer is over the link."))
 
     _name = field_validator("bookmark")(_bookmark_name)
+    _safe = field_validator("address")(_safe_address)
 
     @model_validator(mode="after")
     def _one_each(self):
@@ -76,6 +94,7 @@ class SetHyperlinkInput(Input):
         "A new screen tip; an empty string takes it off."))
 
     _name = field_validator("bookmark")(_bookmark_name)
+    _safe = field_validator("address")(_safe_address)
 
     @model_validator(mode="after")
     def _something(self):

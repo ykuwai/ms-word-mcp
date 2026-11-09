@@ -14,6 +14,8 @@ How an equation is made, all measured (docs/PROBES.md, "Equations"):
 
 from __future__ import annotations
 
+from .fields import may_update
+
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -125,7 +127,8 @@ def _insert_equation_impl(equation, fmt, numbered, sequence, after, before):
             field = doc.Fields.Add(doc.Range(start, start + 1), WD_FIELD_SEQUENCE,
                                    sequence, False)
             for f in _seq_fields(doc, sequence):
-                f.Update()
+                if may_update(f.Code.Text):
+                    f.Update()
             number = field.Result.Text
     math = paragraph(doc, index).Range.OMaths.Item(1)
     math.Linearize()
@@ -234,7 +237,8 @@ def _mac_insert_equation(equation, fmt, numbered, sequence, after, before):
             for j in range(1, int(doc.count(each=k.field)) + 1):
                 f = doc.fields[j]
                 code = (f.field_code.content.get() or "").split()
-                if len(code) >= 2 and code[0].upper() == "SEQ" and code[1] == sequence:
+                if (len(code) >= 2 and code[0].upper() == "SEQ" and code[1] == sequence
+                        and may_update(f.field_code.content.get())):
                     f.update_field()
                     s0 = f.field_code.start_of_content.get()
                     if pstart <= s0 <= pstart + len(content) + 4:

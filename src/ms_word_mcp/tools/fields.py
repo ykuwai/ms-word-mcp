@@ -15,11 +15,63 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from .. import backend
+from . import _common
 from ._common import READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow, mac_impl, mac_with_active
 from ._word import check_span, clean_text, locate_spans, paragraph, span_range
 
 WD_FIELD_EMPTY = -1
 REFERENCE_KINDS = ("REF", "PAGEREF")
+#: Fields whose update reaches outside the document, runs something, or stops
+#: Word on a dialog. A document's text can steer an AI, so these need the
+#: user's setting: DDE and DDEAUTO start programs; INCLUDETEXT, INCLUDEPICTURE,
+#: INCLUDE, LINK, IMPORT, RD and EMBED read files or addresses; DATABASE runs
+#: a query; MACROBUTTON runs a macro; PRINT sends codes to the printer; ASK and
+#: FILLIN wait for an answer in a dialog.
+ACTIVE_FIELDS = frozenset({"DDE", "DDEAUTO", "INCLUDETEXT", "INCLUDEPICTURE", "INCLUDE", "LINK",
+                           "IMPORT", "RD", "EMBED", "DATABASE", "MACROBUTTON", "PRINT", "ASK",
+                           "FILLIN"})
+_FIRST_WORD = re.compile(r'[\s"\'\\]*([A-Za-z]+)')
+_INNER_WORD = re.compile(r'\x13[\s"\'\\]*([A-Za-z]+)')
+BUILT_NAME = "A FIELD WHOSE NAME IS BUILT BY ANOTHER FIELD"
+
+
+def active_kind(code: str) -> str | None:
+    """The name of the active field in `code`, or None. Word takes it in any case.
+
+    A field inside another shows in the outer code between \\x13 and \\x15, and
+    updating the outer one evaluates it (measured on both platforms), so the
+    fields inside count too.
+    """
+    text = code or ""
+    if text.lstrip(' "\'\\').startswith("\x13"):
+        return BUILT_NAME
+    found = [m.upper() for m in _INNER_WORD.findall(text)]
+    first = _FIRST_WORD.match(text)
+    if first:
+        found.insert(0, first.group(1).upper())
+    return next((kind for kind in found if kind in ACTIVE_FIELDS), None)
+
+
+def may_update(code: str) -> bool:
+    """Whether a field already in a document may be updated."""
+    return _common.ALLOW_ACTIVE_FIELDS or active_kind(code) is None
+
+
+def check_field_code(code: str) -> None:
+    """Refuse a code that would reach outside the document, or hide one inside it."""
+    if any(mark in code for mark in "\x13\x14\x15"):
+        raise ValueError("A field code cannot hold field marks. Give the code as plain text.")
+    kind = active_kind(code)
+    if kind and not _common.ALLOW_ACTIVE_FIELDS:
+        raise ValueError(
+            f"{kind} fields can read files, reach addresses, start programs or stop Word on "
+            "a dialog, so they are refused. Nothing was inserted. If you want them, set "
+            "WORD_ALLOW_ACTIVE_FIELDS=on in the server's settings.")
+
+
+def _active_note(kinds: list[str]) -> str:
+    return (f"Left as they were: {len(kinds)} field(s) that reach outside the document "
+            f"({', '.join(sorted(set(kinds)))}). Set WORD_ALLOW_ACTIVE_FIELDS=on to update them.")
 
 
 def toc_code(upper: int, lower: int, hyperlinks: bool, page_numbers: bool,
@@ -101,7 +153,7 @@ def _insert_toc_impl(after, before, upper_level, lower_level, hyperlinks, page_n
     # paragraph's text and style stay after the entries. A field put in an
     # empty paragraph of its own left that paragraph after the entries, and
     # Word refuses to delete it ("the range cannot be edited", seen in a demo
-    # driven over MCP; measured on the Mac on the reference branch).
+    # driven over MCP; measured on the Mac).
     p = paragraph(doc, at)
     field = doc.Fields.Add(doc.Range(p.Range.Start, p.Range.Start), WD_FIELD_EMPTY,
                            toc_code(upper_level, lower_level, hyperlinks, page_numbers,
@@ -153,11 +205,16 @@ def _kind(code: str) -> str:
 
 def _update_fields_impl(what, start, end):
     doc = backend.word.document()
-    updated, failed = [], []
+    updated, failed, skipped = [], [], []
     count = 0
     if what in ("tables_of_contents", "page_numbers") and start is None:
         tocs = doc.TablesOfContents
+        # TablesOfContents and the document's TOC fields run in the same order.
+        codes = [f.Code.Text for f in _fields_in(doc, None, None) if _kind(f.Code.Text) == "TOC"]
         for i in range(1, tocs.Count + 1):
+            if i <= len(codes) and not may_update(codes[i - 1]):
+                skipped.append(active_kind(codes[i - 1]))
+                continue
             toc = tocs.Item(i)
             try:
                 if what == "page_numbers":
@@ -179,7 +236,20 @@ def _update_fields_impl(what, start, end):
         else:
             fields = doc.Fields
         count = fields.Count
-        first_error = fields.Update()
+        # Locked for the update: Fields.Update has to be one call (above), and
+        # a locked field is the one it passes over.
+        kept = [] if _common.ALLOW_ACTIVE_FIELDS else [
+            f for f in (fields.Item(i) for i in range(1, count + 1)) if active_kind(f.Code.Text)]
+        skipped = [active_kind(f.Code.Text) for f in kept]
+        locked = [f for f in kept if not f.Locked]
+        for f in locked:
+            f.Locked = True
+        try:
+            first_error = fields.Update()
+        finally:
+            for f in locked:
+                f.Locked = False
+        count -= len(kept)
         updated = [f"{count} fields"] if count else []
         if first_error:
             failed.append(f"field {first_error} and possibly some after it")
@@ -192,15 +262,21 @@ def _update_fields_impl(what, start, end):
                 continue
             if what in ("tables_of_contents", "page_numbers") and kind != "TOC":
                 continue
+            if not may_update(f.Code.Text):
+                skipped.append(active_kind(f.Code.Text))
+                continue
             # Field.Update answers True when the update worked (the page's own
             # example tests for it).
             ok = f.Update()
             (updated if ok in (True, 1, -1, None) else failed).append(f"{kind} field {i}")
     total = count if what == "all" else len(updated)
     result = {"success": True, "updated": total, "which": updated[:50]}
-    if failed:
-        result["warnings"] = [f"Not updated: {', '.join(failed[:20])}."]
-    if not total and not failed:
+    warnings = [f"Not updated: {', '.join(failed[:20])}."] if failed else []
+    if skipped:
+        warnings.append(_active_note(skipped))
+    if warnings:
+        result["warnings"] = warnings
+    if not total and not failed and not skipped:
         result["note"] = "There was nothing of that kind to update."
     return result
 
@@ -234,6 +310,7 @@ class InsertFieldInput(Input):
 
 
 def _insert_field_impl(index, code, position, match):
+    check_field_code(code)
     doc = backend.word.document()
     p = paragraph(doc, index)
     rng = p.Range
@@ -331,9 +408,10 @@ def _mac_update_fields(what, start, end):
     if start is not None:
         s, e = m._span(doc, start, end)
         lo, hi = m._bounds(doc, s)[0], m._bounds(doc, e)[1]
-    updated, failed = [], []
+    updated, failed, skipped = [], [], []
     for i, f in enumerate(_mac_fields(doc), start=1):
-        kind = _kind(f.field_code.content.get())
+        code = f.field_code.content.get()
+        kind = _kind(code)
         if lo is not None and not lo <= f.field_code.start_of_content.get() < hi:
             continue
         if what == "numbers" and kind != "SEQ":
@@ -341,6 +419,9 @@ def _mac_update_fields(what, start, end):
         if what == "references" and kind not in REFERENCE_KINDS:
             continue
         if what in ("tables_of_contents", "page_numbers") and kind != "TOC":
+            continue
+        if not may_update(code):
+            skipped.append(active_kind(code))
             continue
         try:
             f.update_field()
@@ -351,9 +432,12 @@ def _mac_update_fields(what, start, end):
     if what == "page_numbers" and updated:
         result["note"] = ("On macOS a table of contents is updated whole: its entries "
                           "are rebuilt along with its page numbers.")
-    if failed:
-        result["warnings"] = [f"Not updated: {', '.join(failed[:20])}."]
-    if not updated and not failed:
+    warnings = [f"Not updated: {', '.join(failed[:20])}."] if failed else []
+    if skipped:
+        warnings.append(_active_note(skipped))
+    if warnings:
+        result["warnings"] = warnings
+    if not updated and not failed and not skipped:
         result["note"] = "There was nothing of that kind to update."
     return result
 
@@ -386,6 +470,7 @@ def _mac_list_fields(start, end):
 def _mac_insert_field(index, code, position, match):
     from . import mac as m
 
+    check_field_code(code)
     word = backend.word
     doc = word.document()
     m._para(doc, index)
@@ -444,7 +529,9 @@ def register(mcp) -> None:
     async def word_insert_field(params: InsertFieldInput) -> str:
         """Insert a field by its code (PAGE, DATE, STYLEREF, SEQ, REF...) at the
         start or end of a paragraph, or in place of some of its text, and read
-        what it shows."""
+        what it shows. Fields that reach outside the document (INCLUDETEXT,
+        INCLUDEPICTURE, DDE, LINK...) are refused unless the user has allowed
+        them, and word_update_fields leaves them as they are."""
         p = params
         return await call(_insert_field_impl, p.index, p.code, p.position, p.match,
                           undo="Insert field")

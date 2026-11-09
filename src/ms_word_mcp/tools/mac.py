@@ -762,7 +762,14 @@ def open_document(path, read_only, visible):
             return {"success": True, **_summary(app.documents[d.index]),
                     "already_open": True}
     before = {d.full_name for d in word.open_documents()}
-    app.open(file_name=path, read_only=read_only, add_to_recent_files=False)
+    # Macros are enabled for a file opened by a program (measured: the setting
+    # starts at low on the Mac too). See documents.macros_off.
+    was = app.automation_security.get()
+    app.automation_security.set(_k().msoAutomationSecurityForceDisable)
+    try:
+        app.open(file_name=path, read_only=read_only, add_to_recent_files=False)
+    finally:
+        app.automation_security.set(was)
     opened = [d for d in word.open_documents() if d.full_name not in before]
     if len(opened) != 1:
         raise RuntimeError(f"Word answered without error, but '{path}' is not among the "
@@ -789,10 +796,14 @@ def save_document_as(path, overwrite):
     if not os.path.exists(path):
         raise RuntimeError(f"Word answered without error, but there is no file at '{path}'.")
     if ext != ".pdf":
-        word.target_full_name = None
-        for d in word.open_documents():
-            if os.path.basename(d.full_name) == os.path.basename(path):
-                word.target_full_name = d.full_name
+        from ..backend.documents import full_name_key
+
+        named = [d for d in word.open_documents()
+                 if os.path.basename(d.full_name) == os.path.basename(path)]
+        exact = [d for d in named if full_name_key(d.full_name) == full_name_key(path)]
+        # By file name only when it cannot be another document of that name.
+        chosen = exact or (named if len(named) == 1 else [])
+        word.target_full_name = chosen[0].full_name if chosen else None
         own = word.target_full_name or own
     return {"success": True, "path": path, "bytes": os.path.getsize(path), "document": own}
 

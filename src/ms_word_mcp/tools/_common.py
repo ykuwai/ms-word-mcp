@@ -91,6 +91,23 @@ def _setting(name: str, default: bool) -> bool:
 
 #: Whether a writing call scrolls the document's window to what it changed.
 FOLLOW_EDITS = _setting("WORD_FOLLOW_EDITS", True)
+#: Whether fields that reach outside the document may be inserted and updated.
+ALLOW_ACTIVE_FIELDS = _setting("WORD_ALLOW_ACTIVE_FIELDS", False)
+#: Whether a file may be named by a network path (\\\\server\\share\\...).
+ALLOW_NETWORK_PATHS = _setting("WORD_ALLOW_NETWORK_PATHS", False)
+
+
+def local_path(path: str) -> str:
+    """Refuse a network path.
+
+    Saving to one sends the document to that server, and even asking Windows
+    whether the file exists connects to the server with the user's credentials.
+    """
+    if not ALLOW_NETWORK_PATHS and path[:2] in ("\\\\", "//", "\\/", "/\\"):
+        raise ValueError(f"'{path}' is on a network path, which is refused: a file sent there "
+                         "or read from there leaves this computer. Use a local path, or set "
+                         "WORD_ALLOW_NETWORK_PATHS=on in the server's settings.")
+    return path
 
 
 def error_text(exc: BaseException) -> str:

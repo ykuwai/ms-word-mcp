@@ -168,7 +168,8 @@ _RUBY_CODE = re.compile(r"\\s\\up\s*\d+\((.*?)\),(.*)\)\s*$", re.S)
 
 def ruby_of(code: str) -> tuple[str, str] | None:
     """(text, reading) from the EQ field Word stores ruby in, or None."""
-    m = _RUBY_CODE.search(code or "")
+    # The pattern backtracks, and a document can hold a field code of any length.
+    m = _RUBY_CODE.search(code) if code and len(code) <= 4000 else None
     return (m.group(2), m.group(1)) if m else None
 
 

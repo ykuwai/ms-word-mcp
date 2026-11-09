@@ -26,7 +26,8 @@ from pydantic import Field, field_validator, model_validator
 
 from .. import backend
 from . import _props as P
-from ._common import DESTRUCTIVE, READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow, mac_impl
+from ._common import (DESTRUCTIVE, READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow,
+                      local_path, mac_impl)
 from ._word import ALIGNMENTS, clean_text, paragraph
 
 # -- names ---------------------------------------------------------------------------
@@ -328,7 +329,7 @@ class InsertFloatingPictureInput(_Made, _Crop):
     def _absolute(cls, value: str) -> str:
         if not os.path.isabs(value):
             raise ValueError("path must be a full path.")
-        return value
+        return local_path(value)
 
     @model_validator(mode="after")
     def _floats(self):
@@ -360,8 +361,8 @@ class SetShapeInput(ShapeRef, _Position, _Wrap, _Common, _Look, _Text, _Crop):
         "Move it this many points right (negative: left) from where it is."))
     dtop: float | None = Field(None, description=(
         "Move it this many points down (negative: up) from where it is."))
-    width: float | None = Field(None, gt=0, le=1584)
-    height: float | None = Field(None, gt=0, le=1584)
+    width: float | None = Field(None, ge=0, le=1584, description="Points; 0 for an upright line.")
+    height: float | None = Field(None, ge=0, le=1584, description="Points; 0 for a level line.")
     rotation: float | None = Field(None, ge=-360, le=360)
     z_order: Literal[tuple(Z_ORDERS)] | None = Field(None, description=(  # type: ignore[valid-type]
         "Among the shapes on the page. front and back go all the way; forward and "
@@ -510,14 +511,20 @@ NO_TEXT_IN = ("A {kind} holds no text. Only a text box or a drawn shape does; "
 def _check_text_allowed(kind: str, spec: dict) -> None:
     if kind in NO_TEXT and any(key in spec for key in TEXT_KEYS):
         raise ValueError(NO_TEXT_IN.format(kind=kind))
+    if kind in ("picture", "linked_picture") and any(
+            key in spec for key in ("fill", "fill_transparency")):
+        raise ValueError("A picture has no fill to change, and Word took a transparency for it "
+                         "without doing anything. To fade a picture behind the text, put a "
+                         "white shape with fill_transparency over it.")
 
 
 def _finished(got: dict, spec: dict, page: dict, warnings: list[str],
               overflowing: bool) -> dict:
     warnings = [*warnings, *read_back_warnings(spec, got), *off_page_warnings(got, page)]
     if overflowing:
-        warnings.append("The text does not fit in the shape: make the shape larger or the "
-                        "text smaller.")
+        warnings.append("Word says the text does not fit in the shape, which it can say with "
+                        "room to spare. Look with word_get_page_image; if it is cut off, make "
+                        "the shape larger or the text smaller.")
     out = {"success": True, **got}
     if warnings:
         out["warnings"] = warnings
@@ -1327,8 +1334,8 @@ def register(mcp) -> None:
         left, top, horizontal_from and vertical_from. Use wrap behind for behind the
         text (背面) and front for over it. word_get_page_image shows the result.
 
-        Text in a drawn shape starts white, for the theme's dark fill: on a pale
-        fill, give font color too. word_undo does not take back a new shape on
+        A new shape goes on top of the ones before it. Text in a drawn shape
+        starts white, for the theme's dark fill: on a pale fill, give font color too. word_undo does not take back a new shape on
         the Mac: use word_delete_shape.
         """
         p = params

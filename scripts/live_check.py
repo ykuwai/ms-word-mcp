@@ -265,6 +265,7 @@ def run_steps(path: str) -> None:
     run_link_steps()
     run_shape_steps()
     run_floating_picture_steps(Path(path).parent)
+    run_safety_steps(Path(path).parent)
     step("picture of page 1", screen._get_page_image_impl, 1, None,
          check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)
     step("picture of the page a paragraph is on", screen._get_page_image_impl, None, 5,
@@ -784,6 +785,62 @@ def run_floating_picture_steps(folder: Path) -> None:
         picture.unlink(missing_ok=True)
         step("close the document for floating pictures", documents._close_document_impl, False)
         call_document.reset(token)
+
+
+def _macro_setting():
+    app = backend.word.get_app()
+    value = app.automation_security.get() if backend.IS_MACOS else app.AutomationSecurity
+    return {"success": True, "value": str(value)}
+
+
+_common.MAC_IMPLS[_macro_setting.__name__] = _macro_setting
+
+
+def _make_saved(path: str, words: str) -> None:
+    made = step(f"a saved document saying {words!r}", documents._create_document_impl, None, path)
+    if "error" in made:
+        return
+    token = call_document.set(made["full_name"])
+    try:
+        step("its words", text._insert_paragraphs_impl, [{"text": words, "style": "Normal"}],
+             None, None)
+        step("save it", documents._save_document_impl)
+    finally:
+        step("close it", documents._close_document_impl, True)
+        call_document.reset(token)
+
+
+def run_safety_steps(folder: Path) -> None:
+    """Macros stay off while a file opens; fields that reach outside are refused.
+
+    No such field is made here: Word stops on a dialog of its own when one is
+    updated, and a live check nobody is watching would wait there.
+    """
+    place = Path(references.CONTAINER) if backend.IS_MACOS else folder
+    outer = str(place / "live-safety.docx")
+    _make_saved(outer, "The document.")
+    before = step("the macro setting before opening", _macro_setting)
+    opened = step("open a document", documents._open_document_impl, outer, False, True,
+                  check=lambda o: "error" not in o)
+    step("the macro setting is put back", _macro_setting,
+         check=lambda o, was=before.get("value"): o["value"] == was)
+    if "error" in opened:
+        return
+    token = call_document.set(opened["full_name"])
+    insert = fields._insert_field_impl
+    try:
+        step("a field that reaches outside is refused", insert, 1, 'INCLUDETEXT "a.docx"', "end",
+             None, check=lambda o: "are refused" in o["error"])
+        step("in small letters, and quoted, too", insert, 1, '"ddeauto" x', "end", None,
+             check=lambda o: "are refused" in o["error"])
+        step("nothing was inserted", text._get_paragraphs_impl, 1, 1, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "The document.")
+        step("an ordinary field still goes in", insert, 1, "NUMPAGES", "end", None,
+             undo="Insert field", check=lambda o: "error" not in o)
+    finally:
+        step("close the document", documents._close_document_impl, False)
+        call_document.reset(token)
+        Path(outer).unlink(missing_ok=True)
 
 
 def run_picture_and_page_steps(folder: Path) -> None:
