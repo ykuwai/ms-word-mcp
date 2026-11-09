@@ -181,3 +181,27 @@ def test_describe_takes_the_document_argument_every_call_carries(word):
     has nothing to do with it and must not refuse it (ppt-mcp #367)."""
     lines = server.text_of(call("word_describe", {"document": "report.docx"}))
     assert "word_get_outline" in lines
+
+
+def test_references_are_whole_values_and_a_dollar_can_be_written():
+    results = [{"a": {"b": 7}}, {"c": 9}]
+    assert server.resolve_refs("$1.a.b", results) == 7
+    assert server.resolve_refs("$prev.c", results) == 9
+    assert server.resolve_refs({"x": ["$prev.c"]}, results) == {"x": [9]}
+    for text in ("$2.5 million", "$prev", "$5", "cost $1.a", "$1.a b"):
+        assert server.resolve_refs(text, results) == text
+    assert server.resolve_refs("$$1.a.b", results) == "$1.a.b"
+
+
+def test_a_reference_to_nothing_says_so():
+    with pytest.raises(Exception, match="has no result"):
+        server.resolve_refs("$3.a", [{"a": 1}])
+
+
+def test_a_client_is_told_what_a_tool_can_do():
+    assert server.effect_of(server.mcp.registered_tool("word_list_shapes")) == {
+        "read_only": True, "destructive": False}
+    assert server.effect_of(server.mcp.registered_tool("word_delete_shape")) == {
+        "read_only": False, "destructive": True}
+    assert server.effect_of(server.mcp.registered_tool("word_set_shape")) == {
+        "read_only": False, "destructive": False}

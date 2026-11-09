@@ -183,11 +183,10 @@ class ComWord(Worker):
             found = pick_document(self.open_documents(), wanted)
             return app.Documents.Item(found.index)
         if self.target_full_name:
-            try:
-                found = pick_document(self.open_documents(), self.target_full_name)
-                return app.Documents.Item(found.index)
-            except ValueError:
-                self.target_full_name = None  # it was closed
+            # An error when it has gone, as on the Mac: writing to whatever
+            # happens to be active would change a document nobody chose.
+            found = pick_document(self.open_documents(), self.target_full_name)
+            return app.Documents.Item(found.index)
         if app.Documents.Count == 0:
             raise ValueError(
                 "No document is open in Word. Open one with word_open_document or "

@@ -76,12 +76,10 @@ What the documentation leaves unstated, measured with `scripts/probes/windows_ch
 | UndoRecord, target active | Three edits inside one record were undone by one `Undo(1)`. `IsRecordingCustomRecord` was True while editing. |
 | UndoRecord, target **not** active | `IsRecordingCustomRecord` was False right after the edits: writing to a document that is not the active one ends the record. One `Undo(1)` took back only the last edit, a second the one before. The server does not switch the user's window to keep it; a call on such a document says in its result (`undo`) that it is not one undo step. |
 
-## From the reference branch
+## Earlier measurements by AlonSoko
 
-AlonSoko measured Word 16 on both platforms before writing his own version, and
-pushed it with the measurements to the `reference` branch of this repository
-(`docs/PROBES.md` there, with the probe scripts and their output under
-`probes/`). What bears on this server, in short:
+AlonSoko measured Word 16 on both platforms while writing an earlier version of
+this server. What bears on this one, in short:
 
 - **Reading one paragraph at a time is slow.** 1,000 paragraphs with their
   outline level took 20 s through COM and 15 s through Apple Events. The whole
@@ -319,4 +317,18 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | A crop | Counts the picture's own size: 5 on a picture shown at twice its size takes 10 points off the frame, in line and floating (90 to 80) | The same (120 to 110) |
 | A crop taken off | Width comes back 0.05 short | The same |
 | Changing the wrap | Moves the shape about 0.1 pt (100 to 99.9) | Did not move it here |
+
+## Fields inside fields, and macros (Word 16, both platforms)
+
+`scripts/probes/nested_fields.py`, and the safety steps of the live check.
+
+| What | Windows | Mac |
+|---|---|---|
+| A field inside another's code | The outer code reads `QUOTE "base" \\x13 QUOTE "inner" \\x15`; `Fields` lists both | The same |
+| Updating the outer one | Evaluates the inner one (`baseinner`) | The same |
+| A field's name built by another field | The code starts with `\\x13` | Not tried |
+| `\\x13 ... \\x15` written as text | Plain characters: no field | The same |
+| `Fields.Update` over a locked field | Passes over it and answers 0 | Fields are updated one at a time |
+| `AutomationSecurity` | Default low, by the page | Measured low; `automation security` reads and writes |
+| Whether a real macro stays off | Not measured: making a macro-enabled test document needs access to the VBA project | Not measured |
 

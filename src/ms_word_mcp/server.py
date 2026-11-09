@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import re
 import logging
 import os
 import sys
@@ -28,6 +29,7 @@ from pydantic import ValidationError
 
 from . import backend
 from .backend import call_document
+from .tools._common import DESTRUCTIVE, READ_ONLY, annotations
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr,
                     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
@@ -466,13 +468,36 @@ async def run_one(tool, params, document):
     return content_of(await mcp.call_tool(tool, arguments))
 
 
+def effect_of(tool) -> dict:
+    """Whether a tool only reads or can destroy, for a client deciding what to approve."""
+    hints = getattr(tool, "annotations", None)
+
+    def hint(camel: str, snake: str) -> bool:  # the SDK's 1.x and 2.x spell them differently
+        if isinstance(hints, dict):
+            return bool(hints.get(camel))
+        return bool(getattr(hints, snake, None) or getattr(hints, camel, None))
+
+    return {"read_only": hint("readOnlyHint", "read_only_hint"),
+            "destructive": hint("destructiveHint", "destructive_hint")}
+
+
+MAX_STEPS = 500
+#: A reference is the whole value: "$2.5 million" and "$prev" are plain text.
+REFERENCE = re.compile(r"\$(prev|\d+)\.[A-Za-z0-9_.]+$")
+
+
 def resolve_refs(value, results):
-    """Replace "$prev.key" and "$N.key" (N counts steps from 1) with that step's answer."""
+    """Replace "$prev.key" and "$N.key" (N counts steps from 1) with that step's answer.
+
+    "$$" at the start stands for a literal "$".
+    """
     if isinstance(value, dict):
         return {k: resolve_refs(v, results) for k, v in value.items()}
     if isinstance(value, list):
         return [resolve_refs(v, results) for v in value]
-    if not (isinstance(value, str) and value.startswith("$") and "." in value):
+    if isinstance(value, str) and value.startswith("$$"):
+        return value[1:]
+    if not (isinstance(value, str) and REFERENCE.match(value)):
         return value
     which, key = value[1:].split(".", 1)
     if which == "prev":
@@ -494,7 +519,7 @@ def resolve_refs(value, results):
     return node
 
 
-@mcp.tool(name="word_describe")
+@mcp.tool(name="word_describe", annotations=annotations("Describe the Word tools", READ_ONLY))
 async def word_describe(names: list[str] | None = None) -> str:
     """The Word tools: call with no names first for the list of all of them,
     one line each; then with the names you are about to use, once each, for
@@ -505,7 +530,7 @@ async def word_describe(names: list[str] | None = None) -> str:
     with word_describe().
     """
     if not names:
-        return (catalog_lines() + "\n\nNot here yet: comments and tracked changes, footnotes. "
+        return (catalog_lines() + "\n\nNot here yet: comments and tracked changes. "
                 "Paragraph direction (right to left), tab stops and "
                 "adding table columns work on Windows only."
                 "\n\nNext: word_describe(names=[...]) for the arguments of the tools "
@@ -519,14 +544,15 @@ async def word_describe(names: list[str] | None = None) -> str:
         schema = dict(tool.parameters or {})
         params = (schema.get("properties") or {}).get("params")
         found[name] = {"description": tool.description, "params": params,
-                       "takes_document": name not in TOOLS_WITHOUT_DOCUMENT_ARG}
+                       "takes_document": name not in TOOLS_WITHOUT_DOCUMENT_ARG,
+                       **effect_of(tool)}
     result = {"tools": found}
     if missing:
         result["unknown"] = missing
     return json.dumps(result, ensure_ascii=False)
 
 
-@mcp.tool(name="word_run")
+@mcp.tool(name="word_run", annotations=annotations("Run a Word tool", DESTRUCTIVE))
 async def word_run(tool: str, params: dict | None = None, document: str | None = None):
     """Run one Word tool: `tool` is its name, `params` its arguments as
     word_describe gives them, `document` the document it works on (optional,
@@ -534,17 +560,21 @@ async def word_run(tool: str, params: dict | None = None, document: str | None =
     return await run_one(tool, params, document)
 
 
-@mcp.tool(name="word_run_steps")
+@mcp.tool(name="word_run_steps", annotations=annotations("Run Word tools", DESTRUCTIVE))
 async def word_run_steps(steps: list[dict], document: str | None = None,
                          stop_on_error: bool = True):
     """Run several Word tools in order, in one call.
 
-    Each step is {"tool": name, "params": {...}}. A value "$prev.key" is the
-    previous step's result field, and "$2.inserted.0.index" the second
-    step's. A step fails when its tool raises or answers {"error": ...}; with
+    Each step is {"tool": name, "params": {...}}, with an optional "document"
+    of its own that wins over the one given here. A value that is exactly
+    "$prev.key" is the previous step's result field, and "$2.inserted.0.index"
+    the second step's; start a text with "$$" for a literal "$". A step fails when its tool raises or answers {"error": ...}; with
     stop_on_error, the first failing step ends the run and says why. Page
     pictures from word_get_page_image follow the report.
     """
+    if len(steps) > MAX_STEPS:
+        raise ToolError(f"{len(steps)} steps is more than the {MAX_STEPS} one call may run. "
+                        "Split them into several calls.")
     report, results, failed, images = [], [], [], []
     for number, step in enumerate(steps, start=1):
         step = step if isinstance(step, dict) else {}

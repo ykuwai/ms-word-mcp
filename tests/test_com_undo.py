@@ -1,3 +1,4 @@
+import pytest
 """One undo step per writing call, and an honest note when Word cannot give one."""
 
 from types import SimpleNamespace
@@ -62,3 +63,15 @@ def test_reads_and_failures_carry_no_note():
     word, record = make("C:/b.docx", "C:/a.docx")
     assert "undo" not in run(word, lambda: {"success": True}, undo=None)
     assert run(word, lambda: {"error": "x"}) == {"error": "x"}
+
+
+def test_a_target_that_was_closed_is_an_error_not_the_active_document():
+    word = com.ComWord()
+    word.app = SimpleNamespace(Documents=SimpleNamespace(Count=1),
+                               ActiveDocument=SimpleNamespace(FullName="C:\\other.docx"))
+    word.get_app = lambda allow_launch=False: word.app
+    word.open_documents = lambda: []
+    word.target_full_name = "C:\\gone.docx"
+    with pytest.raises(ValueError):
+        com.ComWord.document(word)
+    assert word.target_full_name == "C:\\gone.docx"

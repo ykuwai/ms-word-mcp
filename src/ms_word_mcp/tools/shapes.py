@@ -26,7 +26,8 @@ from pydantic import Field, field_validator, model_validator
 
 from .. import backend
 from . import _props as P
-from ._common import DESTRUCTIVE, READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow, mac_impl
+from ._common import (DESTRUCTIVE, READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow,
+                      local_path, mac_impl)
 from ._word import ALIGNMENTS, clean_text, paragraph
 
 # -- names ---------------------------------------------------------------------------
@@ -328,7 +329,7 @@ class InsertFloatingPictureInput(_Made, _Crop):
     def _absolute(cls, value: str) -> str:
         if not os.path.isabs(value):
             raise ValueError("path must be a full path.")
-        return value
+        return local_path(value)
 
     @model_validator(mode="after")
     def _floats(self):

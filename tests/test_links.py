@@ -172,3 +172,18 @@ def test_a_change_changes_something():
     with pytest.raises(ValidationError):
         links.SetHyperlinkInput(number=1)
     assert links.SetHyperlinkInput(number=1, screen_tip="").screen_tip == ""
+
+
+@pytest.mark.parametrize("address", [
+    "file:///C:/a.exe", "javascript:alert(1)", "\\\\\\\\host\\\\x", "//host/x", "ms-word:ofe|u|x", "C:\\\\a.exe"])
+def test_an_address_that_opens_something_is_refused(address):
+    with pytest.raises(ValidationError, match="is refused"):
+        links.InsertHyperlinkInput(index=1, address=address)
+    with pytest.raises(ValidationError, match="is refused"):
+        links.SetHyperlinkInput(number=1, address=address)
+
+
+@pytest.mark.parametrize("address", ["https://a.example/x", "HTTP://a.example", "mailto:a@b.example",
+                                     "tel:+81", "report.pdf"])
+def test_ordinary_addresses_are_taken(address):
+    assert links.InsertHyperlinkInput(index=1, address=address).address == address

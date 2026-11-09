@@ -98,7 +98,35 @@ Other clients (Claude Desktop, Cursor, `.mcp.json`):
 |---|---|---|
 | `WORD_TOOL_MODE` | `catalog` | `catalog` lists three tools that reach the rest; `full` lists every tool. |
 | `WORD_MAC_FILES_DIR` | the document's folder | macOS: where Word writes the PDF a page picture is drawn from, for a moment. By default the document's own folder (Word already has access there), or Word's own folder for a document never saved. |
+| `WORD_ALLOW_ACTIVE_FIELDS` | `off` | Allow fields that reach outside the document: INCLUDETEXT, INCLUDEPICTURE, INCLUDE, LINK, IMPORT, RD, EMBED, DATABASE, DDE, DDEAUTO, MACROBUTTON, PRINT, ASK, FILLIN. Off, `word_insert_field` refuses them and `word_update_fields` leaves the ones already in a document as they are. |
+| `WORD_ALLOW_NETWORK_PATHS` | `off` | Allow files named by a network path (`\\\\server\\share\\...`). Off, they are refused: saving to one sends the document to that server, and even checking for the file connects to it with your credentials. |
 | `WORD_FOLLOW_EDITS` | `on` | Scroll the document's window to each change. With a second window open on the document (View > New Window), the last one follows and the first stays where you are. |
+
+## Security
+
+The server runs on your computer with your permissions and talks to one local
+client over stdio; it opens no port and makes no network request of its own.
+
+An AI using these tools can read and change any document open in Word, open
+any file Word can open, and save or embed files wherever your account can
+write or read. Text inside a document, a web page or another tool's answer can
+try to steer the AI, so check what it does with documents you received from
+someone else, and approve its tool calls where that matters.
+
+What the server does about it:
+
+- Macros are disabled while it opens a document or creates one from a template.
+  Word would otherwise run them. The document stays open with macros off.
+- Fields that reach outside the document are refused and left alone unless you
+  set `WORD_ALLOW_ACTIVE_FIELDS` (see [Settings](#settings)).
+- Network paths are refused unless you set `WORD_ALLOW_NETWORK_PATHS`.
+- A new link goes to http, https, mailto or tel, or to a path relative to the
+  document. A link the document already has is left as it is.
+
+What it does not do: a document opened through these tools does not get Word's
+Protected View, so open only documents you would open yourself.
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## On macOS
 
