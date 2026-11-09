@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["mcp", "word", "microsoft-word", "com", "applescript", "automation", "ai-agent", "llm"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
@@ -33,7 +33,7 @@ dependencies = [
     # installable on the other platform, so both carry a marker.
     "pywin32>=306; sys_platform == 'win32'",
     "appscript>=1.4.0; sys_platform == 'darwin'",
-    # Word's window is found by its window id for a screenshot on the Mac.
+    # The Mac draws a page of the PDF Word saves into a PNG with Quartz.
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
 ]
 
