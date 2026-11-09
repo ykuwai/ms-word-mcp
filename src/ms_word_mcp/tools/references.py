@@ -28,6 +28,7 @@ from pydantic import Field, field_validator, model_validator
 from .. import backend
 from ._common import READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow, mac_impl
 from ._word import ALIGNMENTS, clean_text, paragraph
+from .shapes import CROPS, _Crop, _Position, _Wrap
 
 CONTAINER = os.path.expanduser("~/Library/Containers/com.microsoft.Word/Data/Documents")
 ALIGN_CHOICES = Literal["left", "center", "right"]
@@ -72,7 +73,7 @@ class InsertPictureInput(Input):
         return self
 
 
-class SetPictureInput(Input):
+class SetPictureInput(_Position, _Wrap, _Crop):
     picture: int = Field(..., ge=1, description="The picture, numbered from 1 in the document.")
     width: float | None = Field(None, gt=0, description=(
         "Width in points. Given alone, the height follows in proportion."))
@@ -80,11 +81,22 @@ class SetPictureInput(Input):
         "Height in points. Given alone, the width follows in proportion."))
     alignment: ALIGN_CHOICES | None = None
     alt_text: str | None = None
+    name: Trimmed | None = Field(None, min_length=1, max_length=255, description=(
+        "With wrap: a name of its own once it floats."))
 
     @model_validator(mode="after")
     def _something(self):
-        if all(getattr(self, n) is None for n in ("width", "height", "alignment", "alt_text")):
-            raise ValueError("Give at least one of width, height, alignment, alt_text.")
+        given = self.model_dump(exclude_none=True, exclude={"picture"})
+        if not given:
+            raise ValueError("Give at least one thing to change.")
+        floating = [n for n in ("left", "top", "horizontal_from", "vertical_from", "wrap_side",
+                                "wrap_distance", "name") if n in given]
+        if self.wrap is None and floating:
+            raise ValueError(f"{', '.join(floating)} only mean something for a picture that "
+                             "floats. Give `wrap` too, such as square or behind.")
+        if self.wrap == "inline":
+            raise ValueError("It is in line with the text already. A floating picture goes "
+                             "back with word_set_shape and wrap inline.")
         return self
 
 
@@ -175,7 +187,8 @@ def _shape(doc, number: int):
     count = doc.InlineShapes.Count
     if not 1 <= number <= count:
         raise ValueError(f"There is no picture {number}: the document has {count} "
-                         "(numbered from 1; word_list_pictures lists them).")
+                         "(numbered from 1; word_list_pictures lists them; pictures "
+                         "that float are in word_list_shapes).")
     return doc.InlineShapes.Item(number)
 
 
@@ -233,10 +246,21 @@ def _list_pictures_impl():
         for n in range(1, doc.InlineShapes.Count + 1)]}
 
 
-def _set_picture_impl(picture, width, height, alignment, alt_text):
+def _set_picture_impl(picture, width, height, alignment, alt_text, spec):
+    from .shapes import _check_name, crop_picture, float_picture
+
     doc = backend.word.document()
     shape = _shape(doc, picture)
+    if "wrap" in spec:
+        _check_name(doc, spec.get("name"))
+    if any(side in spec for side in CROPS):  # first: if it is refused, nothing else has changed
+        crop_picture(shape, spec)
     warnings = _apply_picture(doc, shape, width, height, alignment, alt_text)
+    if "wrap" in spec:
+        out = float_picture(doc, shape, {k: v for k, v in spec.items() if k not in CROPS})
+        if warnings:
+            out["warnings"] = [*warnings, *out.get("warnings", [])]
+        return out
     follow(doc, shape.Range)
     result = {"success": True, **_describe_picture(doc, shape, picture)}
     if warnings:
@@ -348,7 +372,8 @@ def _mac_shape(doc, number: int):
     count = int(doc.count(each=k.inline_shape))
     if not 1 <= number <= count:
         raise ValueError(f"There is no picture {number}: the document has {count} "
-                         "(numbered from 1; word_list_pictures lists them).")
+                         "(numbered from 1; word_list_pictures lists them; pictures "
+                         "that float are in word_list_shapes).")
     return doc.inline_shapes[number]
 
 
@@ -431,10 +456,21 @@ def _mac_list_pictures():
 
 
 @mac_impl(_set_picture_impl)
-def _mac_set_picture(picture, width, height, alignment, alt_text):
+def _mac_set_picture(picture, width, height, alignment, alt_text, spec):
+    from .shapes import _mac_check_name, mac_crop_picture, mac_float_picture
+
     doc = backend.word.document()
     shape = _mac_shape(doc, picture)
+    if "wrap" in spec:
+        _mac_check_name(doc, spec.get("name"))
+    if any(side in spec for side in CROPS):  # first: if it is refused, nothing else has changed
+        mac_crop_picture(shape, spec)
     warnings = _mac_apply_picture(doc, shape, width, height, alignment, alt_text)
+    if "wrap" in spec:
+        out = mac_float_picture(doc, picture, {k: v for k, v in spec.items() if k not in CROPS})
+        if warnings:
+            out["warnings"] = [*warnings, *out.get("warnings", [])]
+        return out
     result = {"success": True, **_mac_describe_picture(doc, shape, picture)}
     if warnings:
         result["warnings"] = warnings
@@ -566,11 +602,18 @@ def register(mcp) -> None:
 
     @mcp.tool(name="word_set_picture", annotations=annotations("Change a picture", WRITES))
     async def word_set_picture(params: SetPictureInput) -> str:
-        """Change a picture's size, alignment or alt text. To delete one,
-        delete its paragraph."""
+        """Change a picture in the text: size, alignment, alt text, crop. Give
+        `wrap` to take it out of the line of text so it floats: square, tight,
+        through or top_and_bottom for text round it, behind for behind the text
+        (背面), front for over it, with left, top, horizontal_from and
+        vertical_from for its place. It answers the name word_set_shape takes
+        from then on. To delete a picture in the text, delete its paragraph."""
         p = params
         return await call(_set_picture_impl, p.picture, p.width, p.height, p.alignment,
-                          p.alt_text, undo="Change picture")
+                          p.alt_text,
+                          p.model_dump(exclude_none=True, exclude={
+                              "picture", "width", "height", "alignment", "alt_text"}),
+                          undo="Change picture")
 
     @mcp.tool(name="word_insert_caption", annotations=annotations("Insert a caption", WRITES))
     async def word_insert_caption(params: InsertCaptionInput) -> str:

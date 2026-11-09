@@ -19,6 +19,7 @@ was measured on both platforms (docs/PROBES.md) decides how these are written:
 from __future__ import annotations
 
 import difflib
+import os
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -232,6 +233,14 @@ class _Text(Input):
         "turn horizontal text a quarter turn."))
 
 
+class _Crop(Input):
+    crop_left: float | None = Field(None, ge=0, le=1584, description=(
+        "Points to cut off the left of a picture, as it is shown now. 0 takes the cut away."))
+    crop_top: float | None = Field(None, ge=0, le=1584, description="Likewise the top.")
+    crop_right: float | None = Field(None, ge=0, le=1584, description="Likewise the right.")
+    crop_bottom: float | None = Field(None, ge=0, le=1584, description="Likewise the bottom.")
+
+
 class _Common(Input):
     name: Trimmed | None = Field(None, min_length=1, max_length=255, description=(
         "A name of its own in this document, to find it by later. Word gives one if "
@@ -307,6 +316,27 @@ class InsertLineInput(_Made):
         return self
 
 
+class InsertFloatingPictureInput(_Made, _Crop):
+    path: Trimmed = Field(..., min_length=1, description="Full path of the picture file.")
+    width: float | None = Field(None, gt=0, le=1584, description=(
+        "Width in points. Given alone, the height follows in proportion."))
+    height: float | None = Field(None, gt=0, le=1584, description=(
+        "Height in points. Given alone, the width follows in proportion."))
+
+    @field_validator("path")
+    @classmethod
+    def _absolute(cls, value: str) -> str:
+        if not os.path.isabs(value):
+            raise ValueError("path must be a full path.")
+        return value
+
+    @model_validator(mode="after")
+    def _floats(self):
+        if self.wrap == "inline":
+            raise ValueError("A picture in line with the text is word_insert_picture's.")
+        return self
+
+
 class ListShapesInput(Input):
     start: int = Field(1, ge=1, description="The first shape to list, numbered from 1.")
     limit: int = Field(50, ge=1, le=200)
@@ -325,7 +355,7 @@ class ShapeRef(Input):
         return value
 
 
-class SetShapeInput(ShapeRef, _Position, _Wrap, _Common, _Look, _Text):
+class SetShapeInput(ShapeRef, _Position, _Wrap, _Common, _Look, _Text, _Crop):
     dleft: float | None = Field(None, description=(
         "Move it this many points right (negative: left) from where it is."))
     dtop: float | None = Field(None, description=(
@@ -429,6 +459,44 @@ def off_page_warnings(got: dict, page: dict) -> list[str]:
     return out
 
 
+CROPS = ("crop_left", "crop_right", "crop_top", "crop_bottom")
+CROP_MEMBERS = {"crop_left": "CropLeft", "crop_right": "CropRight", "crop_top": "CropTop",
+                "crop_bottom": "CropBottom"}
+NOT_A_PICTURE = "Only a picture can be cropped; this is a {kind}."
+
+
+def apply_crop(spec: dict, read, write, size) -> None:
+    """Crop by points as the picture is shown now.
+
+    Word counts a crop against the picture's own size, so one shown at twice
+    that loses 10 points for a crop of 5 (measured on both platforms). The
+    scale cannot be read anywhere, so it is measured: a small crop, the
+    change in the frame, and the crop put back. Both directions are checked
+    before either is cropped.
+    """
+    planned = []
+    for axis, sides in (("width", CROPS[:2]), ("height", CROPS[2:])):
+        given = [side for side in sides if side in spec]
+        if not given:
+            continue
+        shown, first = size(axis), read(given[0])
+        step = 5.0 if shown >= 50 else 1.0
+        write(given[0], first + step)
+        scale = round((shown - size(axis)) / step, 3)
+        write(given[0], first)
+        if scale <= 0:
+            raise ValueError("Word did not change the picture's frame for a small crop, so "
+                             "how far it is scaled cannot be measured. Nothing was cropped.")
+        whole = size(axis) + sum(read(side) for side in sides) * scale
+        wanted = sum(spec.get(side, read(side) * scale) for side in sides)
+        if wanted >= whole - 1:
+            raise ValueError(f"Those crops leave nothing of the picture: it is {whole:g} pt "
+                             "across before cropping. Nothing was cropped.")
+        planned += [(side, spec[side] / scale) for side in given]
+    for side, value in planned:
+        write(side, value)
+
+
 NOT_FOUND = "There is no shape named '{name}'. word_list_shapes lists them."
 TWO_NAMES = ("{count} shapes are named '{name}'. Use its number (word_list_shapes), and "
              "give it a name of its own with `name`.")
@@ -523,6 +591,8 @@ def _describe(doc, s, number: int) -> dict:
         out["line_color"] = "none" if not s.Line.Visible else P.hex_of(s.Line.ForeColor.RGB)
         out["line_weight"] = round(s.Line.Weight, 2)
         out["line_dash"] = _name_for(DASHES, s.Line.DashStyle)
+    if kind == "picture" and any(getattr(s.PictureFormat, m) for m in CROP_MEMBERS.values()):
+        out["cropped"] = True
     if kind == "line":
         out["begin_arrow"] = _name_for(ARROWS, s.Line.BeginArrowheadStyle)
         out["end_arrow"] = _name_for(ARROWS, s.Line.EndArrowheadStyle)
@@ -615,8 +685,24 @@ def _place(s, spec: dict) -> None:
         s.Top = _moved(position_name(s.Top, NAMED_TOP), spec["dtop"], "dtop")
 
 
+def crop_picture(target, spec: dict) -> None:
+    """Crop an inline picture or a floating one."""
+    fmt = target.PictureFormat
+    apply_crop(spec, lambda side: getattr(fmt, CROP_MEMBERS[side]),
+               lambda side, value: setattr(fmt, CROP_MEMBERS[side], value),
+               lambda axis: target.Width if axis == "width" else target.Height)
+
+
+def _crop(s, spec: dict, kind: str) -> None:
+    if any(side in spec for side in CROPS):
+        if kind not in ("picture", "linked_picture"):
+            raise ValueError(NOT_A_PICTURE.format(kind=kind))
+        crop_picture(s, spec)
+
+
 def _apply(s, spec: dict, kind: str) -> list[str]:
     _check_text_allowed(kind, spec)
+    _crop(s, spec, kind)  # first: if it is refused, nothing else has changed
     warnings = []
     if "kind" in spec:
         s.AutoShapeType = KINDS[spec["kind"]]
@@ -690,6 +776,35 @@ def _insert_line_impl(index, begin_x, begin_y, end_x, end_y, spec):
     s = doc.Shapes.AddLine(begin_x, begin_y, end_x, end_y, anchor)
     full = {**_new_spec(spec, "front"), **line_endpoints(begin_x, begin_y, end_x, end_y)}
     return _finish_new(doc, s, full, "line")
+
+
+def _picture_spec(spec: dict) -> dict:
+    """What a picture gets once it floats: its alt text is set while it is in line."""
+    return _new_spec({k: v for k, v in spec.items() if k != "alt_text"}, "square")
+
+
+def float_picture(doc, inline, spec: dict) -> dict:
+    """An inline picture out of the text, at the place `spec` gives."""
+    s = inline.ConvertToShape()
+    return {**_finish_new(doc, s, _picture_spec(spec), "picture"), "now": "floating",
+            "note": "It floats now: word_list_shapes lists it, and word_set_shape changes it."}
+
+
+def _insert_floating_picture_impl(path, index, width, height, spec):
+    from .references import _apply_picture
+
+    if not os.path.isfile(path):
+        raise ValueError(f"There is no file at '{path}'.")
+    doc = backend.word.document()
+    _check_name(doc, spec.get("name"))
+    start = paragraph(doc, index).Range.Start
+    inline = doc.InlineShapes.AddPicture(path, False, True, doc.Range(start, start))
+    warnings = _apply_picture(doc, inline, width, height, None, spec.get("alt_text"))
+    s = inline.ConvertToShape()
+    out = _finish_new(doc, s, _picture_spec(spec), "picture")
+    if warnings:
+        out["warnings"] = [*warnings, *out.get("warnings", [])]
+    return out
 
 
 def _list_shapes_impl(start, limit):
@@ -870,6 +985,8 @@ def _mac_describe(doc, s, number: int) -> dict:
         out["line_color"] = "none" if not line.visible.get() else P._mac_hex(line.fore_color.get())
         out["line_weight"] = round(line.weight.get(), 2)
         out["line_dash"] = m._name(line.dash_style_.get()).removeprefix("line_dash_style_")
+    if kind == "picture" and any(getattr(s.picture_format, side).get() for side in CROPS):
+        out["cropped"] = True
     if kind == "line":
         out["begin_arrow"] = _mac_key(ARROWS_MAC, s.line_format.begin_arrowhead_style.get())
         out["end_arrow"] = _mac_key(ARROWS_MAC, s.line_format.end_arrowhead_style.get())
@@ -969,10 +1086,22 @@ def _mac_place(s, spec: dict) -> None:
         s.top.set(_moved(position_name(s.top.get(), NAMED_TOP), spec["dtop"], "dtop"))
 
 
+def mac_crop_picture(target, spec: dict) -> None:
+    """Crop an inline picture or a floating one."""
+    fmt = target.picture_format
+    apply_crop(spec, lambda side: getattr(fmt, side).get(),
+               lambda side, value: getattr(fmt, side).set(value),
+               lambda axis: getattr(target, axis).get())
+
+
 def _mac_apply(s, spec: dict, kind: str) -> list[str]:
     from appscript import k
 
     _check_text_allowed(kind, spec)
+    if any(side in spec for side in CROPS):  # first: if it is refused, nothing else has changed
+        if kind not in ("picture", "linked_picture"):
+            raise ValueError(NOT_A_PICTURE.format(kind=kind))
+        mac_crop_picture(s, spec)
     warnings = []
     if "kind" in spec:
         s.auto_shape_type.set(_mac_kind(spec["kind"]))
@@ -1066,6 +1195,48 @@ def _mac_insert_line(index, begin_x, begin_y, end_x, end_y, spec):
             k.end_line_Y: end_y, k.anchor: doc.paragraphs[index].text_object}))
     full = {**_new_spec(spec, "front"), **line_endpoints(begin_x, begin_y, end_x, end_y)}
     return _mac_finish_new(doc, name, full, "line")
+
+
+def mac_float_picture(doc, number: int, spec: dict) -> dict:
+    """An inline picture out of the text, at the place `spec` gives."""
+    name = _mac_made(doc, _mac_names(doc), doc.inline_shapes[number].convert_to_shape)
+    return {**_mac_finish_new(doc, name, _picture_spec(spec), "picture"), "now": "floating",
+            "note": "It floats now: word_list_shapes lists it, and word_set_shape changes it."}
+
+
+@mac_impl(_insert_floating_picture_impl)
+def _mac_insert_floating_picture(path, index, width, height, spec):
+    from appscript import k
+
+    from . import mac as m
+    from .references import _mac_apply_picture, _mac_stage
+
+    if not os.path.isfile(path):
+        raise ValueError(f"There is no file at '{path}'.")
+    doc = backend.word.document()
+    m._para(doc, index)
+    _mac_check_name(doc, spec.get("name"))
+    start, _ = m._bounds(doc, index)
+    count = int(doc.count(each=k.inline_shape))
+    staged, copied = _mac_stage(path)
+    try:
+        doc.make(new=k.inline_picture, at=doc.create_range(start=start, end_=start),
+                 with_properties={k.file_name: staged, k.link_to_file: False,
+                                  k.save_with_document: True})
+    finally:
+        if copied:
+            os.remove(staged)
+    if int(doc.count(each=k.inline_shape)) != count + 1:
+        raise RuntimeError("Word answered without error, but no picture was added.")
+    number = next(n for n in range(1, count + 2)
+                  if doc.inline_shapes[n].text_object.start_of_content.get() >= start)
+    warnings = _mac_apply_picture(doc, doc.inline_shapes[number], width, height, None,
+                                  spec.get("alt_text"))
+    name = _mac_made(doc, _mac_names(doc), doc.inline_shapes[number].convert_to_shape)
+    out = _mac_finish_new(doc, name, _picture_spec(spec), "picture")
+    if warnings:
+        out["warnings"] = [*warnings, *out.get("warnings", [])]
+    return out
 
 
 @mac_impl(_list_shapes_impl)
@@ -1188,6 +1359,19 @@ def register(mcp) -> None:
                           spec_of(p, "index", "begin_x", "begin_y", "end_x", "end_y"),
                           undo="Insert line")
 
+    @mcp.tool(name="word_insert_floating_picture",
+              annotations=annotations("Insert a floating picture", WRITES))
+    async def word_insert_floating_picture(params: InsertFloatingPictureInput) -> str:
+        """Put a picture from a file on the page, anchored to a paragraph: text flows
+        round it (wrap square), or it sits behind the text (wrap behind, 背面) or over
+        it (wrap front). It takes the same placing as word_insert_shape. It goes in the
+        paragraph you name and adds none; word_insert_picture is for a picture in
+        line with the text. Answers its name, for word_set_shape."""
+        p = params
+        return await call(_insert_floating_picture_impl, p.path, p.index, p.width, p.height,
+                          spec_of(p, "path", "index", "width", "height"),
+                          undo="Insert floating picture")
+
     @mcp.tool(name="word_list_shapes", annotations=annotations("List shapes", READ_ONLY))
     async def word_list_shapes(params: ListShapesInput) -> str:
         """Everything floating in the document's body, in reading order: name, kind,
@@ -1202,7 +1386,7 @@ def register(mcp) -> None:
         """Change a floating shape, text box, line or picture: move it (left, top,
         or by dleft, dtop), resize it, change its wrap (behind, front, square,
         inline...), its order among shapes, rotation, fill, outline, text, font,
-        kind or name. Only what is given changes, and it is read back.
+        kind or name; crop a picture. Only what is given changes, and it is read back.
 
         A picture set to wrap inline goes into the text as an inline picture. A
         shape stays anchored to its paragraph: to take it to another paragraph,

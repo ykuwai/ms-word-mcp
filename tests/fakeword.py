@@ -348,11 +348,16 @@ class FakeRange:
     @property
     def Sections(self):
         setup = SimpleNamespace(PageWidth=595.3, PageHeight=841.9, LeftMargin=85.05,
-                                TopMargin=99.25)
+                                TopMargin=99.25, RightMargin=85.05, Gutter=0)
         return SimpleNamespace(Item=lambda i: SimpleNamespace(PageSetup=setup))
 
     def Information(self, kind):
         return 1
+
+    @property
+    def InlineShapes(self):
+        found = [i for i in self.doc.InlineShapes.items if i.Range.Start < self.End]
+        return SimpleNamespace(Count=len(found), Item=lambda n: found[n - 1])
 
     @property
     def Font(self):
@@ -597,6 +602,59 @@ class FakeLineFrame:
         raise RuntimeError("This object does not support attached text.")
 
 
+class FakePictureFormat:
+    """A crop counts the picture's own size, so the frame moves by crop x scale."""
+
+    SIDES = {"CropLeft": "Width", "CropRight": "Width", "CropTop": "Height", "CropBottom": "Height"}
+
+    def __init__(self, owner, scale=2.0):
+        self.__dict__.update(owner=owner, scale=scale, crops=dict.fromkeys(self.SIDES, 0.0))
+
+    def __getattr__(self, name):
+        return self.crops[name]
+
+    def __setattr__(self, name, value):
+        change = (value - self.crops[name]) * self.scale
+        self.crops[name] = value
+        size = self.SIDES[name]
+        setattr(self.owner, size, getattr(self.owner, size) - change)
+
+
+class FakeInlineShape:
+    def __init__(self, doc, width, height, at):
+        self.doc = doc
+        self.Width = float(width)
+        self.Height = float(height)
+        self.LockAspectRatio = -1
+        self.AlternativeText = ""
+        self.Range = FakeRange(doc, at, at + 1)
+        self.PictureFormat = FakePictureFormat(self)
+
+    def ConvertToShape(self):
+        self.doc.InlineShapes.items.remove(self)
+        made = self.doc.Shapes._add(13, -2, self.Width, self.Height, self.Range)
+        made.AlternativeText = self.AlternativeText
+        made.PictureFormat = FakePictureFormat(made)
+        return made
+
+
+class FakeInlineShapes:
+    def __init__(self, doc):
+        self.doc = doc
+        self.items = []
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def Item(self, i):
+        return self.items[i - 1]
+
+    def AddPicture(self, path, link, save, where):
+        self.items.append(FakeInlineShape(self.doc, 90, 45, where.Start))
+        return self.items[-1]
+
+
 class FakeShape:
     next_id = 100
 
@@ -641,11 +699,17 @@ class FakeShape:
         self.shapes.items.remove(self)
 
     def ConvertToInlineShape(self):
-        raise NotImplementedError
+        self.Delete()
+        doc = self.shapes.doc
+        made = FakeInlineShape(doc, self.Width, self.Height, self.Anchor.Start)
+        made.AlternativeText = self.AlternativeText
+        doc.InlineShapes.items.append(made)
+        return made
 
 
 class FakeShapes:
-    def __init__(self):
+    def __init__(self, doc=None):
+        self.doc = doc
         self.items = []
 
     @property
@@ -672,7 +736,8 @@ class FakeShapes:
 class FakeDocument:
     def __init__(self, paragraphs=("",), name="Doc1.docx", path="C:\\docs",
                  styles=None):
-        self.Shapes = FakeShapes()
+        self.Shapes = FakeShapes(self)
+        self.InlineShapes = FakeInlineShapes(self)
         self.Footnotes = FakeNotes(self)
         self.Endnotes = FakeNotes(self)
         self.Hyperlinks = FakeHyperlinks()

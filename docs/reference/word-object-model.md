@@ -1440,6 +1440,7 @@ Pages: [Shapes](https://learn.microsoft.com/en-us/office/vba/api/word.shapes), [
 - The pages for AddShape, AddTextbox and AddLine leave out the final `Anchor` argument. It works (measured, both platforms).
 - WdWrapType: inline 7, none 3, square 0, through 2, tight 1, top-bottom 4, behind 5, front 3.
 - WdShapePosition: bottom -999997, center -999995, inside -999994, left -999998, outside -999993, right -999996, top -999999.
+- `InlineShape.ConvertToShape` returns the floating Shape ([page](https://learn.microsoft.com/en-us/office/vba/api/word.inlineshape.converttoshape)); the page's remark about `AddNodes` concerns FreeformBuilder and does not apply to a picture.
 - ConvertToInlineShape: "You can convert only shapes that represent pictures, OLE objects, or ActiveX controls"; on a drawn shape, measured, it answers an object and the shape stays in `Shapes`.
 
 ## E. Behaviour questions
