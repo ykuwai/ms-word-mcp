@@ -428,6 +428,8 @@ def _argument_names(tool) -> str:
     names = list((params.get("properties") or {}).keys())
     if not names:
         return "()"
+    required = params.get("required") or []
+    names.sort(key=lambda name: name not in required)  # stable: what must be given comes first
     shown = names[:6]
     return "(" + ", ".join(shown) + (", …" if len(names) > 6 else "") + ")"
 

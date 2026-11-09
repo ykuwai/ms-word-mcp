@@ -205,3 +205,10 @@ def test_a_client_is_told_what_a_tool_can_do():
         "read_only": False, "destructive": True}
     assert server.effect_of(server.mcp.registered_tool("word_set_shape")) == {
         "read_only": False, "destructive": False}
+
+
+def test_the_list_shows_what_must_be_given_first():
+    line = next(l for l in server.catalog_lines().splitlines() if l.startswith("word_set_shape("))
+    assert line.startswith("word_set_shape(shape,")
+    line = next(l for l in server.catalog_lines().splitlines() if l.startswith("word_insert_shape("))
+    assert line.startswith("word_insert_shape(index, width, height, kind,")
