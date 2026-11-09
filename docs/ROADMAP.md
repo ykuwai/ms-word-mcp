@@ -55,6 +55,9 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
   fields, the tables of contents (whole or page numbers only) or the SEQ
   numbers, in the whole document or in some paragraphs.
 
+- Footnotes and endnotes: add one at the end of a paragraph or right after
+  some text, list them with the paragraph of each mark, change the text, delete.
+
 - Pictures in line with the text, numbered captions under any label in any
   language, live cross-references to captions, equations and headings.
 - The page: paper, margins, columns, document grid, vertical text; headers,
@@ -96,7 +99,7 @@ Then, ordered roughly by what the owner stressed.
 4. **Figures and tables, the rest.** Floating pictures, cropping, a list of
    figures, numbers with the chapter (2.1); splitting cells, sorting, table
    borders one side at a time.
-5. **Footnotes and endnotes**, hyperlinks, bookmarks of the user's own.
+5. Hyperlinks, bookmarks of the user's own.
 6. **Japanese typography, the rest.** Removing ruby outright, vertical text
    in part of a page (text boxes), tate-chu-yoko.
 7. **View.** Zoom (percentage, page width, whole page), view type, follow

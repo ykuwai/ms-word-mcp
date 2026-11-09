@@ -225,7 +225,7 @@ user to stop typing.
    giving each paragraph its style. Formatting text directly
    (`word_format_text`, `word_set_paragraph_format`) is for the exceptions.
 4. Lists (`word_apply_list`), tables (`word_insert_table` with all the
-   cells at once), equations (`word_insert_equation`, LaTeX or UnicodeMath,
+   cells at once), footnotes and endnotes (`word_insert_note`), equations (`word_insert_equation`, LaTeX or UnicodeMath,
    `numbered` for (1), (2)...), fields and tables of contents.
    Insert a table of contents last, since it adds paragraphs above the rest.
 5. Look at the result: `word_get_page_image` shows a page as Word lays it
@@ -282,11 +282,11 @@ mainly Latin document. East Asian layouts measure spacing in grid lines
 mcp = WordServer("ms_word_mcp", lifespan=app_lifespan, instructions=INSTRUCTIONS)
 
 from .tools import (  # noqa: E402,F401 - mac registers the Mac halves
-    documents, edit, equations, fields, formatting, lists, mac, page, references, screen, tables,
-    text, view)
+    documents, edit, equations, fields, formatting, lists, mac, notes, page, references, screen,
+    tables, text, view)
 
-for module in (documents, text, formatting, lists, tables, references, equations, fields, page,
-               view, screen, edit):
+for module in (documents, text, formatting, lists, tables, references, notes, equations, fields,
+               page, view, screen, edit):
     module.register(mcp)
 
 
@@ -395,6 +395,7 @@ def summary(description):
 AREAS = {"documents": "Documents", "text": "Reading and writing text",
          "formatting": "Formatting and styles", "lists": "Lists", "tables": "Tables",
          "references": "Pictures, captions and cross-references",
+         "notes": "Footnotes and endnotes",
          "page": "The page: setup, vertical text, headers, footers, ruby",
          "equations": "Equations", "fields": "Fields and tables of contents",
          "view": "View", "screen": "Seeing a page", "edit": "Undo"}

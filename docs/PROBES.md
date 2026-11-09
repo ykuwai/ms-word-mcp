@@ -242,3 +242,17 @@ what Microsoft documents is in [reference/equations.md](reference/equations.md).
 | Numbering | A three-cell table, equation in the middle cell, `(` SEQ Equation `)` in the right cell: (1), then (2) | `create new field` with `field type field sequence` gives (1) |
 | MathML through `InsertXML` | With `MML2OMML.XSL` (in `C:\Program Files\Microsoft Office\Root\Office16`) as the transform: "XML markup cannot be inserted at this location" (25625). Plain MathML: no error, no equation. | No `InsertXML` in the dictionary |
 | Math AutoCorrect list | `Application.OMathAutoCorrect.Entries` | Each entry's `value` answers missing value |
+
+## Footnotes and endnotes (Word 16)
+
+Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
+`scripts/live_check.py`.
+
+| What | Windows | Mac |
+|---|---|---|
+| Making a note | `Footnotes.Add(range)`, `Endnotes.Add(range)`, then `Range.Text` | `make new footnote at document with properties {text object: range}`. Made `at` a range or the end of a paragraph, the note went to the start of the document. |
+| A new note's text | Empty | The literal text "No Reference" until it is written |
+| The mark in the paragraph | `\x02`, one position | The same |
+| With another document active | Not measured | Works, and the active document stays the same |
+| A note emptied | | `content` answers missing value |
+| Styles | | The note takes Footnote Text, its mark Footnote Reference |

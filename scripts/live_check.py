@@ -23,8 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from ms_word_mcp import backend  # noqa: E402
 from ms_word_mcp.backend import call_document  # noqa: E402
 from ms_word_mcp.tools import (  # noqa: E402
-    _common, documents, edit, equations, fields, formatting, lists, page, references, screen,
-    tables, text)
+    _common, documents, edit, equations, fields, formatting, lists, notes, page, references,
+    screen, tables, text)
 
 results: list[tuple[str, bool]] = []
 
@@ -261,6 +261,7 @@ def run_steps(path: str) -> None:
     run_review_steps()
     run_heading_number_steps()
     run_border_steps()
+    run_note_steps()
     step("picture of page 1", screen._get_page_image_impl, 1, None,
          check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 10000)
     step("picture of the page a paragraph is on", screen._get_page_image_impl, None, 5,
@@ -429,6 +430,56 @@ def run_border_steps() -> None:
              and o["style"]["paragraph"]["borders"]["top"] == double
              and o["style"]["paragraph"]["shading"] == "#FFEEDD")
         step("close the document of borders", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_note_steps() -> None:
+    """Footnotes and endnotes: where the mark lands, the numbers, and the text."""
+    other = step("a document for notes", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("two paragraphs for notes", text._insert_paragraphs_impl,
+                    [{"text": "Alpha beta gamma.", "style": "Normal"},
+                     {"text": "日本語の本文です。", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        step("a footnote at the end of a paragraph", notes._insert_note_impl, 1, "脚注 𠮷 first",
+             "footnote", None, undo="Insert footnote",
+             check=lambda o: (o["number"], o["index"], o["text"]) == (1, 1, "脚注 𠮷 first"))
+        step("a footnote before it takes number 1", notes._insert_note_impl, 1, "earlier",
+             "footnote", "Alpha", undo="Insert footnote",
+             check=lambda o: (o["number"], o["index"], o["text"]) == (1, 1, "earlier"))
+        step("the marks are in the text where they were put", text._get_paragraphs_impl, 1, 1,
+             False, check=lambda o: o["paragraphs"][0]["text"] == "Alpha\x02 beta gamma.\x02")
+        step("an endnote after some Japanese text", notes._insert_note_impl, 2, "文末脚注",
+             "endnote", "本文", undo="Insert endnote",
+             check=lambda o: (o["number"], o["index"], o["text"]) == (1, 2, "文末脚注"))
+        step("the Japanese paragraph holds its mark", text._get_paragraphs_impl, 2, 2, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "日本語の本文\x02です。")
+        step("the footnotes in order, and both counts", notes._list_notes_impl, "footnote", 1, 100,
+             check=lambda o: [(n["number"], n["text"]) for n in o["notes"]]
+             == [(1, "earlier"), (2, "脚注 𠮷 first")]
+             and (o["footnotes"], o["endnotes"]) == (2, 1))
+        step("one note at a time says what follows", notes._list_notes_impl, "footnote", 1, 1,
+             check=lambda o: len(o["notes"]) == 1 and "start=2" in o["more"])
+        step("a note's text changes", notes._set_note_impl, 2, "changed", "footnote",
+             undo="Change footnote",
+             check=lambda o: (o["number"], o["text"]) == (2, "changed"))
+        step("text that is not there is refused", notes._insert_note_impl, 1, "no", "footnote",
+             "nowhere", check=lambda o: "is not in paragraph 1" in o["error"])
+        step("a note that is not there is refused", notes._delete_note_impl, 9, "footnote",
+             check=lambda o: "There is no footnote 9" in o["error"])
+        step("deleting a note renumbers the next", notes._delete_note_impl, 1, "footnote",
+             undo="Delete footnote", check=lambda o: (o["deleted"], o["left"]) == (1, 1))
+        step("the one left is number 1, its mark in place", notes._list_notes_impl, "footnote",
+             1, 100, check=lambda o: [(n["number"], n["text"]) for n in o["notes"]]
+             == [(1, "changed")])
+        step("and the deleted mark is gone", text._get_paragraphs_impl, 1, 1, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "Alpha beta gamma.\x02")
+        step("close the document of notes", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
 

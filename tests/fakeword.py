@@ -416,9 +416,61 @@ class FakeWindow:
         self.scrolled_to.append((rng.Start, rng.End))
 
 
+class FakeNote:
+    """A footnote or endnote: a one-character mark in the text, and its own text."""
+
+    def __init__(self, notes, at):
+        self.notes = notes
+        self.at = at
+        self.Range = SimpleNamespace(Text="")
+
+    @property
+    def Reference(self):
+        return FakeRange(self.notes.doc, self.at, self.at + 1)
+
+    @property
+    def Index(self):
+        return self.notes.ordered().index(self) + 1
+
+    def Delete(self):
+        doc = self.notes.doc
+        doc.replace(self.at, self.at + 1, "")
+        self.notes.items.remove(self)
+        for other in doc.Footnotes.items + doc.Endnotes.items:
+            if other.at > self.at:
+                other.at -= 1
+
+
+class FakeNotes:
+    def __init__(self, doc):
+        self.doc = doc
+        self.items = []
+
+    def ordered(self):
+        return sorted(self.items, key=lambda n: n.at)
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def Item(self, number):
+        return self.ordered()[number - 1]
+
+    def Add(self, rng):
+        for other in self.doc.Footnotes.items + self.doc.Endnotes.items:
+            if other.at >= rng.Start:
+                other.at += 1
+        self.doc.insert(rng.Start, "\x02")
+        note = FakeNote(self, rng.Start)
+        self.items.append(note)
+        return note
+
+
 class FakeDocument:
     def __init__(self, paragraphs=("",), name="Doc1.docx", path="C:\\docs",
                  styles=None):
+        self.Footnotes = FakeNotes(self)
+        self.Endnotes = FakeNotes(self)
         self.Name = name
         self.Path = path
         self.FullName = f"{path}\\{name}" if path else name
