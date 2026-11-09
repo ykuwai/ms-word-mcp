@@ -767,7 +767,7 @@ def run_floating_picture_steps(folder: Path) -> None:
         step("the crop comes off a floating picture", change, "Moved", {"crop_top": 0.0},
              undo="Change shape", check=lambda o: "cropped" not in o)
         step("moved in front of the text", change, "背景", {"wrap": "front"}, undo="Change shape",
-             check=lambda o: o["wrap"] == "front" and o["left"] == 100.0)
+             check=lambda o: o["wrap"] == "front" and abs(o["left"] - 100.0) < 0.6)
         step("a drawn shape cannot be cropped", shapes._insert_shape_impl, "rectangle", 1, 40.0,
              20.0, {"name": "Box", "crop_left": 1.0},
              check=lambda o: "Only a picture" in o["error"])

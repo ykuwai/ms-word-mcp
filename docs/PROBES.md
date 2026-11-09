@@ -318,4 +318,5 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | `wrap` 7 on a floating picture | Becomes an InlineShape | The same; `convert to inline shape` too |
 | A crop | Counts the picture's own size: 5 on a picture shown at twice its size takes 10 points off the frame, in line and floating (90 to 80) | The same (120 to 110) |
 | A crop taken off | Width comes back 0.05 short | The same |
+| Changing the wrap | Moves the shape about 0.1 pt (100 to 99.9) | Did not move it here |
 
