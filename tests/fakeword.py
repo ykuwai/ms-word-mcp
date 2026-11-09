@@ -565,7 +565,8 @@ class FakeTextRange:
     def __init__(self, frame):
         self.frame = frame
         self.Font = AttrBag(Name="", Size=11.0)
-        self.ParagraphFormat = AttrBag(Alignment=0)
+        self.ParagraphFormat = AttrBag(Alignment=0, DisableLineHeightGrid=0, SpaceAfter=0.0,
+                                       LineSpacingRule=0, LineSpacing=12.0)
 
     @property
     def Text(self):
@@ -608,12 +609,16 @@ class FakePictureFormat:
     SIDES = {"CropLeft": "Width", "CropRight": "Width", "CropTop": "Height", "CropBottom": "Height"}
 
     def __init__(self, owner, scale=2.0):
-        self.__dict__.update(owner=owner, scale=scale, crops=dict.fromkeys(self.SIDES, 0.0))
+        self.__dict__.update(owner=owner, scale=scale, crops={
+            **dict.fromkeys(self.SIDES, 0.0), "Brightness": 0.5, "Contrast": 0.5})
 
     def __getattr__(self, name):
         return self.crops[name]
 
     def __setattr__(self, name, value):
+        if name not in self.SIDES:
+            self.crops[name] = value
+            return
         change = (value - self.crops[name]) * self.scale
         self.crops[name] = value
         size = self.SIDES[name]

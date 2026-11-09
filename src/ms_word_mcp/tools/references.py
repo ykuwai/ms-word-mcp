@@ -30,7 +30,7 @@ from .. import backend
 from ._common import (READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow, local_path,
                       mac_impl)
 from ._word import ALIGNMENTS, clean_text, paragraph
-from .shapes import CROPS, _Crop, _Position, _Wrap
+from .shapes import PICTURE_LOOK, _PictureLook, _Position, _Wrap, faded
 
 CONTAINER = os.path.expanduser("~/Library/Containers/com.microsoft.Word/Data/Documents")
 ALIGN_CHOICES = Literal["left", "center", "right"]
@@ -75,7 +75,7 @@ class InsertPictureInput(Input):
         return self
 
 
-class SetPictureInput(_Position, _Wrap, _Crop):
+class SetPictureInput(_Position, _Wrap, _PictureLook):
     picture: int = Field(..., ge=1, description="The picture, numbered from 1 in the document.")
     width: float | None = Field(None, gt=0, description=(
         "Width in points. Given alone, the height follows in proportion."))
@@ -249,22 +249,23 @@ def _list_pictures_impl():
 
 
 def _set_picture_impl(picture, width, height, alignment, alt_text, spec):
-    from .shapes import _check_name, crop_picture, float_picture
+    from .shapes import _check_name, adjust_picture, float_picture
 
     doc = backend.word.document()
     shape = _shape(doc, picture)
     if "wrap" in spec:
         _check_name(doc, spec.get("name"))
-    if any(side in spec for side in CROPS):  # first: if it is refused, nothing else has changed
-        crop_picture(shape, spec)
+    if any(key in spec for key in PICTURE_LOOK):  # first: if refused, nothing else has changed
+        adjust_picture(shape, spec)
     warnings = _apply_picture(doc, shape, width, height, alignment, alt_text)
     if "wrap" in spec:
-        out = float_picture(doc, shape, {k: v for k, v in spec.items() if k not in CROPS})
+        out = float_picture(doc, shape, {k: v for k, v in spec.items() if k not in PICTURE_LOOK})
         if warnings:
             out["warnings"] = [*warnings, *out.get("warnings", [])]
         return out
     follow(doc, shape.Range)
-    result = {"success": True, **_describe_picture(doc, shape, picture)}
+    result = {"success": True, **_describe_picture(doc, shape, picture),
+              **faded(shape.PictureFormat.Brightness, shape.PictureFormat.Contrast)}
     if warnings:
         result["warnings"] = warnings
     return result
@@ -460,21 +461,24 @@ def _mac_list_pictures():
 
 @mac_impl(_set_picture_impl)
 def _mac_set_picture(picture, width, height, alignment, alt_text, spec):
-    from .shapes import _mac_check_name, mac_crop_picture, mac_float_picture
+    from .shapes import _mac_check_name, mac_adjust_picture, mac_float_picture
 
     doc = backend.word.document()
     shape = _mac_shape(doc, picture)
     if "wrap" in spec:
         _mac_check_name(doc, spec.get("name"))
-    if any(side in spec for side in CROPS):  # first: if it is refused, nothing else has changed
-        mac_crop_picture(shape, spec)
+    if any(key in spec for key in PICTURE_LOOK):  # first: if refused, nothing else has changed
+        mac_adjust_picture(shape, spec)
     warnings = _mac_apply_picture(doc, shape, width, height, alignment, alt_text)
     if "wrap" in spec:
-        out = mac_float_picture(doc, picture, {k: v for k, v in spec.items() if k not in CROPS})
+        out = mac_float_picture(doc, picture,
+                                {k: v for k, v in spec.items() if k not in PICTURE_LOOK})
         if warnings:
             out["warnings"] = [*warnings, *out.get("warnings", [])]
         return out
-    result = {"success": True, **_mac_describe_picture(doc, shape, picture)}
+    fmt = shape.picture_format
+    result = {"success": True, **_mac_describe_picture(doc, shape, picture),
+              **faded(fmt.brightness.get(), fmt.contrast.get())}
     if warnings:
         result["warnings"] = warnings
     return result
@@ -605,7 +609,8 @@ def register(mcp) -> None:
 
     @mcp.tool(name="word_set_picture", annotations=annotations("Change a picture", WRITES))
     async def word_set_picture(params: SetPictureInput) -> str:
-        """Change a picture in the text: size, alignment, alt text, crop. Give
+        """Change a picture in the text: size, alignment, alt text, crop, brightness
+        and contrast. Give
         `wrap` to take it out of the line of text so it floats: square, tight,
         through or top_and_bottom for text round it, behind for behind the text
         (背面), front for over it, with left, top, horizontal_from and
