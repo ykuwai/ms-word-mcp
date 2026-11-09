@@ -58,14 +58,29 @@ def test_no_fill(make_doc):
     assert add(fill="none")["fill"] == "none"
 
 
-def test_text_that_does_not_fit_warns(make_doc):
+def test_text_that_does_not_fit_warns_when_word_says_so():
+    got = {"left": 0.0, "top": 0.0, "width": 10.0, "height": 10.0}
+    page = {"page_width": 100, "page_height": 100, "left_margin": 0, "top_margin": 0}
+    assert "does not fit" in shapes._finished(got, {}, page, [], True)["warnings"][0]
+    assert "warnings" not in shapes._finished(got, {}, page, [], False)
+
+
+def test_overflowing_is_not_asked_on_windows(make_doc):
     doc = make_doc("One.")
-    out = add()
-    assert "warnings" not in out
+    name = add()["name"]
     doc.Shapes.Item(1).TextFrame.Overflowing = True
-    assert "warnings" not in answer(shapes._set_shape_impl, out["name"], {"rotation": 1.0})
-    out = answer(shapes._set_shape_impl, out["name"], {"text": "A long text."})
-    assert "does not fit" in out["warnings"][0]
+    assert "warnings" not in answer(shapes._set_shape_impl, name, {"text": "Short."})
+
+
+def test_a_shape_that_cannot_be_finished_does_not_stay(make_doc, monkeypatch):
+    doc = make_doc("One.")
+
+    def fails(*args):
+        raise RuntimeError("Word refused.")
+
+    monkeypatch.setattr(shapes, "_apply", fails)
+    assert "Word refused" in add()["error"]
+    assert doc.Shapes.Count == 0
 
 
 def test_off_the_page_warns(make_doc):

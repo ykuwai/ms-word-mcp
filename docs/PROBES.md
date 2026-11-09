@@ -300,7 +300,9 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | Alternative text | Yes | `alternative text` is not a property of `shape`; read answers missing value, set -1708 |
 | Vertical anchor, auto size, word wrap of a text frame | Yes | Unknown property or missing value |
 | Vertical text | `TextFrame.Orientation = 4` | `vertical east asian`, code 4; upright kana, Latin on its side ([shape-look](probes/shape_look.py)) |
-| Undo | | Two undos did not take a new shape back |
+| Whether the text fits | `TextFrame.Overflowing` answered True for an empty shape and for two lines of 9 pt in a 60 pt high shape, so it is not used | `overflowing` agrees with the page; `has text` is true for an empty shape, so the text is read instead |
+| A line's text frame | Touching `TextRange` is refused, even to read | Read answers nothing |
+| Undo | One undo takes a new shape back (live check) | Two undos did not take a new shape back |
 | Document not active | Works, active document unchanged | Works, active document unchanged |
 | A table cell, a later page | Works; `LayoutInCell` -1 | Works |
-| Kinds | Each read back as itself | Each read back as itself, once a line callout's `callout` type is looked through; `balloon` reads back as `rounded rectangular callout` |
+| Kinds | 177 of 181 read back as themselves. `line callout two` reads as `one`; `line callout one no border` and `two no border` read as `one accent bar`; `callout one border and accent bar` reads as `line callout one`. | To be filled from the probe. `balloon` reads back as `rounded rectangular callout`, so it is taken as that name. |

@@ -589,6 +589,14 @@ class FakeTextFrame:
         return -1 if self.text != "\r" else 0
 
 
+class FakeLineFrame:
+    """A line has a TextFrame, and Word refuses everything asked of it."""
+
+    @property
+    def TextRange(self):
+        raise RuntimeError("This object does not support attached text.")
+
+
 class FakeShape:
     next_id = 100
 
@@ -616,7 +624,7 @@ class FakeShape:
         self.Line = AttrBag(Visible=-1, Weight=1.0, DashStyle=1, ForeColor=AttrBag(RGB=0x000000),
                             BeginArrowheadStyle=1, EndArrowheadStyle=1)
         self.Adjustments = {1: 0.16667}
-        self.TextFrame = FakeTextFrame()
+        self.TextFrame = FakeLineFrame() if type_ == 9 else FakeTextFrame()
 
     @property
     def ZOrderPosition(self):

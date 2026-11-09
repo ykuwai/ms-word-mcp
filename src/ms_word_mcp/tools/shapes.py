@@ -440,8 +440,7 @@ NO_TEXT_IN = ("A {kind} holds no text. Only a text box or a drawn shape does; "
 
 
 def _check_text_allowed(kind: str, spec: dict) -> None:
-    if kind in NO_TEXT and any(k in spec for k in ("text", "font", "alignment",
-                                                   "vertical_anchor", "orientation")):
+    if kind in NO_TEXT and any(key in spec for key in TEXT_KEYS):
         raise ValueError(NO_TEXT_IN.format(kind=kind))
 
 
@@ -536,7 +535,12 @@ def _describe(doc, s, number: int) -> dict:
     return out
 
 
+TEXT_KEYS = ("text", "font", "alignment", "vertical_anchor", "orientation")
+
+
 def _apply_text(s, spec: dict) -> list[str]:
+    if not any(key in spec for key in TEXT_KEYS):
+        return []  # a line has no text frame to touch: Word refuses even the look
     warnings = []
     frame = s.TextFrame
     if "text" in spec:
@@ -635,15 +639,21 @@ def _apply(s, spec: dict, kind: str) -> list[str]:
     return warnings
 
 
-def _overflowing(s, kind: str) -> bool:
-    return kind not in NO_TEXT and bool(s.TextFrame.HasText) and bool(s.TextFrame.Overflowing)
-
-
 def _result(doc, s, spec: dict, warnings: list[str]) -> dict:
     follow(doc, s.Anchor)
-    kind = _kind_of(s)
-    return _finished(_describe(doc, s, _number_of(doc, s)), spec, _page_of(s), warnings,
-                     _overflowing(s, kind))
+    # TextFrame.Overflowing is not asked: on Windows it answered True for an
+    # empty shape and for two short lines with room to spare (docs/PROBES.md).
+    return _finished(_describe(doc, s, _number_of(doc, s)), spec, _page_of(s), warnings, False)
+
+
+def _finish_new(doc, s, spec: dict, kind: str) -> dict:
+    """Give a new shape its place and look. If that fails no half-made shape stays."""
+    try:
+        warnings = _apply(s, spec, kind)
+    except Exception:
+        s.Delete()
+        raise
+    return _result(doc, s, spec, warnings)
 
 
 _PLACED = {"left": 0.0, "top": 0.0, "horizontal_from": "margin", "vertical_from": "paragraph"}
@@ -661,7 +671,7 @@ def _insert_shape_impl(kind, index, width, height, spec):
     anchor = paragraph(doc, index).Range
     s = doc.Shapes.AddShape(KINDS[kind], 0, 0, width, height, anchor)
     full = _new_spec(spec, "square")
-    return _result(doc, s, full, _apply(s, full, kind))
+    return _finish_new(doc, s, full, kind)
 
 
 def _insert_text_box_impl(index, width, height, spec):
@@ -670,7 +680,7 @@ def _insert_text_box_impl(index, width, height, spec):
     anchor = paragraph(doc, index).Range
     s = doc.Shapes.AddTextbox(1, 0, 0, width, height, anchor)
     full = _new_spec(spec, "square")
-    return _result(doc, s, full, _apply(s, full, "text_box"))
+    return _finish_new(doc, s, full, "text_box")
 
 
 def _insert_line_impl(index, begin_x, begin_y, end_x, end_y, spec):
@@ -679,7 +689,7 @@ def _insert_line_impl(index, begin_x, begin_y, end_x, end_y, spec):
     anchor = paragraph(doc, index).Range
     s = doc.Shapes.AddLine(begin_x, begin_y, end_x, end_y, anchor)
     full = {**_new_spec(spec, "front"), **line_endpoints(begin_x, begin_y, end_x, end_y)}
-    return _result(doc, s, full, _apply(s, full, "line"))
+    return _finish_new(doc, s, full, "line")
 
 
 def _list_shapes_impl(start, limit):
@@ -876,6 +886,8 @@ def _mac_describe(doc, s, number: int) -> dict:
 def _mac_apply_text(s, spec: dict) -> list[str]:
     from appscript import k
 
+    if not any(key in spec for key in TEXT_KEYS):
+        return []
     warnings = []
     frame = s.text_frame
     if "text" in spec:
@@ -990,14 +1002,20 @@ def _mac_result(doc, name: str, spec: dict, warnings: list[str]) -> dict:
     at = s.anchor.start_of_content.get()
     m._scroll(doc, at, at + 1)
     kind = _mac_kind_of(s)
-    overflowing = (kind not in NO_TEXT and s.text_frame.has_text.get() is True
-                   and s.text_frame.overflowing.get() is True)
+    # `has text` is true for an empty shape on the Mac, and `overflowing` too.
+    overflowing = (kind not in NO_TEXT and s.text_frame.overflowing.get() is True
+                   and bool(m._clean(s.text_frame.text_range.content.get())))
     return _finished(_mac_describe(doc, s, _mac_number_of(doc, name)), spec, _mac_page(doc),
                      warnings, overflowing)
 
 
 def _mac_finish_new(doc, name: str, spec: dict, kind: str) -> dict:
-    warnings = _mac_apply(doc.shapes[name], spec, kind)
+    """Give a new shape its place and look. If that fails no half-made shape stays."""
+    try:
+        warnings = _mac_apply(doc.shapes[name], spec, kind)
+    except Exception:
+        doc.shapes[name].delete()
+        raise
     return _mac_result(doc, spec.get("name", name), spec, warnings)
 
 

@@ -629,9 +629,11 @@ def run_shape_steps() -> None:
              undo="Insert text box",
              check=lambda o: (o["kind"], o["text"], o["orientation"], o["left"], o["top"])
              == ("text_box", "縦書きです", "vertical", 300.0, 100.0) and "warnings" not in o)
-        step("too much text warns", change, "縦", {"orientation": "horizontal",
-                                                   "text": "長い文章です。" * 40},
-             undo="Change shape", check=lambda o: any("does not fit" in w for w in o["warnings"]))
+        step("much text in a small box", change, "縦", {"orientation": "horizontal",
+                                                       "text": "長い文章です。" * 40},
+             undo="Change shape",
+             check=lambda o: not backend.IS_MACOS
+             or any("does not fit" in w for w in o["warnings"]))
         step("a line from left to right", shapes._insert_line_impl, 4, 72.0, 500.0, 300.0, 550.0,
              {"name": "Line", "horizontal_from": "page", "vertical_from": "page",
               "line_color": "#C00000", "line_weight": 2.0, "end_arrow": "triangle",
@@ -700,7 +702,7 @@ def run_shape_steps() -> None:
              check=lambda o: "no shape named" in o["error"])
         if not backend.IS_MACOS:
             before = step("before a shape and its undo", shapes._list_shapes_impl, 1, 50)
-            step("a new shape", insert, "star", 2, 40.0, 40.0, {"name": "Gone"},
+            step("a new shape", insert, "five_point_star", 2, 40.0, 40.0, {"name": "Gone"},
                  undo="Insert shape", check=lambda o: o["name"] == "Gone")
             step("one undo takes it back", edit._undo_impl, 1)
             step("and it is gone", shapes._list_shapes_impl, 1, 50,
