@@ -290,7 +290,7 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | Default place, wrap | Relative to column and paragraph, `wrap` 3 (in front) | The same |
 | Changing what it is measured from | The shape stays where it is on the page, its numbers change | The same |
 | An anchor | **Takes one position in the text that `Range.Text` does not show** (a paragraph of 22 characters spans 23 positions; by offset, one off). At the start of the paragraph for a paragraph's range; where given for a collapsed one. | The same. |
-| Rewriting a paragraph | | The whole range takes the anchor and its shape with it, silently; from past the anchor, it stays. |
+| Rewriting a paragraph | Not measured apart from the live check, which passes from past the anchor | The whole range takes the anchor and its shape with it, silently; from past the anchor, it stays. |
 | Deleting its paragraph | The shape goes | The same |
 | Wrap in line, a drawn shape | `WrapFormat.Type = 7` holds; stays in `Shapes` | The same. `ConvertToInlineShape` answers an object and leaves it in `Shapes`. |
 | A line drawn backwards | `AddLine(300, 400, 50, 350)`: box at 50, 350 with both flips | Box at 300, 400 with both flips, wrong; setting left and top puts it right, the arrow still pointing the right way |
@@ -305,4 +305,4 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | Undo | One undo takes a new shape back (live check) | Two undos did not take a new shape back |
 | Document not active | Works, active document unchanged | Works, active document unchanged |
 | A table cell, a later page | Works; `LayoutInCell` -1 | Works |
-| Kinds | 177 of 181 read back as themselves. `line callout two` reads as `one`; `line callout one no border` and `two no border` read as `one accent bar`; `callout one border and accent bar` reads as `line callout one`. | To be filled from the probe. `balloon` reads back as `rounded rectangular callout`, so it is taken as that name. |
+| Kinds | 177 of 181 read back as themselves. `line callout two` reads as `one`; `line callout one no border` and `two no border` read as `one accent bar`; `callout one border and accent bar` reads as `line callout one`. `balloon` reads back as `rounded rectangular callout`, so it is taken as that name. | The same 177 of 181, the same four. |
