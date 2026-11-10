@@ -72,6 +72,14 @@ def test_find_leaves_out_text_marked_deleted(word, make_doc):
     assert answer(text._find_replace_impl, "cat", None, False, False, False)["matches"] == 1
 
 
+def test_find_leaves_out_text_deleted_in_two_pieces(word, make_doc):
+    doc = tracking(word, make_doc, "cat and cat")
+    doc.Range(0, 1).Delete()
+    doc.Range(1, 3).Delete()
+    assert len(_word.deletion_spans(doc.Content)) == 2
+    assert answer(text._find_replace_impl, "cat", None, False, False, False)["matches"] == 1
+
+
 def test_replacing_twice_while_tracking_does_not_replace_the_deleted_text(word, make_doc):
     tracking(word, make_doc, "cat")
     assert answer(text._find_replace_impl, "cat", "dog", False, False, False)["replaced"] == 1
@@ -368,10 +376,26 @@ def _mac_replace(monkeypatch, found, outcome):
     return mac.find_replace("cat", "a", False, False, False), at
 
 
-def test_paragraphs_of_replaced_matches_are_found_where_they_are_now(monkeypatch):
-    out, at = _mac_replace(monkeypatch, [(1, 4), (10, 13)], ([(1, 4), (10, 13)], False))
-    assert at == [1, 8]  # "cat" became "a": the second moved back two
+def test_paragraphs_of_replaced_matches_are_taken_where_they_were(monkeypatch):
+    """With tracking on the old text stays beside the new, so positions after are not reckoned."""
+    out, at = _mac_replace(monkeypatch, [(1, 4), (10, 13), (20, 23)],
+                           ([(1, 4), (20, 23)], False))
+    assert at == [1, 10, 20]  # asked before replacing
+    assert out["paragraphs"] == [1, 20]  # (10, 13) was in a deletion: not replaced
     assert out["matches"] == 2 and out["replaced"] == 2 and "warnings" not in out
+
+
+@pytest.mark.parametrize("spans, match, inside", [
+    ([(0, 1), (1, 3)], (0, 3), True),     # "c" and "at" deleted apart
+    ([(0, 2), (1, 5)], (1, 4), True),     # overlapping
+    ([(0, 1), (2, 3)], (0, 3), False),    # a gap
+    ([(0, 1), (5, 9)], (6, 8), True),     # one before the match does not matter
+    ([(7, 9)], (6, 8), False),            # starts after the match
+    ([(3, 6), (0, 3)], (1, 5), True),     # in any order
+    ([], (1, 2), False),
+])
+def test_a_match_across_deletions_side_by_side_is_deleted(spans, match, inside):
+    assert _word.inside_spans(*match, spans) is inside
 
 
 def test_a_replace_that_checked_without_replacing_does_not_ask_to_call_again(monkeypatch):

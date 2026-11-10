@@ -302,8 +302,21 @@ def tracked_text(read, start: int, end: int, spans: list[tuple[int, int]]) -> tu
 
 
 def inside_spans(start: int, end: int, spans: list[tuple[int, int]]) -> bool:
-    """Whether [start, end) lies within one of the spans."""
-    return any(a <= start and end <= b for a, b in spans)
+    """Whether [start, end) lies within the spans taken together.
+
+    Two deletions side by side (by two authors, or made one after the other)
+    are two changes: "c" and "at" deleted apart still delete "cat".
+    """
+    covered = start  # covered from start up to here
+    for a, b in sorted(spans):
+        if b <= covered:
+            continue
+        if a > covered:
+            return False  # a gap
+        covered = b
+        if covered >= end:
+            return True
+    return False
 
 
 def deletion_spans(rng) -> list[tuple[int, int]]:

@@ -689,15 +689,14 @@ def find_replace(find, replace, match_case, whole_word, wildcards):
         text_tools.replace_outcome(out, len(listed), searched_all, None, find, None)
         return out
     value = replace.replace("\n", "\v")
+    # Paragraph numbers are taken before replacing, where the matches still are:
+    # with tracking on, the old text stays as a deletion beside the new.
+    at = {s: _index_at(doc, s) for s, _ in found[:text_tools.LISTED_MATCHES]}
     replaced, ran_out = _check_and_replace(doc, found, value, until)
     searched_all = searched_all and not ran_out
-    # Where the first ones start now: each replaced before them changed the length.
-    grow, shift, starts = _u16(value, len(value)), 0, []
-    for start, end in replaced[:text_tools.LISTED_MATCHES]:
-        starts.append(start + shift)
-        shift += grow - (end - start)
+    starts = [s for s, _ in replaced if s in at]
     out = {"success": True, "matches": len(replaced),
-           "paragraphs": sorted({_index_at(doc, s) for s in starts}),
+           "paragraphs": sorted({at[s] for s in starts}),
            "replaced": len(replaced)}
     if searched_all and time.monotonic() < until:
         left, _ = _matches_until(doc, find, match_case, whole_word, until)

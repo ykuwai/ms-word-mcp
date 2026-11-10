@@ -517,6 +517,26 @@ def run_revision_steps() -> None:
                  and "ruby" not in o["paragraph"])
             step("tracking off again", revisions._set_track_changes_impl, False,
                  undo="Track changes", check=lambda o: o["tracking"] is False)
+        pair = step("two paragraphs with the same word", text._insert_paragraphs_impl,
+                    [{"text": "cat one xyz", "style": "Normal"},
+                     {"text": "cat two xyz", "style": "Normal"}], None, None)
+        if "error" not in pair:
+            first = pair["inserted"][0]["index"]
+            step("tracking on for two paragraphs", revisions._set_track_changes_impl, True,
+                 undo="Track changes", check=lambda o: o["tracking"] is True)
+            # The old text stays as a deletion beside the new: the second match
+            # is further on than the first replacement's length says.
+            step("replacing in two paragraphs names both", text._find_replace_impl, "cat",
+                 "dog", True, True, False, undo="Find and replace",
+                 check=lambda o: o["replaced"] == 2 and o["paragraphs"] == [first, first + 1])
+            step("a word deleted in two pieces", text._find_replace_impl, "x", "", True,
+                 False, False, undo="Find and replace", check=lambda o: o["replaced"] == 2)
+            step("and the rest of it", text._find_replace_impl, "yz", "", True, False, False,
+                 undo="Find and replace", check=lambda o: o["replaced"] == 2)
+            step("is not found across the two deletions", text._find_replace_impl, "xyz",
+                 None, True, False, False, check=lambda o: o["matches"] == 0)
+            step("tracking off for two paragraphs", revisions._set_track_changes_impl, False,
+                 undo="Track changes", check=lambda o: o["tracking"] is False)
         step("close the document of changes", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
