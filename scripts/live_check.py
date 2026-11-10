@@ -24,7 +24,7 @@ from ms_word_mcp import backend  # noqa: E402
 from ms_word_mcp.backend import call_document  # noqa: E402
 from ms_word_mcp.tools import (  # noqa: E402
     _common, documents, edit, equations, fields, formatting, links, lists, notes, page,
-    references, screen, shapes, tables, text)
+    references, revisions, screen, shapes, tables, text)
 
 results: list[tuple[str, bool]] = []
 
@@ -262,6 +262,7 @@ def run_steps(path: str) -> None:
     run_heading_number_steps()
     run_border_steps()
     run_note_steps()
+    run_revision_steps()
     run_link_steps()
     run_shape_steps()
     run_floating_picture_steps(Path(path).parent)
@@ -434,6 +435,109 @@ def run_border_steps() -> None:
              and o["style"]["paragraph"]["borders"]["top"] == double
              and o["style"]["paragraph"]["shading"] == "#FFEEDD")
         step("close the document of borders", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_revision_steps() -> None:
+    """Tracked changes, and what the text tools answer while tracking is on."""
+    other = step("a document for tracked changes", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("paragraphs to review", text._insert_paragraphs_impl,
+                    [{"text": "Alpha beta gamma", "style": "Normal"},
+                     {"text": "二段落目の本文", "style": "Normal"},
+                     {"text": "Third cat and cat", "style": "Normal"},
+                     {"text": "Fourth", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        step("tracking on", revisions._set_track_changes_impl, True, undo="Track changes",
+             check=lambda o: (o["tracking"], o["count"]) == (True, 0))
+        step("a rewrite reads back as Word shows it", text._set_paragraph_text_impl, 1,
+             "Rewritten 𠮷", undo="Set paragraph",
+             check=lambda o: "warnings" not in o and o["paragraph"]["text"] == "Rewritten 𠮷"
+             and o["paragraph"]["deleted_text"] == "Alpha beta gamma"
+             and o["was"] == "Alpha beta gamma")
+        step("a deleted paragraph is no warning", text._delete_paragraphs_impl, 2, None,
+             undo="Delete paragraphs",
+             check=lambda o: "warnings" not in o and o["paragraphs"] == 4 and "note" in o)
+        step("and keeps its place, marked", text._get_paragraphs_impl, 2, 2, False,
+             check=lambda o: o["paragraphs"][0]["text"] == ""
+             and o["paragraphs"][0]["deleted"] is True
+             and o["paragraphs"][0]["deleted_text"] == "二段落目の本文")
+        step("replacing while tracking", text._find_replace_impl, "cat", "dog", False, True,
+             False, undo="Find and replace", check=lambda o: o["replaced"] == 2)
+        step("the text marked deleted is not found again", text._find_replace_impl, "cat", None,
+             False, True, False, check=lambda o: o["matches"] == 0)
+        step("the replaced paragraph reads clean", text._get_paragraphs_impl, 3, 3, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "Third dog and dog")
+        step("the changes in order", revisions._list_revisions_impl, 1, 100,
+             check=lambda o: o["tracking"] is True and o["count"] == 7
+             and [r["number"] for r in o["revisions"]] == list(range(1, 8))
+             and {r["kind"] for r in o["revisions"]} == {"insert", "delete"}
+             and all(r["author"] and r["date"] for r in o["revisions"]))
+        step("one at a time says what follows", revisions._list_revisions_impl, 1, 1,
+             check=lambda o: len(o["revisions"]) == 1 and "start=2" in o["more"])
+        step("a change that is not there is refused", revisions._accept_revisions_impl, [99],
+             False, check=lambda o: "There is no change 99" in o["error"])
+        step("rejecting the rewrite", revisions._reject_revisions_impl, [1, 2], False,
+             undo="Reject changes", check=lambda o: (o["rejected"], o["left"]) == (2, 5))
+        step("brings the old text back", text._get_paragraphs_impl, 1, 1, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "Alpha beta gamma"
+             and "deleted_text" not in o["paragraphs"][0])
+        step("a tracked format change", formatting._format_text_impl, 1, 1, "Alpha",
+             {"bold": True}, undo="Format text")
+        step("a tracked paragraph format change", formatting._set_paragraph_format_impl, 1, 1,
+             {"alignment": "center"}, undo="Format paragraphs")
+        step("each change has its own number", revisions._list_revisions_impl, 1, 100,
+             check=lambda o: [r["number"] for r in o["revisions"]]
+             == list(range(1, o["count"] + 1)) and o["revisions"][0]["kind"] != "delete")
+        step("accepting every change", revisions._accept_revisions_impl, None, True,
+             undo="Accept changes", check=lambda o: o["left"] == 0 and o["paragraphs"] == 3)
+        step("leaves the text as it was marked", text._get_paragraphs_impl, 1, None, False,
+             check=lambda o: [p["text"] for p in o["paragraphs"]]
+             == ["Alpha beta gamma", "Third dog and dog", "Fourth"])
+        step("tracking off", revisions._set_track_changes_impl, False, undo="Track changes",
+             check=lambda o: o["tracking"] is False)
+        ruby = step("a paragraph with ruby", text._insert_paragraphs_impl,
+                    [{"text": "OLD and NEW", "style": "Normal"}], None, None)
+        if "error" not in ruby:
+            at = ruby["inserted"][0]["index"]
+            step("two words get ruby", page._add_ruby_impl, at,
+                 [{"text": "OLD", "ruby": "o"}, {"text": "NEW", "ruby": "n"}], "center", None,
+                 undo="Add ruby", check=lambda o: len(o["ruby"]) == 2)
+            step("tracking on again", revisions._set_track_changes_impl, True,
+                 undo="Track changes", check=lambda o: o["tracking"] is True)
+            step("ruby marked deleted reads as words, apart", text._set_paragraph_text_impl, at,
+                 "Plain", undo="Set paragraph",
+                 check=lambda o: o["paragraph"]["text"] == "Plain"
+                 and o["paragraph"]["deleted_text"] == "OLD and NEW"
+                 and "ruby" not in o["paragraph"])
+            step("tracking off again", revisions._set_track_changes_impl, False,
+                 undo="Track changes", check=lambda o: o["tracking"] is False)
+        pair = step("two paragraphs with the same word", text._insert_paragraphs_impl,
+                    [{"text": "cat one xyz", "style": "Normal"},
+                     {"text": "cat two xyz", "style": "Normal"}], None, None)
+        if "error" not in pair:
+            first = pair["inserted"][0]["index"]
+            step("tracking on for two paragraphs", revisions._set_track_changes_impl, True,
+                 undo="Track changes", check=lambda o: o["tracking"] is True)
+            # The old text stays as a deletion beside the new: the second match
+            # is further on than the first replacement's length says.
+            step("replacing in two paragraphs names both", text._find_replace_impl, "cat",
+                 "dog", True, True, False, undo="Find and replace",
+                 check=lambda o: o["replaced"] == 2 and o["paragraphs"] == [first, first + 1])
+            step("a word deleted in two pieces", text._find_replace_impl, "x", "", True,
+                 False, False, undo="Find and replace", check=lambda o: o["replaced"] == 2)
+            step("and the rest of it", text._find_replace_impl, "yz", "", True, False, False,
+                 undo="Find and replace", check=lambda o: o["replaced"] == 2)
+            step("is not found across the two deletions", text._find_replace_impl, "xyz",
+                 None, True, False, False, check=lambda o: o["matches"] == 0)
+            step("tracking off for two paragraphs", revisions._set_track_changes_impl, False,
+                 undo="Track changes", check=lambda o: o["tracking"] is False)
+        step("close the document of changes", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
 

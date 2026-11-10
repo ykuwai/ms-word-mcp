@@ -10,6 +10,7 @@ tools rely on, so a test can check what a tool wrote and what it read back.
 
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 
 UNDEFINED = 9999999
@@ -322,8 +323,20 @@ class FakeRange:
 
     @Text.setter
     def Text(self, value):
-        self.doc.replace(self.Start, self.End, value)
+        if self.doc.TrackRevisions:
+            self.doc.tracked_replace(self.Start, self.End, value)
+        else:
+            self.doc.replace(self.Start, self.End, value)
         self.End = self.Start + len(value)
+
+    @property
+    def Document(self):
+        return self.doc
+
+    @property
+    def Revisions(self):
+        return FakeRevisions(self.doc, [r for r in self.doc.revision_items
+                                        if r.start < self.End and r.end > self.Start])
 
     def InsertAfter(self, value):
         self.doc.insert(self.End, value)
@@ -335,6 +348,9 @@ class FakeRange:
 
     def Delete(self):
         end = min(self.End, len(self.doc.text) - 1)
+        if self.doc.TrackRevisions:
+            self.doc.tracked_replace(self.Start, self.End, "")
+            return
         self.doc.replace(self.Start, end, "")
         self.End = self.Start
 
@@ -738,9 +754,56 @@ class FakeShapes:
         return self._add(9, -2, abs(x2 - x1), abs(y2 - y1), anchor)
 
 
+class FakeRevision:
+    """A tracked change: Word's numbers it by position in the document."""
+
+    def __init__(self, doc, kind, start, end):
+        self.doc, self.Type, self.start, self.end = doc, kind, start, end
+        self.Author = "Reviewer"
+        self.Date = datetime(2026, 11, 9, 10, 30)
+        self.FormatDescription = ""
+
+    @property
+    def Range(self):
+        return FakeRange(self.doc, self.start, self.end)
+
+    def _drop(self, remove_text):
+        self.doc.revision_items.remove(self)
+        if remove_text:
+            self.doc.replace(self.start, self.end, "")
+            self.doc.shift_revisions(self.end, self.start - self.end)
+
+    def Accept(self):
+        self._drop(remove_text=self.Type == 2)
+
+    def Reject(self):
+        self._drop(remove_text=self.Type == 1)
+
+
+class FakeRevisions:
+    def __init__(self, doc, items):
+        self.doc, self.items = doc, sorted(items, key=lambda r: r.start)
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def Item(self, i):
+        return self.items[i - 1]
+
+    def AcceptAll(self):
+        for r in reversed(self.items):
+            r.Accept()
+
+    def RejectAll(self):
+        for r in reversed(self.items):
+            r.Reject()
+
+
 class FakeDocument:
     def __init__(self, paragraphs=("",), name="Doc1.docx", path="C:\\docs",
                  styles=None):
+        self.revision_items = []
         self.Shapes = FakeShapes(self)
         self.InlineShapes = FakeInlineShapes(self)
         self.Footnotes = FakeNotes(self)
@@ -780,6 +843,26 @@ class FakeDocument:
         self.text = self.text[:start] + value + self.text[end:]
         self.attrs[start:end] = [dict(template) for _ in value]
         self.Saved = False
+
+    def shift_revisions(self, at, by):
+        for r in self.revision_items:
+            if r.start >= at:
+                r.start += by
+                r.end += by
+
+    def tracked_replace(self, start, end, value):
+        """As Word does it: the new text goes in front of the text marked deleted."""
+        if value:
+            self.insert(start, value)
+            self.shift_revisions(start, len(value))
+            self.revision_items.append(FakeRevision(self, 1, start, start + len(value)))
+        if end > start:
+            self.revision_items.append(
+                FakeRevision(self, 2, start + len(value), end + len(value)))
+
+    @property
+    def Revisions(self):
+        return FakeRevisions(self, self.revision_items)
 
     @property
     def end_of_content(self):

@@ -72,6 +72,10 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
   in points as the picture is shown, in the text or floating; brightness and
   contrast to fade one behind the text.
 
+- Tracked changes: turn tracking on and off, list the changes, accept or reject
+  them by number or all at once. While tracking is on, the text tools read and
+  report the text as Word shows it, deletions apart.
+
 - Pictures in line with the text, numbered captions under any label in any
   language, live cross-references to captions, equations and headings.
 - The page: paper, margins, columns, document grid, vertical text; headers,
@@ -119,7 +123,8 @@ Then, ordered roughly by what the owner stressed.
 7. Shapes, the rest. Grouping; shapes in headers and footers; moving a shape to
    another paragraph.
 8. Adding sections (section breaks); a header of several paragraphs.
-9. Comments and tracked changes; spelling and a document health check.
+9. Comments (making one ends Word for Mac's process when asked through Apple
+   Events: docs/PROBES.md); spelling and a document health check.
 10. Page previews.
 
 ## Platforms

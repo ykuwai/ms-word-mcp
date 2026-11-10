@@ -12,6 +12,8 @@ from collections import Counter
 
 # Values Word uses, written out here so nothing depends on makepy constants.
 WD_UNDEFINED = 9999999
+WD_REVISION_DELETE = 2
+WD_REVISION_MOVED_FROM = 14
 WD_CHARACTER = 1
 WD_COLLAPSE_END = 0
 WD_FIND_STOP = 0
@@ -186,6 +188,25 @@ def with_ruby(text: str, codes: list[str]) -> tuple[str, list[dict]]:
     return text.replace("\x15", ""), rubies
 
 
+def expand_ruby(info: dict, read_fields) -> None:
+    """Put the ruby words in a paragraph's description in place of their \\x15 marks.
+
+    `read_fields()` answers the paragraph's fields in order, each as (code,
+    whether a tracked deletion covers it). A field marked deleted stays in
+    Word's list (measured on both platforms), so its word belongs to
+    `deleted_text`, and only the others to `text`.
+    """
+    if "\x15" not in info["text"] + info.get("deleted_text", ""):
+        return
+    fields = read_fields()
+    info["text"], rubies = with_ruby(info["text"], [c for c, gone in fields if not gone])
+    if rubies:
+        info["ruby"] = rubies
+    if "deleted_text" in info:
+        info["deleted_text"], _ = with_ruby(info["deleted_text"],
+                                            [c for c, gone in fields if gone])
+
+
 def check_spans(text: str, spans: list[str]) -> None:
     """Refuse spans that are not all in `text`, one after the other."""
     cursor = 0
@@ -250,6 +271,74 @@ def locate_spans(raw: str, spans: list[str], read, start: int, hidden: int) -> l
 def clean_text(text: str) -> str:
     """A range's text without its paragraph mark or cell marker."""
     return (text or "").rstrip("\r\x07")
+
+
+def tracked_text(read, start: int, end: int, spans: list[tuple[int, int]]) -> tuple[str, dict]:
+    """The text of [start, end) as Word shows it, and what is struck out in it.
+
+    A tracked deletion stays in a range's text while the markup is shown.
+    `read(a, b)` answers the text between two positions; `spans` are the
+    deletions. Answers the text left, and the fields to add to a paragraph's
+    description: `deleted_text`, and `deleted` when all of it is marked.
+    """
+    kept, gone, at, mark_gone = [], [], start, False
+    for a, b in sorted(spans):
+        a, b = max(a, at), min(b, end)
+        if a >= b:
+            continue
+        kept.append(read(at, a) or "" if a > at else "")
+        gone.append(read(a, b) or "")
+        at = b
+        mark_gone = mark_gone or b == end
+    if at < end:
+        kept.append(read(at, end) or "")
+    text = "".join(kept)
+    if not gone:
+        return text, {}
+    extra = {"deleted_text": clean_text("".join(gone))}
+    if mark_gone and not clean_text(text):
+        extra["deleted"] = True
+    return text, extra
+
+
+def inside_spans(start: int, end: int, spans: list[tuple[int, int]]) -> bool:
+    """Whether [start, end) lies within the spans taken together.
+
+    Two deletions side by side (by two authors, or made one after the other)
+    are two changes: "c" and "at" deleted apart still delete "cat".
+    """
+    covered = start  # covered from start up to here
+    for a, b in sorted(spans):
+        if b <= covered:
+            continue
+        if a > covered:
+            return False  # a gap
+        covered = b
+        if covered >= end:
+            return True
+    return False
+
+
+def deletion_spans(rng) -> list[tuple[int, int]]:
+    """(start, end) of each tracked deletion in a range."""
+    revisions = rng.Revisions
+    count = revisions.Count
+    if not count:
+        return []
+    out = []
+    for i in range(1, count + 1):
+        revision = revisions.Item(i)
+        if revision.Type in (WD_REVISION_DELETE, WD_REVISION_MOVED_FROM):
+            out.append((revision.Range.Start, revision.Range.End))
+    return out
+
+
+def visible_text(rng) -> tuple[str, dict]:
+    """A range's text without its tracked deletions (see tracked_text)."""
+    spans = deletion_spans(rng)
+    if not spans:
+        return rng.Text, {}
+    return tracked_text(lambda a, b: rng.Document.Range(a, b).Text, rng.Start, rng.End, spans)
 
 
 def style_name(style) -> str | None:
@@ -347,15 +436,22 @@ def fonts_of(rng) -> dict:
     }
 
 
+def _field_codes(rng) -> list[tuple[str, bool]]:
+    """Each field of a range: its code, and whether a tracked deletion covers it."""
+    spans = deletion_spans(rng)
+    fields = rng.Fields
+    out = []
+    for i in range(1, fields.Count + 1):
+        code = fields.Item(i).Code
+        out.append((code.Text, inside_spans(code.Start, code.End, spans)))
+    return out
+
+
 def paragraph_info(index: int, p, detail: bool = False) -> dict:
     rng = p.Range
-    info = {"index": index, "text": clean_text(rng.Text), "style": style_name(p.Style)}
-    if "\x15" in info["text"]:
-        fields = rng.Fields
-        info["text"], rubies = with_ruby(
-            info["text"], [fields.Item(i).Code.Text for i in range(1, fields.Count + 1)])
-        if rubies:
-            info["ruby"] = rubies
+    text, tracked = visible_text(rng)
+    info = {"index": index, "text": clean_text(text), "style": style_name(p.Style), **tracked}
+    expand_ruby(info, lambda: _field_codes(rng))
     level = p.OutlineLevel
     if level != WD_OUTLINE_BODY:
         info["outline_level"] = level

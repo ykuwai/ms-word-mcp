@@ -26,7 +26,7 @@ from . import shapes as shapes_tools
 from . import text as text_tools
 from ._common import mac_impl
 from . import _props as P
-from ._word import BUILTIN_STYLES, spacing_in_lines, with_ruby
+from ._word import BUILTIN_STYLES, expand_ruby, inside_spans, spacing_in_lines, tracked_text
 
 MAX_PARAGRAPHS_PER_READ = text_tools.MAX_PARAGRAPHS_PER_READ
 
@@ -133,18 +133,67 @@ def _style_value(doc, name: str):
     return style
 
 
-def _info(doc, index: int, detail: bool = False) -> dict:
+def _has_revisions(doc) -> bool:
+    """Whether the document holds any tracked change: one question, however many."""
+    return int(doc.count(each=_k().revision)) > 0
+
+
+#: Word's answer for a change past the last one of a range.
+NO_SUCH_OBJECT = -1728
+
+
+def _deletions(rng) -> list[tuple[int, int]]:
+    """(start, end) of each tracked deletion that touches a text range.
+
+    Asked of the range by number until Word says there is no such change: a
+    range's numbers cost the same anywhere in the document. Going through the
+    document's numbers took 75 s for 200 changes, each slower the further along;
+    the range's whole list at once took 5.9 s for 30 and ran past the timeout
+    for 81, leaving Word busy; counting a range's changes answers 0
+    (docs/PROBES.md). Keep the range small: a paragraph, or a match.
+    """
+    k = _k()
+    out, i = [], 1
+    while True:
+        revision = rng.revisions[i]
+        try:
+            kind = revision.revision_type.get()
+        except Exception as exc:  # noqa: BLE001 - the end, or a real failure
+            if getattr(exc, "errornumber", None) == NO_SUCH_OBJECT:
+                return out
+            raise
+        if kind in (k.revision_delete, k.revision_move_from):
+            text = revision.text_object
+            out.append((text.start_of_content.get(), text.end_of_content.get()))
+        i += 1
+
+
+def _visible(doc, index: int, content, spans) -> tuple[str, dict]:
+    """A paragraph's text without its tracked deletions (_word.tracked_text)."""
+    if not spans:
+        return content, {}
+    start, end = _bounds(doc, index)
+    within = [s for s in spans if s[0] < end and s[1] > start]
+    if not within:
+        return content, {}
+    return tracked_text(lambda a, b: doc.create_range(start=a, end_=b).content.get(),
+                        start, end, within)
+
+
+def _info(doc, index: int, detail: bool = False, spans=None) -> dict:
+    """`spans`: the tracked deletions around it, when the caller knows them."""
     p = doc.paragraphs[index]
-    out = {"index": index, "text": _clean(p.text_object.content.get()),
-           "style": p.style.name_local.get()}
-    if "\x15" in out["text"]:
-        k = _k()
+    spans = _deletions(p.text_object) if spans is None else spans
+    text, tracked = _visible(doc, index, p.text_object.content.get(), spans)
+    out = {"index": index, "text": _clean(text), "style": p.style.name_local.get(), **tracked}
+
+    def fields():
         rng = p.text_object
-        out["text"], rubies = with_ruby(out["text"], [
-            rng.fields[i].field_code.content.get()
-            for i in range(1, int(rng.count(each=k.field)) + 1)])
-        if rubies:
-            out["ruby"] = rubies
+        codes = [rng.fields[i].field_code for i in range(1, int(rng.count(each=_k().field)) + 1)]
+        return [(c.content.get(), bool(spans) and inside_spans(
+            c.start_of_content.get(), c.end_of_content.get(), spans)) for c in codes]
+
+    expand_ruby(out, fields)
     level = _name(p.outline_level.get())
     if level != "outline_level_body_text":
         out["outline_level"] = int(level.rsplit("level", 1)[1])
@@ -354,8 +403,11 @@ def get_paragraphs(start, end, detail):
     from .tables import mac_mark_tables
 
     read = []
+    # Paragraph by paragraph, so a read that runs out of time stops within its
+    # budget; a document with no changes need not ask for each.
+    spans = None if _has_revisions(doc) else []
     for i in range(start, last + 1):
-        read.append(_info(doc, i, detail))
+        read.append(_info(doc, i, detail, spans))
         if time.monotonic() > began + text_tools.READ_SECONDS:
             break
     out = {"success": True, "paragraphs": read, "count": count}
@@ -483,7 +535,7 @@ def set_paragraph_text(index, text):
     _para(doc, index)
     start, end = _bounds(doc, index)
     content = doc.paragraphs[index].text_object.content.get()
-    old = _clean(content)
+    old = _clean(_visible(doc, index, content, _deletions(doc.paragraphs[index].text_object))[0])
     value = text.replace("\n", "\v")
     shapes = int(doc.count(each=_k().shape))
     hidden = max(0, end - start - _u16(content, len(content)))
@@ -509,8 +561,12 @@ def delete_paragraphs(start, end):
     start, end = _span(doc, start, end)
     before = _count(doc)
     shapes = int(doc.count(each=_k().shape))
-    removed = [_clean(doc.paragraphs[i].text_object.content.get())
-               for i in range(start, end + 1)]
+    tracked = _has_revisions(doc)
+    removed = [_clean(_visible(
+        doc, i, doc.paragraphs[i].text_object.content.get(),
+        _deletions(doc.paragraphs[i].text_object) if tracked else [])[0])
+        for i in range(start, end + 1)]
+    tracking = bool(doc.track_revisions.get())
     first, _ = _bounds(doc, start)
     _, last = _bounds(doc, end)
     if end == before and start > 1:
@@ -530,7 +586,9 @@ def delete_paragraphs(start, end):
     out = {"success": True, "deleted": end - start + 1, "texts": removed,
            "paragraphs": after}
     warnings = text_tools.lost_shapes(shapes - int(doc.count(each=_k().shape)))
-    if before - after != end - start + 1 and not (start == 1 and end == before):
+    if tracking:
+        out["note"] = text_tools.TRACKED_DELETE
+    elif before - after != end - start + 1 and not (start == 1 and end == before):
         warnings.append(f"The document went from {before} to {after} paragraphs.")
     if warnings:
         out["warnings"] = warnings
@@ -539,6 +597,23 @@ def delete_paragraphs(start, end):
 
 def _matches(doc, find, match_case, whole_word):
     return _matches_until(doc, find, match_case, whole_word, None)[0]
+
+
+def _live(doc, found, deadline):
+    """The matches not in text marked as a tracked deletion, and whether all were checked.
+
+    Each is asked about at its own place. One not reached in time is left out,
+    not assumed to be live: it could be replaced a second time.
+    """
+    if not found or not _has_revisions(doc):
+        return found, True
+    live = []
+    for start, end in found:
+        if time.monotonic() > deadline:
+            return live, False
+        if not inside_spans(start, end, _deletions(doc.create_range(start=start, end_=end))):
+            live.append((start, end))
+    return live, True
 
 
 def _matches_until(doc, find, match_case, whole_word, deadline):
@@ -603,27 +678,84 @@ def find_replace(find, replace, match_case, whole_word, wildcards):
     began = time.monotonic()
     found, searched_all = _matches_until(doc, find, match_case, whole_word,
                                          began + text_tools.SEARCH_SECONDS)
-    listed = found[:text_tools.LISTED_MATCHES]
-    out = {"success": True, "matches": len(found),
-           "paragraphs": sorted({_index_at(doc, s) for s, _ in listed})}
+    until = began + text_tools.WORK_SECONDS
     if replace is None or not found:
+        # The whole call's time: a match in a deletion takes four questions to rule out.
+        found, checked = _live(doc, found, until)
+        searched_all = searched_all and checked
+        listed = found[:text_tools.LISTED_MATCHES]
+        out = {"success": True, "matches": len(found),
+               "paragraphs": sorted({_index_at(doc, s) for s, _ in listed})}
         text_tools.replace_outcome(out, len(listed), searched_all, None, find, None)
         return out
     value = replace.replace("\n", "\v")
-    until = began + text_tools.WORK_SECONDS
-    done = 0
-    for start, end in reversed(found):
-        if time.monotonic() > until:
-            break
-        doc.create_range(start=start, end_=end).content.set(value)
-        done += 1
-    out["replaced"] = done
-    if searched_all and done == len(found) and time.monotonic() < until:
+    # Paragraph numbers are taken before replacing, where the matches still are:
+    # with tracking on, the old text stays as a deletion beside the new.
+    tracked = _has_revisions(doc)
+    if tracked:
+        # Which matches are live is known only once each is checked, just
+        # before it is replaced: the matches are the ones replaced, numbered
+        # then, and with the time run out there may be more.
+        at = {}
+
+        def number(start):
+            at[start] = _index_at(doc, start)
+
+        replaced, ran_out = _check_and_replace(doc, found, value, until, True, number)
+        live = replaced
+        searched_all = searched_all and not ran_out
+    else:
+        # With no changes every match is live: the first ones are numbered at
+        # once, as on Windows, whether or not the time lets them be replaced.
+        at = {s: _index_at(doc, s) for s, _ in found[:text_tools.LISTED_MATCHES]}
+        replaced, ran_out = _check_and_replace(doc, found, value, until, False)
+        live = found
+    starts = [s for s, _ in live[:text_tools.LISTED_MATCHES]]
+    out = {"success": True, "matches": len(live),
+           "paragraphs": sorted({at[s] for s in starts}),
+           "replaced": len(replaced)}
+    if searched_all and not ran_out and time.monotonic() < until:
         left, _ = _matches_until(doc, find, match_case, whole_word, until)
+        left, _ = _live(doc, left, until)
         if left and find.lower() not in value.lower():
             out["warnings"] = [f"{len(left)} matches are still there after replacing."]
-    text_tools.replace_outcome(out, len(listed), searched_all, done, find, replace)
+    text_tools.replace_outcome(out, len(starts), searched_all, len(replaced), find, replace)
+    if tracked and ran_out and not replaced:
+        out["warnings"][-1] = (
+            "The time for one call ran out while checking the matches against text marked "
+            "as a tracked deletion, before any was replaced, and calling again would do the "
+            "same. Narrow the search (match_case, whole_word, or a longer text), or accept "
+            "or reject the tracked changes first.")
     return out
+
+
+def _check_and_replace(doc, found, value, until, tracked, before=None):
+    """Replace each match not in a tracked deletion, from the last back.
+
+    Each is checked just before it is replaced, so a call whose time runs out
+    has still replaced the ones it checked, and calling again goes on from
+    there; checking them all first could take the whole call each time and
+    replace nothing. From the last back, a replacement moves no match still to
+    come. `before(start)` is called just before each is replaced. Answers the
+    replaced (start, end), in document order, as they were before, and whether
+    the time ran out.
+
+    A limit: with tracking on, the text replaced stays as a deletion, and the
+    next call checks it again (about four questions each) before it reaches
+    what is left, so each call gets less far; a call that gets nowhere says so.
+    """
+    replaced = []
+    for start, end in reversed(found):
+        if time.monotonic() > until:
+            return replaced[::-1], True
+        if tracked and inside_spans(start, end,
+                                    _deletions(doc.create_range(start=start, end_=end))):
+            continue
+        if before is not None:
+            before(start)
+        doc.create_range(start=start, end_=end).content.set(value)
+        replaced.append((start, end))
+    return replaced[::-1], False
 
 
 # -- formatting ------------------------------------------------------------------

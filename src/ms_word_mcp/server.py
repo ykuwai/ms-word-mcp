@@ -247,6 +247,16 @@ mark out of the text (`word_find_replace`), then `word_apply_list`. Insert a
 table of contents last; a paragraph that holds its end cannot be deleted
 while it is there.
 
+## Tracked changes
+
+`word_set_track_changes` turns tracking on, and every later edit is marked for
+review. A paragraph's `text` is what Word shows: text marked as deleted is left
+out and given in `deleted_text`, and a paragraph marked as deleted whole has
+`deleted`. A deleted paragraph keeps its place and its number until the change
+is accepted. `word_list_revisions` lists the changes;
+`word_accept_revisions` and `word_reject_revisions` take their numbers, which
+move after each call, or `every`.
+
 ## Paragraph numbers
 
 Paragraphs are numbered from 1, as Word counts them. Inserting or deleting
@@ -287,11 +297,11 @@ mainly Latin document. East Asian layouts measure spacing in grid lines
 mcp = WordServer("ms_word_mcp", lifespan=app_lifespan, instructions=INSTRUCTIONS)
 
 from .tools import (  # noqa: E402,F401 - mac registers the Mac halves
-    documents, edit, equations, fields, formatting, links, lists, mac, notes, page, references, screen, shapes,
-    tables, text, view)
+    documents, edit, equations, fields, formatting, links, lists, mac, notes, page, references, revisions,
+    screen, shapes, tables, text, view)
 
 for module in (documents, text, formatting, lists, tables, references, shapes, notes, links, equations,
-               fields, page, view, screen, edit):
+               fields, revisions, page, view, screen, edit):
     module.register(mcp)
 
 
@@ -404,6 +414,7 @@ AREAS = {"documents": "Documents", "text": "Reading and writing text",
          "notes": "Footnotes and endnotes", "links": "Hyperlinks and bookmarks",
          "page": "The page: setup, vertical text, headers, footers, ruby",
          "equations": "Equations", "fields": "Fields and tables of contents",
+         "revisions": "Tracked changes",
          "view": "View", "screen": "Seeing a page", "edit": "Undo"}
 
 

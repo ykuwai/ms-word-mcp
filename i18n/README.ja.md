@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <strong>Windows と macOS の Microsoft Word をリアルタイムに操作——<br>あなたの隣で同じ文書を編集する、<!--tools-->80<!--/tools--> ツールの MCP サーバー</strong>
+  <strong>Windows と macOS の Microsoft Word をリアルタイムに操作——<br>あなたの隣で同じ文書を編集する、<!--tools-->84<!--/tools--> ツールの MCP サーバー</strong>
 </p>
 
 ---
@@ -116,7 +116,7 @@ uv sync
 
 文書、読み取り、書き込み、書式、スタイル、箇条書き、表、画像・キャプション・相互参照、ページ設定、数式、浮動の図形と画像、脚注と文末脚注、ハイパーリンクとブックマーク、フィールドと目次、表示、ページの画像、元に戻す。
 
-全ツールの一覧は [TOOLS.md](https://github.com/ykuwai/ms-word-mcp/blob/main/TOOLS.md) にあります。コメントと変更履歴にはまだ対応していません。
+全ツールの一覧は [TOOLS.md](https://github.com/ykuwai/ms-word-mcp/blob/main/TOOLS.md) にあります。コメントにはまだ対応していません。
 
 ## 💡 プロンプトの例
 

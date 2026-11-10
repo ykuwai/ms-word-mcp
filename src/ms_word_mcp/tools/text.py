@@ -17,8 +17,8 @@ from .shapes import leading_anchors
 from ._word import (
     WD_COLLAPSE_END, WD_FIND_STOP, WD_OUTLINE_BODY,
     WD_STATISTIC_CHARACTERS, WD_STATISTIC_PAGES, WD_STATISTIC_WORDS,
-    check_span, clean_text, index_of, paragraph, paragraph_info, paragraphs_in,
-    BUILTIN_STYLES, resolve_style, style_name,
+    check_span, clean_text, deletion_spans, index_of, inside_spans, paragraph, paragraph_info,
+    paragraphs_in, visible_text, BUILTIN_STYLES, resolve_style, style_name,
 )
 
 MAX_PARAGRAPHS_PER_READ = 200
@@ -327,7 +327,7 @@ def _set_paragraph_text_impl(index: int, text: str):
     doc = backend.word.document()
     p = paragraph(doc, index)
     rng = p.Range
-    old = clean_text(rng.Text)
+    old = clean_text(visible_text(rng)[0])
     shapes = doc.Shapes.Count
     hidden = max(0, rng.End - rng.Start - len(rng.Text.encode("utf-16-le")) // 2)
     # A shape anchored at the paragraph's start stays; its anchor is not text.
@@ -351,12 +351,18 @@ class DeleteParagraphsInput(Input):
     end: int | None = Field(None, ge=1, description="Last one. Leave out for one paragraph.")
 
 
+TRACKED_DELETE = ("Change tracking is on, so these are marked as deleted: they stay in the "
+                  "document, and the paragraphs keep their numbers, until the change is "
+                  "accepted.")
+
+
 def _delete_paragraphs_impl(start: int, end: int | None):
     doc = backend.word.document()
     start, end = check_span(doc, start, end)
     before = doc.Paragraphs.Count
     shapes = doc.Shapes.Count
-    removed = [clean_text(p.Range.Text) for _, p in paragraphs_in(doc, start, end)]
+    removed = [clean_text(visible_text(p.Range)[0]) for _, p in paragraphs_in(doc, start, end)]
+    tracking = bool(doc.TrackRevisions)
     first = paragraph(doc, start).Range.Start
     last = paragraph(doc, end).Range.End
     if end == before and start > 1:
@@ -368,7 +374,9 @@ def _delete_paragraphs_impl(start: int, end: int | None):
     result = {"success": True, "deleted": end - start + 1, "texts": removed,
               "paragraphs": after}
     warnings = lost_shapes(shapes - doc.Shapes.Count)
-    if before - after != end - start + 1:
+    if tracking:
+        result["note"] = TRACKED_DELETE
+    elif before - after != end - start + 1:
         warnings.append(
             f"The document went from {before} to {after} paragraphs, not "
             f"{before - (end - start + 1)}. Read it back with word_get_paragraphs.")
@@ -438,6 +446,7 @@ def _find_all(doc, find, match_case, whole_word, wildcards, deadline):
     """
     if not wildcards:
         find = find.replace("^", "^^")
+    deleted = deletion_spans(doc.Content)  # Word's search finds these too
     rng = doc.Content
     f = rng.Find
     f.ClearFormatting()
@@ -450,8 +459,9 @@ def _find_all(doc, find, match_case, whole_word, wildcards, deadline):
                              f"after {len(found)} matches. Nothing was changed. Try a "
                              "narrower search.")
         reached = rng.End
-        found.append((rng.Start, rng.End,
-                      index_of(doc, rng) if len(found) < LISTED_MATCHES else None))
+        if not inside_spans(rng.Start, rng.End, deleted):
+            found.append((rng.Start, rng.End,
+                          index_of(doc, rng) if len(found) < LISTED_MATCHES else None))
         if time.monotonic() > deadline:
             return found, False
         rng.Collapse(WD_COLLAPSE_END)
@@ -517,9 +527,10 @@ def register(mcp) -> None:
     async def word_get_paragraphs(params: GetParagraphsInput) -> str:
         """Read paragraphs by index: text, style and outline level, and with
         `detail` their formatting too. A paragraph in a table carries the
-        table's number (`table`): read those with word_get_table. A read that
-        runs out of time answers what it has, `complete` false and where to go
-        on in `more`."""
+        table's number (`table`): read those with word_get_table. Text marked
+        as a tracked deletion is left out of `text` and given in
+        `deleted_text`. A read that runs out of time answers what it has,
+        `complete` false and where to go on in `more`."""
         return await call(_get_paragraphs_impl, params.start, params.end,
                                    params.detail)
 

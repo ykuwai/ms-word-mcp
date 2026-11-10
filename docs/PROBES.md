@@ -334,3 +334,35 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | Updating an INCLUDETEXT field | Not seen to ask | Word can stop on a dialog of its own ("contains fields that can share data with external files or websites"), Yes or No, and the call waits. Seen in one run of two, so the live check no longer makes such a field. |
 | Whether a real macro stays off | Not measured: making a macro-enabled test document needs access to the VBA project | Not measured |
 
+
+## Tracked changes and comments (Word 16, both platforms)
+
+`scripts/probes/windows_comments_revisions.py` and
+`scripts/probes/mac_comments_revisions.py`, measured 2026-11-09. Each runs only
+while no other document is open.
+
+| What | Windows | Mac |
+|---|---|---|
+| A paragraph with a tracked deletion, markup shown | `Range.Text` holds the deleted text | The same |
+| The same with the markup hidden | The text Word shows; `Range.End` does not move | The same |
+| Taking the deletions' spans out of the range | Equals the text with the markup hidden | The same |
+| A replacement through a range | The new text goes in front of the text marked deleted | The same |
+| A whole paragraph deleted | It stays, and `Paragraphs.Count` does not change | The same |
+| A ruby word marked deleted | Its field stays in `Range.Fields` and its `\x15` in `Range.Text`; the code lies inside the deletion | The same, through `field code` |
+| Reading the changes of a part of a document | `Range.Revisions` | The range's own numbers (`revisions[i]` of the range) until Word answers -1728: tens of milliseconds each wherever the range is, each change whole even when it runs on past the range. The range's whole list at once: 5.9 s for 30 changes, past the 60 s timeout for 81 (Word busy for minutes after). `count each revision` of a range answers 0 |
+| Going through the document's changes one by one | Not measured | Slower the further along: 0.03 s at the 1st, 0.46 s at the 181st; 75 s for 200 changes |
+| Asking a property of every change at once | Not measured | `revisions`' `revision type` ran past the 60 s timeout on 200 changes and left Word busy for minutes |
+| All of one change's properties | Not measured | `properties` in one question: 2.8 s at the 180th, against 1.4 s for one property |
+| Accepting or rejecting one change | The ones after it renumber | The same |
+| `For Each` over changes that include a format change | Two format changes both answered `Index` 1 | Not seen |
+| `Range.Revisions.AcceptAll` | Works | Refused (-1708), so a change is accepted by number |
+| Making a comment | `Comments.Add`, with `Replies.Add`, `Done`, `DeleteRecursively` | `make new Word comment` ended the Word process, both `at` a range and `at` the document with `scope` as a property |
+| Opening a file Word did not make | Opens | Word asks for access in a dialog of its own, and the Apple event times out (-1712) until someone answers |
+
+With 180 changes in a document of 200 paragraphs on the Mac, reading one paragraph
+took 0.69 s through the tools once only its own changes are asked for (it had to
+walk them all before, about 75 s), and listing changes 81 on took 42.8 s: a
+listing stops after 40 s and says where to go on.
+
+Because a search matches text marked deleted, a replacement run a second time
+would replace it again. The search leaves those matches out.

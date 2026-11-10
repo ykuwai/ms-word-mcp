@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <strong>Real-time Microsoft Word control on Windows and macOS —<br>an MCP server with <!--tools-->80<!--/tools--> tools that works in the document beside you.</strong>
+  <strong>Real-time Microsoft Word control on Windows and macOS —<br>an MCP server with <!--tools-->84<!--/tools--> tools that works in the document beside you.</strong>
 </p>
 
 ---
@@ -116,7 +116,7 @@ uv sync
 
 Documents, reading, writing, formatting, styles, lists, tables, pictures, captions and cross-references, the page, equations, floating shapes and pictures, footnotes and endnotes, hyperlinks and bookmarks, fields and tables of contents, the view, a picture of a page, and undo.
 
-The full list of tools, by category, is in [TOOLS.md](https://github.com/ykuwai/ms-word-mcp/blob/main/TOOLS.md). Comments and tracked changes are not here yet.
+The full list of tools, by category, is in [TOOLS.md](https://github.com/ykuwai/ms-word-mcp/blob/main/TOOLS.md). Comments are not here yet.
 
 ## 💡 Example Prompts
 
