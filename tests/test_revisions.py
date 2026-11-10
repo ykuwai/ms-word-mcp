@@ -374,7 +374,7 @@ def _mac_replace(monkeypatch, found, outcome, tracked=False):
     monkeypatch.setattr(mac, "_live", lambda doc, left, until: ([], True))
 
     def check_and_replace(doc, found, value, until, is_tracked, before=None):
-        assert is_tracked is tracked
+        assert is_tracked is tracked and (before is not None) is tracked
         for s, _ in reversed(outcome[0]):
             if before is not None:
                 before(s)
@@ -402,6 +402,18 @@ def test_with_changes_each_replaced_match_is_numbered(monkeypatch):
     assert "paragraphs_cover" not in out
 
 
+def test_with_no_changes_a_replace_out_of_time_still_counts_every_match(monkeypatch):
+    """Every match is live: the count and the first paragraphs stand, as on Windows."""
+    found = [(i * 10, i * 10 + 3) for i in range(101)]
+    out, at = _mac_replace(monkeypatch, found, ([(1000, 1003)], True))
+    assert at == [s for s, _ in found[:100]]
+    assert out["matches"] == 101 and out["replaced"] == 1
+    assert out["paragraphs"] == at and out["paragraphs_cover"] == "the first 100 matches"
+    assert out["complete"] is False
+    assert "1 of 101 matches replaced" in out["warnings"][-1]
+    assert "same arguments for the rest" in out["warnings"][-1]
+
+
 @pytest.mark.parametrize("spans, match, inside", [
     ([(0, 1), (1, 3)], (0, 3), True),     # "c" and "at" deleted apart
     ([(0, 2), (1, 5)], (1, 4), True),     # overlapping
@@ -416,14 +428,21 @@ def test_a_match_across_deletions_side_by_side_is_deleted(spans, match, inside):
 
 
 def test_a_replace_that_checked_without_replacing_does_not_ask_to_call_again(monkeypatch):
-    out, _ = _mac_replace(monkeypatch, [(1, 4), (10, 13)], ([], True))
+    out, _ = _mac_replace(monkeypatch, [(1, 4), (10, 13)], ([], True), tracked=True)
     assert out["complete"] is False and out["replaced"] == 0
     assert "calling again would do the same" in out["warnings"][-1]
     assert "same arguments for the rest" not in " ".join(out["warnings"])
 
 
+def test_with_no_changes_nothing_replaced_in_time_is_not_put_on_deletions(monkeypatch):
+    out, _ = _mac_replace(monkeypatch, [(1, 4), (10, 13)], ([], True))
+    assert out["complete"] is False and out["replaced"] == 0
+    assert "same arguments for the rest" in out["warnings"][-1]
+    assert "deletion" not in " ".join(out["warnings"])
+
+
 def test_a_replace_that_ran_out_after_some_asks_to_call_again(monkeypatch):
-    out, _ = _mac_replace(monkeypatch, [(1, 4), (10, 13)], ([(10, 13)], True))
+    out, _ = _mac_replace(monkeypatch, [(1, 4), (10, 13)], ([(10, 13)], True), tracked=True)
     assert out["complete"] is False and out["replaced"] == 1
     assert "same arguments for the rest" in out["warnings"][-1]
 

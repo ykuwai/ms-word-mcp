@@ -690,31 +690,37 @@ def find_replace(find, replace, match_case, whole_word, wildcards):
         return out
     value = replace.replace("\n", "\v")
     # Paragraph numbers are taken before replacing, where the matches still are:
-    # with tracking on, the old text stays as a deletion beside the new. With no
-    # changes in the document every match is replaced, so the first ones found
-    # are the first replaced; with changes, any of them may be in a deletion,
-    # and each is numbered just before it is replaced.
+    # with tracking on, the old text stays as a deletion beside the new.
     tracked = _has_revisions(doc)
-    at = {} if tracked else {s: _index_at(doc, s)
-                             for s, _ in found[:text_tools.LISTED_MATCHES]}
+    if tracked:
+        # Which matches are live is known only once each is checked, just
+        # before it is replaced: the matches are the ones replaced, numbered
+        # then, and with the time run out there may be more.
+        at = {}
 
-    def number(start):
-        at[start] = _index_at(doc, start)
+        def number(start):
+            at[start] = _index_at(doc, start)
 
-    replaced, ran_out = _check_and_replace(doc, found, value, until, tracked,
-                                           number if tracked else None)
-    searched_all = searched_all and not ran_out
-    starts = [s for s, _ in replaced[:text_tools.LISTED_MATCHES]]
-    out = {"success": True, "matches": len(replaced),
+        replaced, ran_out = _check_and_replace(doc, found, value, until, True, number)
+        live = replaced
+        searched_all = searched_all and not ran_out
+    else:
+        # With no changes every match is live: the first ones are numbered at
+        # once, as on Windows, whether or not the time lets them be replaced.
+        at = {s: _index_at(doc, s) for s, _ in found[:text_tools.LISTED_MATCHES]}
+        replaced, ran_out = _check_and_replace(doc, found, value, until, False)
+        live = found
+    starts = [s for s, _ in live[:text_tools.LISTED_MATCHES]]
+    out = {"success": True, "matches": len(live),
            "paragraphs": sorted({at[s] for s in starts}),
            "replaced": len(replaced)}
-    if searched_all and time.monotonic() < until:
+    if searched_all and not ran_out and time.monotonic() < until:
         left, _ = _matches_until(doc, find, match_case, whole_word, until)
         left, _ = _live(doc, left, until)
         if left and find.lower() not in value.lower():
             out["warnings"] = [f"{len(left)} matches are still there after replacing."]
     text_tools.replace_outcome(out, len(starts), searched_all, len(replaced), find, replace)
-    if ran_out and not replaced:
+    if tracked and ran_out and not replaced:
         out["warnings"][-1] = (
             "The time for one call ran out while checking the matches against text marked "
             "as a tracked deletion, before any was replaced, and calling again would do the "
@@ -733,6 +739,10 @@ def _check_and_replace(doc, found, value, until, tracked, before=None):
     come. `before(start)` is called just before each is replaced. Answers the
     replaced (start, end), in document order, as they were before, and whether
     the time ran out.
+
+    A limit: with tracking on, the text replaced stays as a deletion, and the
+    next call checks it again (about four questions each) before it reaches
+    what is left, so each call gets less far; a call that gets nowhere says so.
     """
     replaced = []
     for start, end in reversed(found):
