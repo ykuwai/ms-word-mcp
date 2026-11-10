@@ -678,31 +678,63 @@ def find_replace(find, replace, match_case, whole_word, wildcards):
     began = time.monotonic()
     found, searched_all = _matches_until(doc, find, match_case, whole_word,
                                          began + text_tools.SEARCH_SECONDS)
-    # The whole call's time: a match in a deletion takes four questions to rule out.
-    found, checked = _live(doc, found, began + text_tools.WORK_SECONDS)
-    searched_all = searched_all and checked
-    listed = found[:text_tools.LISTED_MATCHES]
-    out = {"success": True, "matches": len(found),
-           "paragraphs": sorted({_index_at(doc, s) for s, _ in listed})}
+    until = began + text_tools.WORK_SECONDS
     if replace is None or not found:
+        # The whole call's time: a match in a deletion takes four questions to rule out.
+        found, checked = _live(doc, found, until)
+        searched_all = searched_all and checked
+        listed = found[:text_tools.LISTED_MATCHES]
+        out = {"success": True, "matches": len(found),
+               "paragraphs": sorted({_index_at(doc, s) for s, _ in listed})}
         text_tools.replace_outcome(out, len(listed), searched_all, None, find, None)
         return out
     value = replace.replace("\n", "\v")
-    until = began + text_tools.WORK_SECONDS
-    done = 0
-    for start, end in reversed(found):
-        if time.monotonic() > until:
-            break
-        doc.create_range(start=start, end_=end).content.set(value)
-        done += 1
-    out["replaced"] = done
-    if searched_all and done == len(found) and time.monotonic() < until:
+    replaced, ran_out = _check_and_replace(doc, found, value, until)
+    searched_all = searched_all and not ran_out
+    # Where the first ones start now: each replaced before them changed the length.
+    grow, shift, starts = _u16(value, len(value)), 0, []
+    for start, end in replaced[:text_tools.LISTED_MATCHES]:
+        starts.append(start + shift)
+        shift += grow - (end - start)
+    out = {"success": True, "matches": len(replaced),
+           "paragraphs": sorted({_index_at(doc, s) for s in starts}),
+           "replaced": len(replaced)}
+    if searched_all and time.monotonic() < until:
         left, _ = _matches_until(doc, find, match_case, whole_word, until)
         left, _ = _live(doc, left, until)
         if left and find.lower() not in value.lower():
             out["warnings"] = [f"{len(left)} matches are still there after replacing."]
-    text_tools.replace_outcome(out, len(listed), searched_all, done, find, replace)
+    text_tools.replace_outcome(out, len(starts), searched_all, len(replaced), find, replace)
+    if ran_out and not replaced:
+        out["warnings"][-1] = (
+            "The time for one call ran out while checking the matches against text marked "
+            "as a tracked deletion, before any was replaced, and calling again would do the "
+            "same. Narrow the search (match_case, whole_word, or a longer text), or accept "
+            "or reject the tracked changes first.")
     return out
+
+
+def _check_and_replace(doc, found, value, until):
+    """Replace each match not in a tracked deletion, from the last back.
+
+    Each is checked just before it is replaced, so a call whose time runs out
+    has still replaced the ones it checked, and calling again goes on from
+    there; checking them all first could take the whole call each time and
+    replace nothing. From the last back, a replacement moves no match still to
+    come. Answers the replaced (start, end), in document order, as they were
+    before, and whether the time ran out.
+    """
+    tracked = _has_revisions(doc)
+    replaced = []
+    for start, end in reversed(found):
+        if time.monotonic() > until:
+            return replaced[::-1], True
+        if tracked and inside_spans(start, end,
+                                    _deletions(doc.create_range(start=start, end_=end))):
+            continue
+        doc.create_range(start=start, end_=end).content.set(value)
+        replaced.append((start, end))
+    return replaced[::-1], False
 
 
 # -- formatting ------------------------------------------------------------------

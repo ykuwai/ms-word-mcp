@@ -325,6 +325,68 @@ def test_a_document_with_no_changes_is_not_asked_about_each_match(monkeypatch):
     assert mac._live(None, [(1, 3)], time.monotonic() - 1) == ([(1, 3)], True)
 
 
+def _mac_writable_doc(deleted, written):
+    """Like _mac_doc, and a range's content can be set: (start, end, value) is noted."""
+    def create_range(start, end_):
+        rng = _mac_range([("delete", a, b) for a, b in deleted if a <= start and end_ <= b])
+        rng.content = SimpleNamespace(set=lambda v: written.append((start, end_, v)))
+        return rng
+    return SimpleNamespace(create_range=create_range)
+
+
+def test_each_match_is_checked_then_replaced_from_the_last(monkeypatch):
+    monkeypatch.setattr(mac, "_k", _mac_kinds)
+    monkeypatch.setattr(mac, "_has_revisions", lambda doc: True)
+    written = []
+    doc = _mac_writable_doc([(10, 20)], written)
+    replaced, ran_out = mac._check_and_replace(
+        doc, [(1, 3), (12, 15), (30, 33)], "dog", time.monotonic() + 60)
+    assert written == [(30, 33, "dog"), (1, 3, "dog")]
+    assert (replaced, ran_out) == ([(1, 3), (30, 33)], False)
+
+
+def test_a_replace_out_of_time_keeps_what_it_checked(monkeypatch):
+    """The last match is replaced before the time runs out, so calling again goes on."""
+    monkeypatch.setattr(mac, "_k", _mac_kinds)
+    monkeypatch.setattr(mac, "_has_revisions", lambda doc: True)
+    clock = iter([0.0, 100.0])
+    monkeypatch.setattr(mac, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    written = []
+    replaced, ran_out = mac._check_and_replace(
+        _mac_writable_doc([], written), [(1, 3), (5, 7)], "dog", 50.0)
+    assert written == [(5, 7, "dog")]
+    assert (replaced, ran_out) == ([(5, 7)], True)
+
+
+def _mac_replace(monkeypatch, found, outcome):
+    at = []
+    monkeypatch.setattr(mac.backend, "word", SimpleNamespace(document=lambda: "doc"))
+    monkeypatch.setattr(mac, "_matches_until", lambda *a: (found, True))
+    monkeypatch.setattr(mac, "_live", lambda doc, left, until: ([], True))
+    monkeypatch.setattr(mac, "_check_and_replace", lambda *a: outcome)
+    monkeypatch.setattr(mac, "_index_at", lambda doc, s: at.append(s) or s)
+    return mac.find_replace("cat", "a", False, False, False), at
+
+
+def test_paragraphs_of_replaced_matches_are_found_where_they_are_now(monkeypatch):
+    out, at = _mac_replace(monkeypatch, [(1, 4), (10, 13)], ([(1, 4), (10, 13)], False))
+    assert at == [1, 8]  # "cat" became "a": the second moved back two
+    assert out["matches"] == 2 and out["replaced"] == 2 and "warnings" not in out
+
+
+def test_a_replace_that_checked_without_replacing_does_not_ask_to_call_again(monkeypatch):
+    out, _ = _mac_replace(monkeypatch, [(1, 4), (10, 13)], ([], True))
+    assert out["complete"] is False and out["replaced"] == 0
+    assert "calling again would do the same" in out["warnings"][-1]
+    assert "same arguments for the rest" not in " ".join(out["warnings"])
+
+
+def test_a_replace_that_ran_out_after_some_asks_to_call_again(monkeypatch):
+    out, _ = _mac_replace(monkeypatch, [(1, 4), (10, 13)], ([(10, 13)], True))
+    assert out["complete"] is False and out["replaced"] == 1
+    assert "same arguments for the rest" in out["warnings"][-1]
+
+
 # -- a listing that runs out of time ------------------------------------------------
 
 def test_a_listing_answers_what_it_has_when_time_runs_out(monkeypatch):
