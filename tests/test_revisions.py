@@ -344,45 +344,62 @@ def _mac_writable_doc(deleted, written):
 
 def test_each_match_is_checked_then_replaced_from_the_last(monkeypatch):
     monkeypatch.setattr(mac, "_k", _mac_kinds)
-    monkeypatch.setattr(mac, "_has_revisions", lambda doc: True)
-    written = []
+    written, before = [], []
     doc = _mac_writable_doc([(10, 20)], written)
     replaced, ran_out = mac._check_and_replace(
-        doc, [(1, 3), (12, 15), (30, 33)], "dog", time.monotonic() + 60)
+        doc, [(1, 3), (12, 15), (30, 33)], "dog", time.monotonic() + 60, True, before.append)
     assert written == [(30, 33, "dog"), (1, 3, "dog")]
+    assert before == [30, 1]  # numbered before each is replaced, never the deleted one
     assert (replaced, ran_out) == ([(1, 3), (30, 33)], False)
 
 
 def test_a_replace_out_of_time_keeps_what_it_checked(monkeypatch):
     """The last match is replaced before the time runs out, so calling again goes on."""
     monkeypatch.setattr(mac, "_k", _mac_kinds)
-    monkeypatch.setattr(mac, "_has_revisions", lambda doc: True)
     clock = iter([0.0, 100.0])
     monkeypatch.setattr(mac, "time", SimpleNamespace(monotonic=lambda: next(clock)))
     written = []
     replaced, ran_out = mac._check_and_replace(
-        _mac_writable_doc([], written), [(1, 3), (5, 7)], "dog", 50.0)
+        _mac_writable_doc([], written), [(1, 3), (5, 7)], "dog", 50.0, True)
     assert written == [(5, 7, "dog")]
     assert (replaced, ran_out) == ([(5, 7)], True)
 
 
-def _mac_replace(monkeypatch, found, outcome):
+def _mac_replace(monkeypatch, found, outcome, tracked=False):
+    """find_replace with the replacing stubbed: `outcome` is (replaced, ran_out)."""
     at = []
     monkeypatch.setattr(mac.backend, "word", SimpleNamespace(document=lambda: "doc"))
     monkeypatch.setattr(mac, "_matches_until", lambda *a: (found, True))
+    monkeypatch.setattr(mac, "_has_revisions", lambda doc: tracked)
     monkeypatch.setattr(mac, "_live", lambda doc, left, until: ([], True))
-    monkeypatch.setattr(mac, "_check_and_replace", lambda *a: outcome)
+
+    def check_and_replace(doc, found, value, until, is_tracked, before=None):
+        assert is_tracked is tracked
+        for s, _ in reversed(outcome[0]):
+            if before is not None:
+                before(s)
+        return outcome
+
+    monkeypatch.setattr(mac, "_check_and_replace", check_and_replace)
     monkeypatch.setattr(mac, "_index_at", lambda doc, s: at.append(s) or s)
     return mac.find_replace("cat", "a", False, False, False), at
 
 
-def test_paragraphs_of_replaced_matches_are_taken_where_they_were(monkeypatch):
-    """With tracking on the old text stays beside the new, so positions after are not reckoned."""
-    out, at = _mac_replace(monkeypatch, [(1, 4), (10, 13), (20, 23)],
-                           ([(1, 4), (20, 23)], False))
-    assert at == [1, 10, 20]  # asked before replacing
-    assert out["paragraphs"] == [1, 20]  # (10, 13) was in a deletion: not replaced
+def test_with_no_changes_the_first_found_are_numbered_before_replacing(monkeypatch):
+    """The old text could stay beside the new, so positions after are not reckoned."""
+    out, at = _mac_replace(monkeypatch, [(1, 4), (10, 13)], ([(1, 4), (10, 13)], False))
+    assert at == [1, 10]
+    assert out["paragraphs"] == [1, 10]
     assert out["matches"] == 2 and out["replaced"] == 2 and "warnings" not in out
+
+
+def test_with_changes_each_replaced_match_is_numbered(monkeypatch):
+    """101 deleted hits before a live one: the live one still gets its paragraph."""
+    found = [(i * 10, i * 10 + 3) for i in range(101)] + [(5000, 5003)]
+    out, at = _mac_replace(monkeypatch, found, ([(5000, 5003)], False), tracked=True)
+    assert at == [5000]  # only the replaced one is asked about
+    assert out["paragraphs"] == [5000] and out["replaced"] == 1
+    assert "paragraphs_cover" not in out
 
 
 @pytest.mark.parametrize("spans, match, inside", [

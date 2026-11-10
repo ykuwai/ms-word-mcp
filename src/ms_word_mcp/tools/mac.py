@@ -690,11 +690,21 @@ def find_replace(find, replace, match_case, whole_word, wildcards):
         return out
     value = replace.replace("\n", "\v")
     # Paragraph numbers are taken before replacing, where the matches still are:
-    # with tracking on, the old text stays as a deletion beside the new.
-    at = {s: _index_at(doc, s) for s, _ in found[:text_tools.LISTED_MATCHES]}
-    replaced, ran_out = _check_and_replace(doc, found, value, until)
+    # with tracking on, the old text stays as a deletion beside the new. With no
+    # changes in the document every match is replaced, so the first ones found
+    # are the first replaced; with changes, any of them may be in a deletion,
+    # and each is numbered just before it is replaced.
+    tracked = _has_revisions(doc)
+    at = {} if tracked else {s: _index_at(doc, s)
+                             for s, _ in found[:text_tools.LISTED_MATCHES]}
+
+    def number(start):
+        at[start] = _index_at(doc, start)
+
+    replaced, ran_out = _check_and_replace(doc, found, value, until, tracked,
+                                           number if tracked else None)
     searched_all = searched_all and not ran_out
-    starts = [s for s, _ in replaced if s in at]
+    starts = [s for s, _ in replaced[:text_tools.LISTED_MATCHES]]
     out = {"success": True, "matches": len(replaced),
            "paragraphs": sorted({at[s] for s in starts}),
            "replaced": len(replaced)}
@@ -713,17 +723,17 @@ def find_replace(find, replace, match_case, whole_word, wildcards):
     return out
 
 
-def _check_and_replace(doc, found, value, until):
+def _check_and_replace(doc, found, value, until, tracked, before=None):
     """Replace each match not in a tracked deletion, from the last back.
 
     Each is checked just before it is replaced, so a call whose time runs out
     has still replaced the ones it checked, and calling again goes on from
     there; checking them all first could take the whole call each time and
     replace nothing. From the last back, a replacement moves no match still to
-    come. Answers the replaced (start, end), in document order, as they were
-    before, and whether the time ran out.
+    come. `before(start)` is called just before each is replaced. Answers the
+    replaced (start, end), in document order, as they were before, and whether
+    the time ran out.
     """
-    tracked = _has_revisions(doc)
     replaced = []
     for start, end in reversed(found):
         if time.monotonic() > until:
@@ -731,6 +741,8 @@ def _check_and_replace(doc, found, value, until):
         if tracked and inside_spans(start, end,
                                     _deletions(doc.create_range(start=start, end_=end))):
             continue
+        if before is not None:
+            before(start)
         doc.create_range(start=start, end_=end).content.set(value)
         replaced.append((start, end))
     return replaced[::-1], False
