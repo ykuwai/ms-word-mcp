@@ -138,24 +138,34 @@ def _has_revisions(doc) -> bool:
     return int(doc.count(each=_k().revision)) > 0
 
 
+#: Word's answer for a change past the last one of a range.
+NO_SUCH_OBJECT = -1728
+
+
 def _deletions(rng) -> list[tuple[int, int]]:
     """(start, end) of each tracked deletion that touches a text range.
 
-    The range's own list costs the same anywhere in the document. Going through
-    the document's list took 75 s for 200 changes, each question slower the
-    further along it asks; counting a range's changes answers 0 (docs/PROBES.md).
+    Asked of the range by number until Word says there is no such change: a
+    range's numbers cost the same anywhere in the document. Going through the
+    document's numbers took 75 s for 200 changes, each slower the further along;
+    the range's whole list at once took 5.9 s for 30 and ran past the timeout
+    for 81, leaving Word busy; counting a range's changes answers 0
+    (docs/PROBES.md). Keep the range small: a paragraph, or a match.
     """
     k = _k()
-    listed = rng.revisions.get()
-    if not isinstance(listed, list):  # the missing value: none here
-        return []
-    out = []
-    for i in range(1, len(listed) + 1):
+    out, i = [], 1
+    while True:
         revision = rng.revisions[i]
-        if revision.revision_type.get() in (k.revision_delete, k.revision_move_from):
+        try:
+            kind = revision.revision_type.get()
+        except Exception as exc:  # noqa: BLE001 - the end, or a real failure
+            if getattr(exc, "errornumber", None) == NO_SUCH_OBJECT:
+                return out
+            raise
+        if kind in (k.revision_delete, k.revision_move_from):
             text = revision.text_object
             out.append((text.start_of_content.get(), text.end_of_content.get()))
-    return out
+        i += 1
 
 
 def _visible(doc, index: int, content, spans) -> tuple[str, dict]:
@@ -551,9 +561,11 @@ def delete_paragraphs(start, end):
     start, end = _span(doc, start, end)
     before = _count(doc)
     shapes = int(doc.count(each=_k().shape))
-    spans = _deletions(doc.create_range(start=_bounds(doc, start)[0], end_=_bounds(doc, end)[1]))
-    removed = [_clean(_visible(doc, i, doc.paragraphs[i].text_object.content.get(), spans)[0])
-               for i in range(start, end + 1)]
+    tracked = _has_revisions(doc)
+    removed = [_clean(_visible(
+        doc, i, doc.paragraphs[i].text_object.content.get(),
+        _deletions(doc.paragraphs[i].text_object) if tracked else [])[0])
+        for i in range(start, end + 1)]
     tracking = bool(doc.track_revisions.get())
     first, _ = _bounds(doc, start)
     _, last = _bounds(doc, end)
@@ -666,7 +678,8 @@ def find_replace(find, replace, match_case, whole_word, wildcards):
     began = time.monotonic()
     found, searched_all = _matches_until(doc, find, match_case, whole_word,
                                          began + text_tools.SEARCH_SECONDS)
-    found, checked = _live(doc, found, time.monotonic() + text_tools.SEARCH_SECONDS)
+    # The whole call's time: a match in a deletion takes four questions to rule out.
+    found, checked = _live(doc, found, began + text_tools.WORK_SECONDS)
     searched_all = searched_all and checked
     listed = found[:text_tools.LISTED_MATCHES]
     out = {"success": True, "matches": len(found),

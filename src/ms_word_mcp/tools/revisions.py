@@ -12,6 +12,7 @@ https://learn.microsoft.com/en-us/office/vba/api/word.wdrevisiontype
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 
 from pydantic import Field, model_validator
@@ -22,6 +23,11 @@ from ._word import clean_text
 
 #: How much of a change's text an answer holds.
 TEXT_SHOWN = 500
+
+#: Seconds a listing may take before it answers what it has. The Mac worker
+#: gives up waiting at 84 s, and on the Mac each question about a change takes
+#: longer the further along it is (0.46 s at the 181st, docs/PROBES.md).
+LIST_SECONDS = 40.0
 
 #: WdRevisionType, by value. On the Mac the same types go by name (MAC_KINDS).
 KINDS = {
@@ -93,11 +99,24 @@ def check_numbers(numbers: list[int], count: int) -> list[int]:
     return sorted(set(numbers), reverse=True)
 
 
-def listing(out: list[dict], count: int, tracking: bool, start: int) -> dict:
+def listing(describe, count: int, tracking: bool, start: int, limit: int) -> dict:
+    """Changes `start` on, `describe(number)` each, until `limit` or the time runs out."""
+    began = time.monotonic()
+    last = min(count, start + limit - 1)
+    out = []
+    for number in range(start, last + 1):
+        out.append(describe(number))
+        if time.monotonic() > began + LIST_SECONDS:
+            break
     result = {"success": True, "tracking": tracking, "count": count, "revisions": out}
-    last = start + len(out) - 1
-    if out and last < count:
-        result["more"] = f"Changes {last + 1} to {count} follow; pass start={last + 1}."
+    reached = start + len(out) - 1
+    if reached < last:
+        result["complete"] = False
+        result["warnings"] = [
+            f"The time for one call ran out after change {reached}, before change {last}. "
+            f"Call again with start={reached + 1} for the rest."]
+    if out and reached < count:
+        result["more"] = f"Changes {reached + 1} to {count} follow; pass start={reached + 1}."
     return result
 
 
@@ -131,10 +150,8 @@ def _set_track_changes_impl(on):
 def _list_revisions_impl(start, limit):
     doc = backend.word.document()
     revisions = doc.Revisions
-    count = revisions.Count
-    out = [_describe(doc, i, revisions.Item(i))
-           for i in range(start, min(count, start + limit - 1) + 1)]
-    return listing(out, count, bool(doc.TrackRevisions), start)
+    return listing(lambda i: _describe(doc, i, revisions.Item(i)), revisions.Count,
+                   bool(doc.TrackRevisions), start, limit)
 
 
 def _resolve(verb, method, whole, numbers, every):
@@ -174,15 +191,18 @@ def _mac_kind(value) -> str:
 
 
 def _mac_describe(doc, number: int, revision) -> dict:
+    """Each question about a document's change takes longer the further along it
+    is, so its properties come in one, and its text is read by position."""
     from appscript import k
 
+    props = revision.properties.get()
     rng = revision.text_object
-    start = rng.start_of_content.get()
-    described = {"number": number, "kind": _mac_kind(revision.revision_type.get()),
-                 "author": revision.author.get(), "date": when(revision.date_value.get()),
+    start, end = rng.start_of_content.get(), rng.end_of_content.get()
+    described = {"number": number, "kind": _mac_kind(props[k.revision_type]),
+                 "author": props[k.author], "date": when(props[k.date_value]),
                  "index": int(doc.create_range(start=0, end_=start + 1).count(each=k.paragraph)),
-                 **shown(rng.content.get())}
-    description = revision.format_description.get()
+                 **shown(doc.create_range(start=start, end_=end).content.get())}
+    description = props.get(k.format_description)
     if isinstance(description, str) and description:
         described["description"] = description
     return described
@@ -199,10 +219,8 @@ def _mac_set_track_changes(on):
 @mac_impl(_list_revisions_impl)
 def _mac_list_revisions(start, limit):
     doc = backend.word.document()
-    count = _mac_count(doc)
-    out = [_mac_describe(doc, i, doc.revisions[i])
-           for i in range(start, min(count, start + limit - 1) + 1)]
-    return listing(out, count, bool(doc.track_revisions.get()), start)
+    return listing(lambda i: _mac_describe(doc, i, doc.revisions[i]), _mac_count(doc),
+                   bool(doc.track_revisions.get()), start, limit)
 
 
 def _mac_resolve(verb, method, whole, numbers, every):

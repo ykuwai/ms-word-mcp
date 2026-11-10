@@ -238,21 +238,32 @@ def _mac_kinds():
                            revision_move_from="move", revision_insert="insert", field="field")
 
 
+class _NoSuch(Exception):
+    errornumber = -1728
+
+
 def _mac_range(changes):
-    """A text range whose `revisions` list holds (kind, start, end); none is the missing value."""
+    """A text range whose changes are (kind, start, end), asked for by number."""
     value = lambda v: SimpleNamespace(get=lambda: v)  # noqa: E731
-    items = {i: SimpleNamespace(revision_type=value(kind), text_object=SimpleNamespace(
-        start_of_content=value(a), end_of_content=value(b)))
-        for i, (kind, a, b) in enumerate(changes, 1)}
 
-    class Listed(dict):
+    def missing():
+        raise _NoSuch("The object you are trying to access does not exist")
+
+    class Changes:
+        def __getitem__(self, i):
+            if i > len(changes):
+                return SimpleNamespace(revision_type=SimpleNamespace(get=missing))
+            kind, a, b = changes[i - 1]
+            return SimpleNamespace(revision_type=value(kind), text_object=SimpleNamespace(
+                start_of_content=value(a), end_of_content=value(b)))
+
         def get(self):
-            return list(self.values()) if self else "missing value"
+            raise AssertionError("the whole list at once left Word busy (measured)")
 
-    return SimpleNamespace(revisions=Listed(items))
+    return SimpleNamespace(revisions=Changes())
 
 
-def test_a_range_with_no_changes_answers_the_missing_value(monkeypatch):
+def test_a_range_with_no_changes_answers_none(monkeypatch):
     monkeypatch.setattr(mac, "_k", _mac_kinds)
     assert mac._deletions(_mac_range([])) == []
 
@@ -312,3 +323,40 @@ def test_a_match_not_reached_in_time_is_not_taken_as_live(monkeypatch):
 def test_a_document_with_no_changes_is_not_asked_about_each_match(monkeypatch):
     monkeypatch.setattr(mac, "_has_revisions", lambda doc: False)
     assert mac._live(None, [(1, 3)], time.monotonic() - 1) == ([(1, 3)], True)
+
+
+# -- a listing that runs out of time ------------------------------------------------
+
+def test_a_listing_answers_what_it_has_when_time_runs_out(monkeypatch):
+    monkeypatch.setattr(revisions, "LIST_SECONDS", -1.0)
+    out = revisions.listing(lambda i: {"number": i}, 300, True, 181, 100)
+    assert [r["number"] for r in out["revisions"]] == [181]
+    assert out["complete"] is False
+    assert "start=182" in out["warnings"][0] and "start=182" in out["more"]
+
+
+def test_a_listing_in_time_says_only_what_follows():
+    out = revisions.listing(lambda i: {"number": i}, 5, False, 2, 2)
+    assert [r["number"] for r in out["revisions"]] == [2, 3]
+    assert "complete" not in out and "warnings" not in out
+    assert "start=4" in out["more"]
+
+
+def test_the_last_page_says_nothing_follows():
+    out = revisions.listing(lambda i: {"number": i}, 3, False, 2, 100)
+    assert [r["number"] for r in out["revisions"]] == [2, 3]
+    assert "more" not in out and "complete" not in out
+
+
+def test_a_failure_other_than_the_end_is_not_taken_as_the_end(monkeypatch):
+    monkeypatch.setattr(mac, "_k", _mac_kinds)
+
+    class TimedOut(Exception):
+        errornumber = -1712
+
+    def late():
+        raise TimedOut("Apple event timed out.")
+
+    rng = SimpleNamespace(revisions={1: SimpleNamespace(revision_type=SimpleNamespace(get=late))})
+    with pytest.raises(TimedOut):
+        mac._deletions(rng)
