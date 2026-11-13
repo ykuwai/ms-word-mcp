@@ -51,6 +51,10 @@ ms-word-mcp = "ms_word_mcp.server:main"
 # ppt-mcp can be installed in the same environment.
 packages = ["src/ms_word_mcp"]
 
+[tool.hatch.build.targets.sdist]
+# The logo images are for the README, which points at them on GitHub.
+exclude = ["assets"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
