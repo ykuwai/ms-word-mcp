@@ -1,4 +1,6 @@
-<h1 align="center">ms-word-mcp</h1>
+<h1 align="center">
+  <img src="https://raw.githubusercontent.com/ykuwai/ms-word-mcp/main/assets/word-mcp-logo-letter.svg" alt="Word MCP (ms-word-mcp)" width="400">
+</h1>
 
 <p align="center">
   <a href="https://github.com/ykuwai/ms-word-mcp/blob/main/README.md">English (en)</a> · <strong>日本語 (ja)</strong>
