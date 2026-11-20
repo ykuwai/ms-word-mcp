@@ -131,8 +131,9 @@ class CrossReferenceInput(Input):
         "(word_list_captions), or a heading (word_get_outline)."))
     show: Literal["label_and_number", "number", "text", "page"] = Field(
         "label_and_number", description=(
-            "label_and_number: \"Figure 1\". number: \"1\". text: the whole paragraph, as "
-            "for a heading. page: its page number."))
+            "label_and_number: \"Figure 1\"; for a numbered equation \"(1)\", as it shows "
+            "its number. number: \"1\". text: the whole paragraph, as for a heading. page: "
+            "its page number."))
     position: Literal["end", "start"] = Field("end", description=(
         "At the end of the paragraph's text or at its start."))
     match: str | None = Field(None, min_length=1, max_length=255, description=(
@@ -174,8 +175,22 @@ def _too_wide(width, text_width) -> list[str]:
     return []
 
 
-def _reference_field(bookmark: str, show: str) -> str:
-    return f"{'PAGEREF' if show == 'page' else 'REF'} {bookmark} \\h"
+def _reference_field(bookmark: str, show: str, equation: bool = False) -> str:
+    """The field. An equation's number lies in its math zone, and REF copies
+    what it refers to as it is: the number came into the text as an equation
+    of its own (word_list_equations listed it). CHARFORMAT gives the result
+    the look of the field code, the text around it (measured on both
+    platforms; MERGEFORMAT does not)."""
+    code = f"{'PAGEREF' if show == 'page' else 'REF'} {bookmark} \\h"
+    return code + " \\* CHARFORMAT" if equation and show in ("number", "label_and_number") else code
+
+
+def equation_reference(result: dict, show: str) -> dict:
+    """An equation has no label: its "label and number" is its number as the
+    equation shows it, in parentheses."""
+    if show == "label_and_number" and result.get("result") is not None:
+        return {**result, "result": f"({result['result']})"}
+    return result
 
 
 NO_NUMBER = ("Paragraph {index} has no number to refer to: it holds no SEQ field. "
@@ -353,7 +368,18 @@ def _insert_cross_reference_impl(index, to, show, position, match):
         start, end = rng.Start, rng.End - 1
     name = _bookmark_name()
     doc.Bookmarks.Add(name, doc.Range(start, end))
-    result = fields._insert_field_impl(index, _reference_field(name, show), position, match)
+    equation = bool(rng.OMaths.Count)
+    result = fields._insert_field_impl(index, _reference_field(name, show, equation), position,
+                                       match)
+    if equation and show == "label_and_number":
+        here = paragraph(doc, index).Range
+        for f in (here.Fields.Item(i) for i in range(1, here.Fields.Count + 1)):
+            if name in (f.Code.Text or ""):
+                after, before = f.Result.End + 1, f.Code.Start - 1  # past and at its marks
+                doc.Range(after, after).InsertAfter(")")
+                doc.Range(before, before).InsertBefore("(")
+                break
+        result = equation_reference(result, show)
     return {**result, "to": to, "show": show}
 
 
@@ -585,8 +611,20 @@ def _mac_insert_cross_reference(index, to, show, position, match):
     name = _bookmark_name()
     doc.make(new=k.bookmark, at=doc, with_properties={
         k.name: name, k.text_object: doc.create_range(start=begin, end_=stop)})
+    equation = show in ("label_and_number", "number") and \
+        int(doc.paragraphs[to].text_object.count(each=k.math_object)) > 0
     result = MAC_IMPLS[fields._insert_field_impl.__name__](
-        index, _reference_field(name, show), position, match)
+        index, _reference_field(name, show, equation), position, match)
+    if equation and show == "label_and_number":
+        for j in range(1, int(doc.count(each=k.field)) + 1):
+            f = doc.fields[j]
+            if name in (f.field_code.content.get() or ""):
+                after = f.result_range.end_of_content.get() + 1
+                before = f.field_code.start_of_content.get() - 1
+                doc.create_range(start=after, end_=after).content.set(")")
+                doc.create_range(start=before, end_=before).content.set("(")
+                break
+        result = equation_reference(result, show)
     return {**result, "to": to, "show": show}
 
 

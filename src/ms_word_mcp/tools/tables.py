@@ -26,7 +26,8 @@ from .. import backend
 from ._common import (
     DESTRUCTIVE, READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow, mac_impl,
     mac_with_active)
-from ._props import bgr, hex_of
+from . import _props as P
+from ._props import Border, bgr, hex_of
 from ._word import ALIGNMENTS, BUILTIN_STYLES, flag, index_of, paragraph, resolve_style
 
 CELL_END = "\r\x07"  # what ends each cell, and each row, in a table's text
@@ -133,6 +134,35 @@ class SetCellsInput(CellBlock):
         "null leaves a cell as it is."))
 
 
+class CellBorders(Input):
+    """Lines around a block of cells, by side. An outer side goes on the cells
+    along that edge of the block; inside_horizontal and inside_vertical go
+    between the block's rows and columns. A side left out stays as it is."""
+
+    top: Border | None = None
+    bottom: Border | None = None
+    left: Border | None = None
+    right: Border | None = None
+    inside_horizontal: Border | None = Field(None, description="Between the rows.")
+    inside_vertical: Border | None = Field(None, description="Between the columns.")
+
+
+def cell_sides(borders: dict, r: int, c: int, rows: tuple[int, int],
+               columns: tuple[int, int]) -> dict:
+    """The sides of cell (r, c) a block's borders give it: an outer side on the
+    block's edge, the inside ones within. Two cells side by side are given
+    the line between them alike."""
+    out = {}
+    for side, edge, inside in (("top", r == rows[0], "inside_horizontal"),
+                               ("bottom", r == rows[1], "inside_horizontal"),
+                               ("left", c == columns[0], "inside_vertical"),
+                               ("right", c == columns[1], "inside_vertical")):
+        spec = borders.get(side) if edge else borders.get(inside)
+        if spec is not None:
+            out[side] = spec
+    return out
+
+
 class FormatCellsInput(TableInput):
     from_row: int = Field(1, ge=1, description="First row (default 1).")
     to_row: int | None = Field(None, ge=1, description="Last row (default: the last).")
@@ -148,14 +178,50 @@ class FormatCellsInput(TableInput):
     alignment: Literal["left", "center", "right", "justify", "distribute"] | None = Field(
         None, description="Horizontal alignment of the text.")
     vertical_alignment: Literal["top", "center", "bottom"] | None = None
+    borders: CellBorders | None = Field(None, description=(
+        "Lines around and inside the block, one side at a time: {\"bottom\": {\"style\": "
+        "\"double\", \"width\": 1.5}} under a heading row, {\"inside_horizontal\": "
+        "{\"style\": \"none\"}} to take the lines between rows away."))
 
     @model_validator(mode="after")
     def _something(self):
         if all(getattr(self, n) is None for n in (
                 "shading", "bold", "italic", "color", "size", "alignment",
-                "vertical_alignment")):
+                "vertical_alignment", "borders")):
             raise ValueError("Give at least one of shading, bold, italic, color, size, "
-                             "alignment, vertical_alignment.")
+                             "alignment, vertical_alignment, borders.")
+        return self
+
+
+SORT_KINDS = {"text": 0, "number": 1, "date": 2}  # WdSortFieldType
+SORT_ORDERS = {"ascending": 0, "descending": 1}  # WdSortOrder
+
+
+class SortKey(Input):
+    column: int = Field(..., ge=1, description="The column to sort by, numbered from 1.")
+    order: Literal["ascending", "descending"] = "ascending"
+    kind: Literal["text", "number", "date"] = Field("text", description=(
+        "How the column's values compare: as text, as numbers (10 after 9), or as dates."))
+
+
+class SortTableInput(TableInput):
+    by: list[SortKey] = Field(..., min_length=1, max_length=3, description=(
+        "Up to three columns: rows equal in the first are ordered by the second, and so on."))
+    header: bool | None = Field(None, description=(
+        "Keep the first row where it is. Leave out to keep it when it is a heading row "
+        "(header_rows)."))
+
+
+class SplitCellInput(TableInput):
+    row: int = Field(..., ge=1)
+    column: int = Field(..., ge=1, description="Its place in the row, as word_get_table shows it.")
+    rows: int = Field(1, ge=1, le=20, description="How many rows the cell becomes.")
+    columns: int = Field(2, ge=1, le=20, description="How many columns the cell becomes.")
+
+    @model_validator(mode="after")
+    def _more_than_one(self):
+        if self.rows * self.columns == 1:
+            raise ValueError("One row and one column is the cell as it is: nothing to split.")
         return self
 
 
@@ -610,11 +676,24 @@ def _cells_in(tb, from_row, to_row, from_column, to_column):
         yield None, None, missing
 
 
+def border_answer(borders, read_first: dict, from_row: int, from_column: int, rows, columns,
+                  refused: dict) -> tuple[dict, list[str]]:
+    """The first cell's sides read back, and what reads otherwise than asked."""
+    if not borders:
+        return {}, []
+    expected = cell_sides(borders, from_row, from_column, rows, columns)
+    warnings = [f"{k} was refused: {v}" for k, v in sorted(refused.items())]
+    warnings += P.border_mismatches({"borders": expected}, {"borders": read_first})
+    return {"borders": read_first}, warnings
+
+
 def _format_cells_impl(table, from_row, to_row, from_column, to_column, shading, bold, italic,
-                       color, size, alignment, vertical_alignment):
+                       color, size, alignment, vertical_alignment, borders=None):
     doc = backend.word.document()
     tb = _table(doc, table)
-    done, warnings = 0, []
+    done, warnings, refused, first = 0, [], {}, None
+    rows = (from_row, to_row or tb.Rows.Count)
+    columns = (from_column, to_column or tb.Columns.Count)
     for r, c, cell in _cells_in(tb, from_row, to_row, from_column, to_column):
         if r is None:
             warnings.append(f"{len(cell)} positions have no cell of their own (merged).")
@@ -635,13 +714,24 @@ def _format_cells_impl(table, from_row, to_row, from_column, to_column, shading,
             cell.Range.ParagraphFormat.Alignment = ALIGNMENTS[alignment]
         if vertical_alignment is not None:
             cell.VerticalAlignment = VERTICAL[vertical_alignment]
+        if borders:
+            refused.update(P.com_apply_borders(cell, cell_sides(borders, r, c, rows, columns)))
         done += 1
-    first = tb.Cell(from_row, from_column)
+        if first is None:
+            first = (r, c, cell)
+    if first is None:
+        raise ValueError("No cell of that block is a cell of its own (merged away). "
+                         "word_get_table shows the table's rows and cells.")
+    first_row, first_column, first = first
     follow(doc, first.Range)
     sample = {"shading": hex_of(first.Shading.BackgroundPatternColor),
               "bold": flag(first.Range.Font.Bold)}
+    read, border_warnings = border_answer(
+        borders, P.com_read_borders(first) if borders else {}, first_row, first_column, rows,
+        columns, refused)
+    warnings += border_warnings
     result = {"success": True, "table": table, "cells": done,
-              "first_cell_reads": sample}
+              "first_cell_reads": {**sample, **read}}
     if warnings:
         result["warnings"] = warnings
     return result
@@ -759,6 +849,57 @@ def _merge_cells_impl(table, from_row, from_column, to_row, to_column, text):
     return {"success": True, "table": table,
             "merged_cell": _cell_text(cell.Range.Text[:-len(CELL_END)]),
             "cells": _grid(tb),
+            "paragraphs": _span(doc, tb)}
+
+
+def _sort_table_impl(table, by, header):
+    doc = backend.word.document()
+    tb = _table(doc, table)
+    n_cols = tb.Columns.Count
+    for key in by:
+        if key["column"] > n_cols:
+            raise ValueError(f"There is no column {key['column']}: the table has {n_cols}.")
+    if header is None:
+        header = bool(tb.Rows.Item(1).HeadingFormat)
+    keys = {}
+    for i, key in enumerate(by):
+        suffix = "" if i == 0 else str(i + 1)
+        keys.update({f"FieldNumber{suffix}": key["column"],
+                     f"SortFieldType{suffix}": SORT_KINDS[key["kind"]],
+                     f"SortOrder{suffix}": SORT_ORDERS[key["order"]]})
+    with _columns_reachable("Word cannot sort it"):
+        tb.Sort(ExcludeHeader=header, **keys)
+    follow(doc, tb.Range)
+    return {"success": True, "table": table, "header_kept": header, "cells": _grid(tb),
+            "paragraphs": _span(doc, tb)}
+
+
+def cell_is_there(row: int, column: int, n_rows: int, in_row: int) -> None:
+    """Refuse a cell outside the table before Word is asked for it: asked for a
+    row past the last, Word answers a cell of the last row, on both platforms
+    (measured: row 9 of a 5-row table split a cell of row 5)."""
+    if not 1 <= row <= n_rows or not 1 <= column <= in_row:
+        raise ValueError(f"There is no cell at row {row}, column {column}: word_get_table "
+                         "shows the table's rows and cells. Nothing was changed.")
+
+
+def _split_cell_impl(table, row, column, rows, columns):
+    doc = backend.word.document()
+    tb = _table(doc, table)
+    n_rows = tb.Rows.Count
+    try:
+        in_row = tb.Rows.Item(row).Cells.Count if row <= n_rows else 0
+    except Exception:  # noqa: BLE001 - a cell merged down a column: rows unreachable
+        in_row = tb.Columns.Count
+    cell_is_there(row, column, n_rows, in_row)
+    try:
+        cell = tb.Cell(row, column)
+    except Exception:  # noqa: BLE001 - answered with what is there
+        raise ValueError(f"There is no cell at row {row}, column {column}: word_get_table "
+                         "shows the table's rows and cells. Nothing was changed.") from None
+    cell.Split(NumRows=rows, NumColumns=columns)
+    follow(doc, tb.Range)
+    return {"success": True, "table": table, "rows": tb.Rows.Count, "cells": _grid(tb),
             "paragraphs": _span(doc, tb)}
 
 
@@ -1122,7 +1263,7 @@ def _mac_set_cells(table, row, column, values):
 
 @mac_impl(_format_cells_impl)
 def _mac_format_cells(table, from_row, to_row, from_column, to_column, shading, bold, italic,
-                      color, size, alignment, vertical_alignment):
+                      color, size, alignment, vertical_alignment, borders=None):
     from appscript import k
 
     from . import mac as m
@@ -1132,11 +1273,14 @@ def _mac_format_cells(table, from_row, to_row, from_column, to_column, shading, 
     n_rows, n_cols = _mac_size(tb)
     to_row, to_column = to_row or n_rows, to_column or n_cols
     _check_cells(n_rows, n_cols, to_row, to_column)
-    done, missing = 0, 0
+    done, missing, refused, first = 0, 0, {}, None
+    rows, columns = (from_row, to_row), (from_column, to_column)
     for r in range(from_row, to_row + 1):
         for c in range(from_column, to_column + 1):
-            cell = _mac_cell(tb, r, c)
             try:
+                # Both inside: past a shorter row's last cell, `get cell from
+                # table` itself is refused (-1708, measured after a merge).
+                cell = _mac_cell(tb, r, c)
                 rng = cell.text_object
                 rng.start_of_content.get()
             except Exception:  # noqa: BLE001 - merged away
@@ -1163,8 +1307,16 @@ def _mac_format_cells(table, from_row, to_row, from_column, to_column, shading, 
             if vertical_alignment is not None:
                 cell.vertical_alignment.set(getattr(k, "cell_align_vertical_" +
                                                     vertical_alignment))
+            if borders:
+                # `get border` works on a cell (measured on 16.114).
+                refused.update(P.mac_apply_borders(cell, cell_sides(borders, r, c, rows, columns)))
             done += 1
-    first = _mac_cell(tb, from_row, from_column)
+            if first is None:
+                first = (r, c, cell)
+    if first is None:
+        raise ValueError("No cell of that block is a cell of its own (merged away). "
+                         "word_get_table shows the table's rows and cells.")
+    first_row, first_column, first = first
     raw = first.shading.background_pattern_color.get()
     if first.shading.background_pattern_color_index.get() == k.no_highlight:
         raw = None  # [0, 0, 0] then means no shading, not black
@@ -1173,10 +1325,16 @@ def _mac_format_cells(table, from_row, to_row, from_column, to_column, shading, 
                           f"{round(raw[2] / 257):02X}"
                           if isinstance(raw, (list, tuple)) and len(raw) == 3 else None),
               "bold": bold_now if isinstance(bold_now, bool) else None}
+    read, border_warnings = border_answer(
+        borders, P.mac_read_borders(first) if borders else {}, first_row, first_column, rows,
+        columns, refused)
     m._scroll(doc, tb.text_object.start_of_content.get(), tb.text_object.end_of_content.get())
-    result = {"success": True, "table": table, "cells": done, "first_cell_reads": sample}
-    if missing:
-        result["warnings"] = [f"{missing} positions have no cell of their own (merged)."]
+    result = {"success": True, "table": table, "cells": done,
+              "first_cell_reads": {**sample, **read}}
+    warnings = ([f"{missing} positions have no cell of their own (merged)."] if missing else [])
+    warnings += border_warnings
+    if warnings:
+        result["warnings"] = warnings
     return result
 
 
@@ -1245,11 +1403,48 @@ def _mac_delete_rows(table, start, end):
 
 @mac_impl(_insert_columns_impl)
 def _mac_insert_columns(table, after_column, count, values):
-    raise ValueError(
-        "Word for Mac's scripting cannot add a column to a table (`make new column` is "
-        "refused, measured). Make the table again with the columns it needs: read it "
-        "with word_get_table, insert the new one with word_insert_table, then delete "
-        "the old one with word_delete_table.")
+    """Through the VBA bridge: Word for Mac's scripting cannot add a column
+    (`make new column` is refused, measured); VBA's Columns.Add can, as on
+    Windows."""
+    from . import _vba
+    from . import mac as m
+
+    doc = backend.word.document()
+    tb = _mac_table(doc, table)
+    why = _vba.usable()
+    if why:
+        raise ValueError(
+            "Word for Mac's scripting cannot add a column to a table (`make new column` is "
+            f"refused, measured), and ms-word-mcp's VBA bridge, which can, cannot be used "
+            f"with this Word ({why}). Make the table again with the columns it needs: read "
+            "it with word_get_table, insert the new one with word_insert_table, then delete "
+            "the old one with word_delete_table.")
+    n = count or len(values)
+    rows, cols = _mac_size(tb)
+    after_column = cols if after_column is None else after_column
+    if after_column > cols:
+        raise ValueError(f"The table has {cols} columns.")
+    if cols + n > 63:
+        raise ValueError("A table has at most 63 columns.")
+    columns = _vba.Remote(m._full(doc), _vba.path_of("Tables", ("Item", table), "Columns"))
+    with _columns_reachable("Word adds columns only to tables without them. Add "
+                            "columns before merging"):
+        for i in range(n):
+            if after_column < cols:
+                columns.call("Add", columns.at(("Item", after_column + i + 1)))
+            else:
+                columns.call("Add")
+    first = after_column + 1
+    for c, column in enumerate(values or [], start=first):
+        if len(column) > rows:
+            raise ValueError(f"A new column has {len(column)} cells; the table has "
+                             f"{rows} rows. The columns were added, empty.")
+        for r, value in enumerate(column, start=1):
+            _mac_cell(tb, r, c).text_object.content.set(_text(value))
+    m._scroll(doc, tb.text_object.start_of_content.get(), tb.text_object.end_of_content.get())
+    return {"success": True, "table": table, "inserted_columns": [first, first + n - 1],
+            "columns": _mac_size(tb)[1], "cells": _mac_grid(tb),
+            "paragraphs": _mac_span(doc, tb)}
 
 
 @mac_impl(_delete_columns_impl)
@@ -1263,10 +1458,22 @@ def _mac_delete_columns(table, start, end):
     if start == 1 and end == cols:
         raise ValueError("That is every column. Use word_delete_table to delete the table.")
     if not tb.uniform.get():
-        raise ValueError("This table has merged cells, so Word cannot reach its columns "
-                         "one by one.")
-    for c in range(end, start - 1, -1):
-        tb.columns[c].delete()
+        # `uniform` also reads false for columns of other widths, a column
+        # added through the bridge among them. VBA deletes as Windows does,
+        # and Word refuses only when cells are merged.
+        from . import _vba
+        from . import mac as m
+
+        if _vba.usable():
+            raise ValueError("This table has merged cells, so Word cannot reach its columns "
+                             "one by one.")
+        columns = _vba.Remote(m._full(doc), _vba.path_of("Tables", ("Item", table), "Columns"))
+        with _columns_reachable("Word cannot reach its columns one by one"):
+            for c in range(end, start - 1, -1):
+                columns.at(("Item", c)).call("Delete")
+    else:
+        for c in range(end, start - 1, -1):
+            tb.columns[c].delete()
     return {"success": True, "table": table, "columns": _mac_size(tb)[1],
             "cells": _mac_grid(tb), "paragraphs": _mac_span(doc, tb)}
 
@@ -1288,6 +1495,58 @@ def _mac_merge_cells(table, from_row, from_column, to_row, to_column, text):
     return {"success": True, "table": table,
             "merged_cell": _cell_text(m._clean(cell.text_object.content.get())),
             "cells": _mac_grid(tb),
+            "paragraphs": _mac_span(doc, tb)}
+
+
+SORT_KINDS_MAC = {"text": "sort_field_alphanumeric", "number": "sort_field_numeric",
+                  "date": "sort_field_date"}
+
+
+@mac_impl(_sort_table_impl)
+def _mac_sort_table(table, by, header):
+    from appscript import k
+
+    from . import mac as m
+
+    doc = backend.word.document()
+    tb = _mac_table(doc, table)
+    n_cols = _mac_size(tb)[1]
+    for key in by:
+        if key["column"] > n_cols:
+            raise ValueError(f"There is no column {key['column']}: the table has {n_cols}.")
+    if header is None:
+        header = tb.rows[1].heading_format.get() is True
+    keys = {}
+    for i, key in enumerate(by):
+        suffix = ("", "_two", "_three")[i]
+        keys.update({f"field_number{suffix}": key["column"],
+                     f"sort_field_type{suffix}": getattr(k, SORT_KINDS_MAC[key["kind"]]),
+                     f"sort_order{suffix}": getattr(k, f"sort_order_{key['order']}")})
+    with _columns_reachable("Word cannot sort it"):
+        tb.table_sort(exclude_header=header, **keys)
+    m._scroll(doc, tb.text_object.start_of_content.get(), tb.text_object.end_of_content.get())
+    return {"success": True, "table": table, "header_kept": header, "cells": _mac_grid(tb),
+            "paragraphs": _mac_span(doc, tb)}
+
+
+@mac_impl(_split_cell_impl)
+def _mac_split_cell(table, row, column, rows, columns):
+    from . import mac as m
+
+    from appscript import k
+
+    doc = backend.word.document()
+    tb = _mac_table(doc, table)
+    n_rows, n_cols = _mac_size(tb)
+    try:
+        in_row = int(tb.rows[row].count(each=k.cell)) if row <= n_rows else 0
+    except Exception:  # noqa: BLE001 - a cell merged down a column: rows unreachable
+        in_row = n_cols
+    cell_is_there(row, column, n_rows, in_row)
+    cell = _mac_cell(tb, row, column)
+    cell.split_cell(number_of_rows=rows, number_of_columns=columns)
+    m._scroll(doc, tb.text_object.start_of_content.get(), tb.text_object.end_of_content.get())
+    return {"success": True, "table": table, "rows": _mac_size(tb)[0], "cells": _mac_grid(tb),
             "paragraphs": _mac_span(doc, tb)}
 
 
@@ -1354,11 +1613,33 @@ def register(mcp) -> None:
               annotations=annotations("Format table cells", WRITES))
     async def word_format_table_cells(params: FormatCellsInput) -> str:
         """Format a block of cells (default: all): background color, bold,
-        italic, text color and size, horizontal and vertical alignment."""
+        italic, text color and size, horizontal and vertical alignment, and
+        the lines around and inside the block, one side at a time."""
         p = params
         return await call(_format_cells_impl, p.table, p.from_row, p.to_row, p.from_column,
                           p.to_column, p.shading, p.bold, p.italic, p.color, p.size,
-                          p.alignment, p.vertical_alignment, undo="Format table cells")
+                          p.alignment, p.vertical_alignment,
+                          p.borders.model_dump(exclude_none=True) if p.borders else None,
+                          undo="Format table cells")
+
+    @mcp.tool(name="word_sort_table", annotations=annotations("Sort a table", WRITES))
+    async def word_sort_table(params: SortTableInput) -> str:
+        """Sort a table's rows by up to three columns, as text, numbers or
+        dates. A heading row stays on top. Tables with cells merged down a
+        column cannot be sorted."""
+        p = params
+        return await call(_sort_table_impl, p.table, [k.model_dump() for k in p.by], p.header,
+                          undo="Sort table")
+
+    @mcp.tool(name="word_split_table_cell",
+              annotations=annotations("Split a table cell", WRITES))
+    async def word_split_table_cell(params: SplitCellInput) -> str:
+        """Split one cell into several rows and columns. Afterwards its row
+        holds more cells than the others, and a cell's column number is its
+        place in the row as word_get_table shows it."""
+        p = params
+        return await call(_split_cell_impl, p.table, p.row, p.column, p.rows, p.columns,
+                          undo="Split table cell")
 
     @mcp.tool(name="word_insert_table_rows",
               annotations=annotations("Insert table rows", WRITES))
@@ -1381,7 +1662,7 @@ def register(mcp) -> None:
               annotations=annotations("Insert table columns", WRITES))
     async def word_insert_table_columns(params: InsertColumnsInput) -> str:
         """Add columns to a table, empty or filled, after a column (default: at
-        the right). Windows only: Word for Mac's scripting cannot add columns."""
+        the right). On the Mac this goes through ms-word-mcp's VBA bridge."""
         p = params
         return await call(_insert_columns_impl, p.table, p.after_column, p.count, p.values,
                           undo="Insert table columns")
