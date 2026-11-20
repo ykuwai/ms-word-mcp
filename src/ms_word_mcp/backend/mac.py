@@ -73,6 +73,15 @@ class MacWord(Worker):
 
     call_budget = 69.0
 
+    def __init__(self) -> None:
+        super().__init__()
+        from .bridge import Bridge
+
+        self.vba = Bridge("mac")
+
+    def thread_teardown(self) -> None:
+        self.vba.remove()
+
     def is_busy_error(self, exc: BaseException) -> bool:
         return _ae_number(exc) in RETRYABLE
 

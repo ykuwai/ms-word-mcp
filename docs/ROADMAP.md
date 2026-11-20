@@ -22,7 +22,7 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
 - Server: catalog mode, per-call `document`, unknown-argument refusals,
   failures marked as errors, the single Word worker with busy handling and
   recovery from a stuck call.
-- Documents: info, list, choose, open, create, save, save as (and PDF), close.
+- Documents: info, list, choose, open, create, save, save as (and PDF, of some pages, with or without the markup), close.
 - Text: outline, paragraphs, insert paragraphs with styles, rewrite, delete,
   find and replace.
 - Formatting: fonts per script (Latin, East Asian, complex script), size,
@@ -76,10 +76,24 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
   them by number or all at once. While tracking is on, the text tools read and
   report the text as Word shows it, deletions apart.
 
+- Comments: add one on a paragraph or on some text in it, list them with the
+  text each is about, delete them by number or all at once, reply and mark one
+  done. Word for Mac's scripting has no replies or done state; on the Mac they
+  go through the VBA bridge (backend/bridge.py).
+
+- Checks: Word's spelling and grammar findings and the language the text is
+  checked in, marking text with a language, and a health check before sending
+  (headings, placeholders, alt text, links, comments and changes left, text
+  Word never checks, readability).
+
 - Pictures in line with the text, numbered captions under any label in any
   language, live cross-references to captions, equations and headings.
-- The page: paper, margins, columns, document grid, vertical text; headers,
-  footers and page numbers; ruby.
+- The page: paper, margins, columns, document grid, vertical text; section
+  breaks; headers and footers, of one paragraph or several, and page numbers;
+  ruby.
+- A picture of a page as it will print, on both platforms: with comments and
+  tracked changes too, which Word for Mac's PDF would draw beside a page shrunk
+  to two thirds.
 
 - Tables: insert one filled with its cells (style, heading rows, grid
   lines, column widths and alignments, autofit, position), list and read
@@ -94,14 +108,15 @@ First, fixes to what is there, for long documents (PROBES.md, Reading):
 - **word_get_outline** now reads Word's heading list and checks each
   heading (1,000 paragraphs: 2.5 s instead of 28 s on Windows, 3.4 s
   instead of 20 s on the Mac).
-- **word_find_replace** on Windows finds about 40 matches a second, match by
-  match, so thousands take several calls (docs/PROBES.md, Replacing many
-  matches).
-- **word_get_paragraphs** still asks Word three or more times a paragraph
-  (up to 200 a call; 200 with `detail` took 22 s on Windows and 55 s on the
-  Mac). A read now stops after 40 s and says where to go on. The styles could
-  come from the document's XML on Windows (Content.WordOpenXML) and through
-  VBA on the Mac.
+- **word_find_replace** now searches and replaces through the VBA bridge,
+  inside Word: 3,000 matches replaced in one call (2.4 s on Windows, 7.4 s on
+  the Mac), where a call replaced 740 on Windows and 1,249 on the Mac. On the
+  Mac this also gives wildcards and one undo step for the whole replacement.
+  Without the bridge it works match by match, as before.
+- **word_get_paragraphs** now reads through the VBA bridge, in one call to
+  Word (200 paragraphs with `detail`: 0.30 s instead of 11.7 s on Windows,
+  0.53 s instead of 27 s on the Mac). Without the bridge it asks Word three or
+  more times a paragraph, as before, and stops after 40 s.
 - **word_insert_paragraphs** now sets a style on each run of paragraphs
   that share it and reads the text back in one call (1,000 paragraphs:
   4.5 s instead of 49 s on Windows, 6.5 s instead of 57 s on the Mac).
@@ -122,10 +137,6 @@ Then, ordered roughly by what the owner stressed.
    edits in a second window.
 7. Shapes, the rest. Grouping; shapes in headers and footers; moving a shape to
    another paragraph.
-8. Adding sections (section breaks); a header of several paragraphs.
-9. Comments (making one ends Word for Mac's process when asked through Apple
-   Events: docs/PROBES.md); spelling and a document health check.
-10. Page previews.
 
 ## Platforms
 
