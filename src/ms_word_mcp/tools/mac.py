@@ -247,7 +247,8 @@ def get_app_info():
                           for d in docs],
             "active_document": docs[0].full_name if docs else None,
             "target_document": word.target_full_name,
-            "started_by_server": word.launched_by_us}
+            "started_by_server": word.launched_by_us,
+            "vba_bridge": documents.vba_bridge_state(word)}
 
 
 @mac_impl(documents._list_documents_impl)
@@ -402,14 +403,18 @@ def get_paragraphs(start, end, detail):
                start + MAX_PARAGRAPHS_PER_READ - 1)
     from .tables import mac_mark_tables
 
-    read = []
-    # Paragraph by paragraph, so a read that runs out of time stops within its
-    # budget; a document with no changes need not ask for each.
-    spans = None if _has_revisions(doc) else []
-    for i in range(start, last + 1):
-        read.append(_info(doc, i, detail, spans))
-        if time.monotonic() > began + text_tools.READ_SECONDS:
-            break
+    changes = _has_revisions(doc)
+    read = text_tools.bridge_paragraphs(lambda: _full(doc), start, last, detail, changes, began,
+                                        lambda i: _info(doc, i, False, None))
+    if read is None:
+        read = []
+        # Paragraph by paragraph, so a read that runs out of time stops within
+        # its budget; a document with no changes need not ask for each.
+        spans = None if changes else []
+        for i in range(start, last + 1):
+            read.append(_info(doc, i, detail, spans))
+            if time.monotonic() > began + text_tools.READ_SECONDS:
+                break
     out = {"success": True, "paragraphs": read, "count": count}
     mac_mark_tables(doc, read)
     text_tools.finish_reading(out, last, count)
@@ -671,11 +676,19 @@ def _index_at(doc, position: int) -> int:
 
 @mac_impl(text_tools._find_replace_impl)
 def find_replace(find, replace, match_case, whole_word, wildcards):
-    if wildcards:
-        raise ValueError("Wildcards are not supported on macOS yet. Search for plain "
-                         "text, or use Windows for a wildcard search.")
     doc = backend.word.document()
     began = time.monotonic()
+    # Through the VBA bridge when it is there: Word's own search, wildcards
+    # too, and one undo step. Without it, the text is searched in Python.
+    out = text_tools.bridge_find_replace(lambda: _full(doc), find, replace, match_case,
+                                         whole_word, wildcards, began)
+    if out is not None:
+        out.pop("_first", None)
+        return out
+    if wildcards:
+        raise ValueError("Wildcards on macOS need ms-word-mcp's VBA bridge, which cannot be "
+                         "used with this Word (word_get_app_info says why). Search for "
+                         "plain text instead.")
     found, searched_all = _matches_until(doc, find, match_case, whole_word,
                                          began + text_tools.SEARCH_SECONDS)
     until = began + text_tools.WORK_SECONDS
@@ -761,7 +774,50 @@ def _check_and_replace(doc, found, value, until, tracked, before=None):
 # -- formatting ------------------------------------------------------------------
 
 TABS_ON_MAC = ("tab_stops was not applied: Word for Mac's scripting cannot make tab "
-               "stops (measured: -1708). It works on Windows.")
+               "stops (measured: -1708), and ms-word-mcp's VBA bridge, which makes them, "
+               "cannot be used with this Word ({why}). It works on Windows.")
+
+
+def _bridged(doc, path: str, props, spec: dict, refused: dict, got: dict) -> None:
+    """Set and read back, through the VBA bridge, the given properties Word
+    for Mac's scripting lacks (Prop.mac None): COM's names and values, on
+    the object at `path` (tools/_vba.py). Without the bridge they stay refused,
+    saying why."""
+    from . import _vba
+
+    missing = [p for p in props if p.mac is None and p.com and p.name in spec]
+    if not missing:
+        return
+    why = _vba.usable()
+    if why:
+        for p in missing:
+            if p.name in refused:
+                refused[p.name] = _vba.NEEDS_BRIDGE.format(why=why)
+        return
+    obj = _vba.Remote(_full(doc), path)
+    for p in missing:
+        refused.pop(p.name, None)
+    refused.update(P.com_apply(obj, missing, spec))
+    got.update(P.com_read(obj, missing))
+
+
+def _bridged_tabs(doc, path: str, tab_stops) -> tuple[list | None, list[str]]:
+    """Tab stops through the VBA bridge: the custom stops read back, or None
+    and the warning when the bridge cannot be used."""
+    from . import _vba
+
+    why = _vba.usable()
+    if why:
+        return None, [TABS_ON_MAC.format(why=why)]
+    fmt = _vba.Remote(_full(doc), path)
+    _vba.apply_tab_stops(fmt, tab_stops)
+    return _vba.read_tab_stops(fmt), []
+
+
+def _range_path(start: int, end: int, *more) -> str:
+    from ._vba import path_of
+
+    return path_of(("Range", start, end), *more)
 
 @mac_impl(formatting._format_text_impl)
 def format_text(start, end, match, font):
@@ -783,6 +839,7 @@ def format_text(start, end, match, font):
         rng = doc.create_range(start=s, end_=e)
         refused = P.mac_apply(rng.font_object, P.FONT_PROPS, spec)
         got = P.mac_read(rng.font_object, P.FONT_PROPS)
+        _bridged(doc, _range_path(s, e, "Font"), P.FONT_PROPS, spec, refused, got)
         warnings += P.mismatches(spec, got, refused)
         readback.append({"text": _clean(rng.content.get())[:80],
                          **formatting.font_readback(got, spec)})
@@ -806,21 +863,36 @@ def set_paragraph_format(start, end, paragraph):
                                  spec.get("line_spacing"))
         refused.update(P.mac_apply_borders(doc.paragraphs[i], spec.get("borders")))
         P.mac_apply_shading(doc.paragraphs[i], spec.get("shading"))
+    span_start, span_end = _bounds(doc, start)[0], _bounds(doc, end)[1]
+    # What the scripting lacks goes on the whole span at once, as on Windows.
+    _bridged(doc, _range_path(span_start, span_end, "ParagraphFormat"), P.PARAGRAPH_PROPS,
+             spec, refused, {})
+    tab_warnings = []
+    if "tab_stops" in spec:
+        _, tab_warnings = _bridged_tabs(doc, _range_path(span_start, span_end, "ParagraphFormat"),
+                                        spec["tab_stops"])
     out, warnings = [], []
     for i in range(start, min(end, start + 49) + 1):
         fmt = doc.paragraphs[i].paragraph_format
         got = {**P.mac_read(fmt, P.PARAGRAPH_PROPS), **P.mac_read_line_spacing(fmt)}
+        here = _bounds(doc, i)
+        _bridged(doc, _range_path(*here, "ParagraphFormat"), P.PARAGRAPH_PROPS, spec, {}, got)
+        if "tab_stops" in spec and not tab_warnings:
+            from . import _vba
+
+            got["tab_stops"] = _vba.read_tab_stops(
+                _vba.Remote(_full(doc), _range_path(*here, "ParagraphFormat")))
         if "borders" in spec:
             got["borders"] = P.mac_read_borders(doc.paragraphs[i])
         if "shading" in spec:
             got["shading"] = P.mac_read_shading(doc.paragraphs[i])
         if not warnings:
-            warnings = P.mismatches(spec, got, refused) + P.border_mismatches(spec, got)
+            warnings = (P.mismatches(spec, got, refused) + P.border_mismatches(spec, got)
+                        + formatting._tab_mismatch(spec, got))
         info = _info(doc, i)
         out.append({"index": i, "text": info["text"][:80], "style": info["style"],
                     **formatting.paragraph_readback(got, spec)})
-    if "tab_stops" in spec:
-        warnings = warnings + [TABS_ON_MAC]
+    warnings = warnings + tab_warnings
     result = {"success": True, "paragraphs": out}
     if warnings:
         result["warnings"] = warnings
@@ -912,8 +984,69 @@ def open_document(path, read_only, visible):
             "note": "This document is now the target of calls without `document`."}
 
 
+def _mac_save_pdf(app, doc, path, from_page, to_page, markup):
+    """Word for Mac's PDF, as it will print unless `markup`, of some pages or all.
+
+    Its PDF of a document with comments or tracked changes shrinks each page
+    beside a pane that draws them (screen.py), so without `markup` such a
+    document is exported from a copy without them. Word for Mac exports every
+    page, so a range is taken out of that PDF afterwards."""
+    from . import screen
+
+    k = _k()
+    source, active = doc, None
+    marked = int(doc.count(each=k.Word_comment)) or int(doc.count(each=k.revision))
+    if marked and not markup:
+        active = screen._mac_active_name(app)
+        source = screen._mac_without_markup(app, doc)
+    staged = path if from_page is None else path + ".all.pdf"
+    try:
+        source.save_as(file_name=staged, file_format=k.format_PDF)
+    finally:
+        if source is not doc:
+            screen._mac_close_copy(app, source, active)
+    if from_page is None:
+        return None
+    try:
+        pages = documents.check_pages(from_page, to_page, pdf_page_count(staged))
+        keep_pdf_pages(staged, path, pages)
+    finally:
+        os.remove(staged)
+    return pages
+
+
+def pdf_page_count(path) -> int:
+    import Quartz
+    from Foundation import NSURL
+
+    document = Quartz.CGPDFDocumentCreateWithURL(NSURL.fileURLWithPath_(path))
+    if document is None:
+        raise RuntimeError("Word answered without error, but its PDF cannot be read.")
+    return int(Quartz.CGPDFDocumentGetNumberOfPages(document))
+
+
+def keep_pdf_pages(source, target, pages) -> None:
+    """Copy pages first..last of one PDF into another, and count what landed."""
+    import Quartz
+    from Foundation import NSURL
+
+    document = Quartz.CGPDFDocumentCreateWithURL(NSURL.fileURLWithPath_(source))
+    context = Quartz.CGPDFContextCreateWithURL(NSURL.fileURLWithPath_(target), None, None)
+    try:
+        for number in range(pages[0], pages[1] + 1):
+            page = Quartz.CGPDFDocumentGetPage(document, number)
+            box = Quartz.CGPDFPageGetBoxRect(page, Quartz.kCGPDFMediaBox)
+            Quartz.CGContextBeginPage(context, box)
+            Quartz.CGContextDrawPDFPage(context, page)
+            Quartz.CGContextEndPage(context)
+    finally:
+        Quartz.CGPDFContextClose(context)
+    if pdf_page_count(target) != pages[1] - pages[0] + 1:
+        raise RuntimeError("The pages asked for did not all reach the PDF.")
+
+
 @mac_impl(documents._save_document_as_impl)
-def save_document_as(path, overwrite):
+def save_document_as(path, overwrite, from_page=None, to_page=None, markup=False):
     if os.path.exists(path) and not overwrite:
         raise ValueError(f"'{path}' already exists. Pass overwrite=true to replace it.")
     folder = os.path.dirname(path)
@@ -924,9 +1057,18 @@ def save_document_as(path, overwrite):
     doc = word.document()
     ext = os.path.splitext(path)[1].lower()
     own = _full(doc)
-    doc.save_as(file_name=path, file_format=getattr(k, SAVE_K[ext]))
+    if ext == ".pdf":
+        pages = _mac_save_pdf(word.get_app(), doc, path, from_page, to_page, markup)
+    else:
+        doc.save_as(file_name=path, file_format=getattr(k, SAVE_K[ext]))
     if not os.path.exists(path):
         raise RuntimeError(f"Word answered without error, but there is no file at '{path}'.")
+    if ext == ".pdf":
+        result = {"success": True, "path": path, "bytes": os.path.getsize(path), "document": own,
+                  "markup": markup}
+        if pages is not None:
+            result["pages"] = list(pages)
+        return result
     if ext != ".pdf":
         from ..backend.documents import full_name_key
 
@@ -995,7 +1137,55 @@ def _mac_style_name(ref):
     return name or None  # Normal's base style answers a style named ""
 
 
-def _describe_mac_style(s) -> dict:
+def _style_path(name_local: str, *more) -> str:
+    from ._vba import path_of
+
+    return path_of("Styles", ("Item", name_local), *more)
+
+
+def _mac_style_list(doc, name: str) -> dict | None:
+    """A style's numbering, through the VBA bridge (formatting.style_list): Apple
+    Events answer a missing value for every level's linked style (measured)."""
+    from . import _vba
+
+    key = _full(doc)
+    template, level = _vba.batch(key, [("get", _style_path(name), "ListTemplate"),
+                                       ("get", _style_path(name), "ListLevelNumber")])
+    if template is None:
+        return None
+    levels = template.at("ListLevels")
+    count = levels.Count
+    members = ("NumberStyle", "NumberFormat", "LinkedStyle")
+    values = _vba.batch(key, [("get", levels.at(("Item", i))._path, m)
+                              for i in range(1, count + 1) for m in members])
+    return formatting.style_list(level, [
+        (i, values[3 * (i - 1)], values[3 * (i - 1) + 1], values[3 * (i - 1) + 2] or None)
+        for i in range(1, count + 1)])
+
+
+def _bridged_style(doc, out: dict, kind: str) -> None:
+    """What Windows says of a style and Word for Mac's scripting cannot read
+    (quick_style, priority, locked; the font's and paragraph's members it
+    lacks; tab stops), through the VBA bridge when it can be used."""
+    from . import _vba
+
+    if _vba.usable():
+        return
+    name = out["name"]
+    values = _vba.batch(_full(doc), [("get", _style_path(name), m)
+                                     for m in ("QuickStyle", "Priority", "Locked")])
+    out.update(zip(("quick_style", "priority", "locked"), values))
+    if "font" in out:
+        out["font"].update(P.com_read(_vba.Remote(_full(doc), _style_path(name, "Font")),
+                                      [p for p in P.FONT_PROPS if p.mac is None]))
+    if kind == "paragraph":
+        fmt = _vba.Remote(_full(doc), _style_path(name, "ParagraphFormat"))
+        out["paragraph"].update(P.com_read(fmt, [p for p in P.PARAGRAPH_PROPS if p.mac is None]))
+        out["paragraph"]["tab_stops"] = _vba.read_tab_stops(fmt)
+        out["numbering"] = _mac_style_list(doc, name)
+
+
+def _describe_mac_style(s, doc=None) -> dict:
     raw = _name(s.style_type.get())
     kind = STYLE_TYPES.get(raw, raw)
     out = {"name": s.name_local.get(), "type": kind, "builtin": bool(s.built_in.get()),
@@ -1013,6 +1203,14 @@ def _describe_mac_style(s) -> dict:
     elif kind == "character":
         out["base_style"] = _mac_style_name(s.base_style)
     if kind in ("paragraph", "character"):
+        from .checks import _mac_code
+
+        try:
+            out.update(formatting.style_language(_mac_code(s.language_ID.get()),
+                                                 _mac_code(s.language_ID_east_asian.get()),
+                                                 s.no_proofing.get() is True))
+        except Exception:  # noqa: BLE001 - described without it
+            pass
         out["font"] = P.mac_read(s.font_object, P.FONT_PROPS)
     if kind == "paragraph":
         fmt = s.paragraph_format
@@ -1023,18 +1221,21 @@ def _describe_mac_style(s) -> dict:
             out["paragraph"]["borders"] = borders
         if shading:
             out["paragraph"]["shading"] = shading
+    if doc is not None:
+        _bridged_style(doc, out, kind)
     return out
 
 
 @mac_impl(formatting._get_style_impl)
 def get_style(style):
     doc = backend.word.document()
-    return {"success": True, "style": _describe_mac_style(_style_object(doc, style))}
+    return {"success": True, "style": _describe_mac_style(_style_object(doc, style), doc)}
 
 
 @mac_impl(formatting._set_style_impl)
 def set_style(style, create, base_style, next_style, font, paragraph, quick_style,
-              priority, automatically_update, no_space_between_same_style):
+              priority, automatically_update, no_space_between_same_style, numbering=None,
+              language=None, east_asian_language=None):
     k = _k()
     doc = backend.word.document()
     exists = True
@@ -1047,21 +1248,67 @@ def set_style(style, create, base_style, next_style, font, paragraph, quick_styl
             raise ValueError(f"A style called '{style}' already exists. Leave out "
                              "`create` to change it.")
         # Measured on Word 16.114: `make new Word style`, with or without a
-        # type, answers -1708 and makes nothing, whatever the name.
-        raise ValueError(
-            "Creating a style does not work through Word for Mac's scripting (Word "
-            "answers -1708 and makes nothing). Create it in Word's Styles pane, or on "
-            "Windows, then change it here; or base the look on a built-in style such "
-            "as \"Body Text\" and change that.")
+        # type, answers -1708 and makes nothing, whatever the name. VBA's
+        # Styles.Add works.
+        from . import _vba
+        from ..backend.bridge import encode
+
+        why = _vba.usable()
+        if why:
+            raise ValueError(
+                "Creating a style does not work through Word for Mac's scripting (Word "
+                "answers -1708 and makes nothing), and ms-word-mcp's VBA bridge, which "
+                f"creates one, cannot be used with this Word ({why}). Create it in Word's "
+                "Styles pane, or on Windows, then change it here; or base the look on a "
+                "built-in style such as \"Body Text\" and change that.")
+        base_name = _mac_style_name(_style_object(doc, base_style)) if base_style else ""
+        word = backend.word
+        made = word.vba.call(word.get_app(), "AddStyle", encode(_full(doc)), encode(style),
+                             str(formatting._NEW_STYLE_TYPES[create]), encode(base_name or ""))
+        s = _style_object(doc, _vba.decode(made[0]))
     else:
         s = _style_object(doc, style)
         s.name_local.get()  # raises if it does not exist
     kind = STYLE_TYPES.get(_name(s.style_type.get()), "paragraph")
     if paragraph and kind != "paragraph":
         raise ValueError(f"'{style}' is a {kind} style, which has no paragraph formatting.")
+    if numbering is not None and kind != "paragraph":
+        raise ValueError(f"'{style}' is a {kind} style, which takes no numbering.")
 
     refused = {}
-    if base_style is not None:
+    from .checks import LANGUAGES, _mac_language_value
+
+    # Setting `language ID` to no proofing's ID leaves it as it was (measured);
+    # the style's own `no proofing` turns checking off.
+    if language == "no_proofing":
+        s.no_proofing.set(True)
+    elif language is not None:
+        s.language_ID.set(_mac_language_value(LANGUAGES[language]))
+        s.no_proofing.set(False)
+    if east_asian_language is not None:
+        s.language_ID_east_asian.set(_mac_language_value(LANGUAGES[east_asian_language]))
+    if numbering is not None:
+        # `link to list template` is refused (-1708, measured); VBA's works.
+        from . import _vba
+        from ..backend.bridge import encode
+
+        why = _vba.usable()
+        if why:
+            refused["numbering"] = (
+                "Word for Mac's scripting cannot link a style to a list (-1708), and "
+                f"ms-word-mcp's VBA bridge, which can, cannot be used with this Word ({why}).")
+        else:
+            like = "" if numbering == "none" else _mac_style_name(
+                _style_object(doc, numbering["like"]))
+            if like and _mac_style_list(doc, like) is None:
+                raise ValueError(f"'{numbering['like']}' has no numbering to join. Number it "
+                                 "first: word_apply_list with linked_style on its level.")
+            word = backend.word
+            word.vba.call(word.get_app(), "StyleList", encode(_full(doc)),
+                          encode(s.name_local.get()), encode(like),
+                          "0" if numbering == "none" else str(numbering["level"]))
+    # A style just created has its base already (AddStyle), as on Windows.
+    if base_style is not None and not create:
         try:
             s.base_style.set(_style_value(doc, base_style))
         except Exception as exc:  # noqa: BLE001
@@ -1080,13 +1327,28 @@ def set_style(style, create, base_style, next_style, font, paragraph, quick_styl
                 getattr(s, prop).set(value)
             except Exception as exc:  # noqa: BLE001
                 refused[key] = str(exc).splitlines()[0]
-    for key, value in (("quick_style", quick_style), ("priority", priority)):
-        if value is not None:
-            refused[key] = "Word for Mac's scripting has no such property; it works on Windows."
+    asked = {key: value for key, value in (("quick_style", quick_style), ("priority", priority))
+             if value is not None}
+    if asked:
+        from . import _vba
+
+        why = _vba.usable()
+        for key, value in asked.items():
+            member = {"quick_style": "QuickStyle", "priority": "Priority"}[key]
+            if why:
+                refused[key] = _vba.NEEDS_BRIDGE.format(why=why)
+                continue
+            try:
+                setattr(_vba.Remote(_full(doc), _style_path(s.name_local.get())), member, value)
+            except Exception as exc:  # noqa: BLE001 - reported to the caller
+                refused[key] = str(exc).splitlines()[0]
     font_spec = P.with_latin_extended(P.given(font, P.FONT_NAMES))
     para_spec = P.given(paragraph, P.PARAGRAPH_NAMES)
+    name = s.name_local.get()
     font_refused = P.mac_apply(s.font_object, P.FONT_PROPS, font_spec) if font_spec else {}
-    para_refused = {}
+    if font_spec:
+        _bridged(doc, _style_path(name, "Font"), P.FONT_PROPS, font_spec, font_refused, {})
+    para_refused, tab_warnings = {}, []
     if para_spec:
         fmt = s.paragraph_format
         para_refused = P.mac_apply(fmt, P.PARAGRAPH_PROPS, para_spec)
@@ -1094,8 +1356,13 @@ def set_style(style, create, base_style, next_style, font, paragraph, quick_styl
                                  para_spec.get("line_spacing"))
         para_refused.update(P.mac_apply_borders(s, para_spec.get("borders")))
         P.mac_apply_shading(s, para_spec.get("shading"))
+        _bridged(doc, _style_path(name, "ParagraphFormat"), P.PARAGRAPH_PROPS, para_spec,
+                 para_refused, {})
+        if "tab_stops" in para_spec:
+            _, tab_warnings = _bridged_tabs(doc, _style_path(name, "ParagraphFormat"),
+                                            para_spec["tab_stops"])
 
-    described = _describe_mac_style(s)
+    described = _describe_mac_style(s, doc)
     warnings = [f"{key} was refused: {why}" for key, why in refused.items()]
     for key, wanted in (("base_style", base_style), ("next_style", next_style)):
         if wanted is not None and key not in refused:
@@ -1103,14 +1370,20 @@ def set_style(style, create, base_style, next_style, font, paragraph, quick_styl
             if described.get(key) != want:
                 warnings.append(f"{key} reads back as {described.get(key)!r}, not {want!r}.")
     for key, value in (("automatically_update", automatically_update),
-                       ("no_space_between_same_style", no_space_between_same_style)):
-        if value is not None and key not in refused and described.get(key) != value:
+                       ("no_space_between_same_style", no_space_between_same_style),
+                       ("quick_style", quick_style), ("priority", priority)):
+        read = key in described or key not in ("quick_style", "priority")
+        if value is not None and key not in refused and read and described.get(key) != value:
             warnings.append(f"{key} reads back as {described.get(key)!r}, not {value!r}.")
     warnings += P.mismatches(font_spec, described.get("font", {}), font_refused)
     warnings += P.mismatches(para_spec, described.get("paragraph", {}), para_refused)
     warnings += P.border_mismatches(para_spec, described.get("paragraph", {}))
-    if "tab_stops" in para_spec:
-        warnings.append(TABS_ON_MAC)
+    warnings += tab_warnings
+    if "numbering" not in refused and "numbering" in described:
+        warnings += formatting.numbering_warnings(numbering, described["numbering"], style)
+    warnings += formatting.language_warnings(language, east_asian_language, described)
+    if "tab_stops" in para_spec and not tab_warnings:
+        warnings += formatting._tab_mismatch(para_spec, described.get("paragraph", {}))
     out = {"success": True, "created": bool(create), "style": described}
     if warnings:
         out["warnings"] = warnings
