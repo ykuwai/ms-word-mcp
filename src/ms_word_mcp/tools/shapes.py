@@ -176,10 +176,24 @@ VERTICAL_ANCHORS = {"top": 1, "middle": 3, "bottom": 4}
 ROUNDED = KINDS["rounded_rectangle"]
 COLOR_OR_NONE = r"^(none|#?[0-9A-Fa-f]{6})$"
 COLOR = r"^#?[0-9A-Fa-f]{6}$"
-NO_ALT_ON_MAC = ("Word for Mac has no alternative text on a floating shape, so alt_text was "
-                 "not set. It can be set on Windows.")
-NO_MIDDLE_ON_MAC = ("Word for Mac has no vertical_anchor, so it was not set: the text stays "
-                    "where it was. It can be set on Windows.")
+NO_ALT_ON_MAC = ("Word for Mac's scripting has no alternative text on a floating shape, and "
+                 "ms-word-mcp's VBA bridge, which sets it, cannot be used with this Word "
+                 "({why}), so alt_text was not set. It can be set on Windows.")
+NO_MIDDLE_ON_MAC = ("Word for Mac's scripting has no vertical_anchor, and ms-word-mcp's VBA "
+                    "bridge, which sets it, cannot be used with this Word ({why}), so it was "
+                    "not set: the text stays where it was. It can be set on Windows.")
+
+
+def _mac_shape_remote(s, *more):
+    """The shape `s` as the VBA bridge reaches it (tools/_vba.py), or why it cannot."""
+    from . import _vba
+    from . import mac as m
+
+    why = _vba.usable()
+    if why:
+        return None, why
+    path = _vba.path_of("Shapes", ("Item", s.name.get()), *more)
+    return _vba.Remote(m._full(backend.word.document()), path), None
 
 
 # -- arguments ---------------------------------------------------------------------
@@ -228,7 +242,8 @@ class _Text(Input):
     alignment: Literal[tuple(ALIGNMENTS)] | None = Field(None, description=(  # type: ignore[valid-type]
         "The alignment of the text's paragraphs."))
     vertical_anchor: Literal[tuple(VERTICAL_ANCHORS)] | None = Field(None, description=(  # type: ignore[valid-type]
-        "Where the text sits from top to bottom (Windows only)."))
+        "Where the text sits from top to bottom. On the Mac this needs ms-word-mcp's VBA "
+        "bridge."))
     orientation: Literal[tuple(ORIENTATIONS)] | None = Field(None, description=(  # type: ignore[valid-type]
         "vertical is East Asian vertical text (縦書き). rotate_right and rotate_left "
         "turn horizontal text a quarter turn."))
@@ -264,7 +279,8 @@ class _Common(Input):
         "A name of its own in this document, to find it by later. Word gives one if "
         "this is left out."))
     alt_text: str | None = Field(None, description=(
-        "What it shows, for readers who cannot see it (Windows only)."))
+        "What it shows, for readers who cannot see it. On the Mac this needs ms-word-mcp's "
+        "VBA bridge."))
 
 
 class _Made(_Position, _Wrap, _Common):
@@ -1026,6 +1042,12 @@ def _mac_describe(doc, s, number: int) -> dict:
            "vertical_from": _mac_key(_MAC_VERTICAL, s.relative_vertical_position.get(), _V_PREFIX),
            "wrap": _mac_key(WRAPS_MAC, s.wrap_format.wrap_type.get()),
            "z": s.z_order_position.get(), "rotation": round(s.rotation_.get(), 2)}
+    shape, _ = _mac_shape_remote(s)
+    if shape is not None:  # Word for Mac's scripting cannot read it; VBA can
+        try:
+            out["alt_text"] = shape.AlternativeText or ""
+        except Exception:  # noqa: BLE001 - described without it, as before
+            pass
     if kind not in ("picture", "linked_picture", "group", "canvas", "smart_art", "chart"):
         line = s.line_format
         out["line_color"] = "none" if not line.visible.get() else P._mac_hex(line.fore_color.get())
@@ -1076,7 +1098,11 @@ def _mac_apply_text(s, spec: dict) -> list[str]:
     if "orientation" in spec:
         frame.orientation.set(getattr(k, ORIENTATIONS_MAC[spec["orientation"]]))
     if "vertical_anchor" in spec:
-        warnings.append(NO_MIDDLE_ON_MAC)
+        frame_remote, why = _mac_shape_remote(s, "TextFrame")
+        if why:
+            warnings.append(NO_MIDDLE_ON_MAC.format(why=why))
+        else:
+            frame_remote.VerticalAnchor = VERTICAL_ANCHORS[spec["vertical_anchor"]]
     return warnings
 
 
@@ -1176,7 +1202,11 @@ def _mac_apply(s, spec: dict, kind: str) -> list[str]:
     _mac_apply_look(s, spec)
     warnings += _mac_apply_text(s, spec)
     if "alt_text" in spec:
-        warnings.append(NO_ALT_ON_MAC)
+        shape, why = _mac_shape_remote(s)
+        if why:
+            warnings.append(NO_ALT_ON_MAC.format(why=why))
+        else:
+            shape.AlternativeText = spec["alt_text"]
     if "z_order" in spec:
         s.z_order(z_order_command=getattr(k, Z_ORDERS_MAC[spec["z_order"]]))
     if "name" in spec:

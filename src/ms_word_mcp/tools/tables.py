@@ -1245,11 +1245,48 @@ def _mac_delete_rows(table, start, end):
 
 @mac_impl(_insert_columns_impl)
 def _mac_insert_columns(table, after_column, count, values):
-    raise ValueError(
-        "Word for Mac's scripting cannot add a column to a table (`make new column` is "
-        "refused, measured). Make the table again with the columns it needs: read it "
-        "with word_get_table, insert the new one with word_insert_table, then delete "
-        "the old one with word_delete_table.")
+    """Through the VBA bridge: Word for Mac's scripting cannot add a column
+    (`make new column` is refused, measured); VBA's Columns.Add can, as on
+    Windows."""
+    from . import _vba
+    from . import mac as m
+
+    doc = backend.word.document()
+    tb = _mac_table(doc, table)
+    why = _vba.usable()
+    if why:
+        raise ValueError(
+            "Word for Mac's scripting cannot add a column to a table (`make new column` is "
+            f"refused, measured), and ms-word-mcp's VBA bridge, which can, cannot be used "
+            f"with this Word ({why}). Make the table again with the columns it needs: read "
+            "it with word_get_table, insert the new one with word_insert_table, then delete "
+            "the old one with word_delete_table.")
+    n = count or len(values)
+    rows, cols = _mac_size(tb)
+    after_column = cols if after_column is None else after_column
+    if after_column > cols:
+        raise ValueError(f"The table has {cols} columns.")
+    if cols + n > 63:
+        raise ValueError("A table has at most 63 columns.")
+    columns = _vba.Remote(m._full(doc), _vba.path_of("Tables", ("Item", table), "Columns"))
+    with _columns_reachable("Word adds columns only to tables without them. Add "
+                            "columns before merging"):
+        for i in range(n):
+            if after_column < cols:
+                columns.call("Add", columns.at(("Item", after_column + i + 1)))
+            else:
+                columns.call("Add")
+    first = after_column + 1
+    for c, column in enumerate(values or [], start=first):
+        if len(column) > rows:
+            raise ValueError(f"A new column has {len(column)} cells; the table has "
+                             f"{rows} rows. The columns were added, empty.")
+        for r, value in enumerate(column, start=1):
+            _mac_cell(tb, r, c).text_object.content.set(_text(value))
+    m._scroll(doc, tb.text_object.start_of_content.get(), tb.text_object.end_of_content.get())
+    return {"success": True, "table": table, "inserted_columns": [first, first + n - 1],
+            "columns": _mac_size(tb)[1], "cells": _mac_grid(tb),
+            "paragraphs": _mac_span(doc, tb)}
 
 
 @mac_impl(_delete_columns_impl)
@@ -1263,10 +1300,22 @@ def _mac_delete_columns(table, start, end):
     if start == 1 and end == cols:
         raise ValueError("That is every column. Use word_delete_table to delete the table.")
     if not tb.uniform.get():
-        raise ValueError("This table has merged cells, so Word cannot reach its columns "
-                         "one by one.")
-    for c in range(end, start - 1, -1):
-        tb.columns[c].delete()
+        # `uniform` also reads false for columns of other widths, a column
+        # added through the bridge among them. VBA deletes as Windows does,
+        # and Word refuses only when cells are merged.
+        from . import _vba
+        from . import mac as m
+
+        if _vba.usable():
+            raise ValueError("This table has merged cells, so Word cannot reach its columns "
+                             "one by one.")
+        columns = _vba.Remote(m._full(doc), _vba.path_of("Tables", ("Item", table), "Columns"))
+        with _columns_reachable("Word cannot reach its columns one by one"):
+            for c in range(end, start - 1, -1):
+                columns.at(("Item", c)).call("Delete")
+    else:
+        for c in range(end, start - 1, -1):
+            tb.columns[c].delete()
     return {"success": True, "table": table, "columns": _mac_size(tb)[1],
             "cells": _mac_grid(tb), "paragraphs": _mac_span(doc, tb)}
 
@@ -1381,7 +1430,7 @@ def register(mcp) -> None:
               annotations=annotations("Insert table columns", WRITES))
     async def word_insert_table_columns(params: InsertColumnsInput) -> str:
         """Add columns to a table, empty or filled, after a column (default: at
-        the right). Windows only: Word for Mac's scripting cannot add columns."""
+        the right). On the Mac this goes through ms-word-mcp's VBA bridge."""
         p = params
         return await call(_insert_columns_impl, p.table, p.after_column, p.count, p.values,
                           undo="Insert table columns")
