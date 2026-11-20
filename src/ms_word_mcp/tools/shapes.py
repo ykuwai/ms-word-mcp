@@ -176,10 +176,24 @@ VERTICAL_ANCHORS = {"top": 1, "middle": 3, "bottom": 4}
 ROUNDED = KINDS["rounded_rectangle"]
 COLOR_OR_NONE = r"^(none|#?[0-9A-Fa-f]{6})$"
 COLOR = r"^#?[0-9A-Fa-f]{6}$"
-NO_ALT_ON_MAC = ("Word for Mac has no alternative text on a floating shape, so alt_text was "
-                 "not set. It can be set on Windows.")
-NO_MIDDLE_ON_MAC = ("Word for Mac has no vertical_anchor, so it was not set: the text stays "
-                    "where it was. It can be set on Windows.")
+NO_ALT_ON_MAC = ("Word for Mac's scripting has no alternative text on a floating shape, and "
+                 "ms-word-mcp's VBA bridge, which sets it, cannot be used with this Word "
+                 "({why}), so alt_text was not set. It can be set on Windows.")
+NO_MIDDLE_ON_MAC = ("Word for Mac's scripting has no vertical_anchor, and ms-word-mcp's VBA "
+                    "bridge, which sets it, cannot be used with this Word ({why}), so it was "
+                    "not set: the text stays where it was. It can be set on Windows.")
+
+
+def _mac_shape_remote(s, *more):
+    """The shape `s` as the VBA bridge reaches it (tools/_vba.py), or why it cannot."""
+    from . import _vba
+    from . import mac as m
+
+    why = _vba.usable()
+    if why:
+        return None, why
+    path = _vba.path_of("Shapes", ("Item", s.name.get()), *more)
+    return _vba.Remote(m._full(backend.word.document()), path), None
 
 
 # -- arguments ---------------------------------------------------------------------
@@ -228,7 +242,8 @@ class _Text(Input):
     alignment: Literal[tuple(ALIGNMENTS)] | None = Field(None, description=(  # type: ignore[valid-type]
         "The alignment of the text's paragraphs."))
     vertical_anchor: Literal[tuple(VERTICAL_ANCHORS)] | None = Field(None, description=(  # type: ignore[valid-type]
-        "Where the text sits from top to bottom (Windows only)."))
+        "Where the text sits from top to bottom. On the Mac this needs ms-word-mcp's VBA "
+        "bridge."))
     orientation: Literal[tuple(ORIENTATIONS)] | None = Field(None, description=(  # type: ignore[valid-type]
         "vertical is East Asian vertical text (縦書き). rotate_right and rotate_left "
         "turn horizontal text a quarter turn."))
@@ -264,7 +279,8 @@ class _Common(Input):
         "A name of its own in this document, to find it by later. Word gives one if "
         "this is left out."))
     alt_text: str | None = Field(None, description=(
-        "What it shows, for readers who cannot see it (Windows only)."))
+        "What it shows, for readers who cannot see it. On the Mac this needs ms-word-mcp's "
+        "VBA bridge."))
 
 
 class _Made(_Position, _Wrap, _Common):
@@ -408,6 +424,36 @@ class SetShapeInput(ShapeRef, _Position, _Wrap, _Common, _Look, _Text, _PictureL
 
 class DeleteShapeInput(ShapeRef):
     pass
+
+
+class GroupShapesInput(Input):
+    shapes: list[int | Trimmed] = Field(..., min_length=2, max_length=100, description=(
+        "The shapes to group, by name or by number in reading order (word_list_shapes)."))
+    name: Trimmed | None = Field(None, min_length=1, max_length=255, description=(
+        "A name for the group, to find it by afterwards."))
+
+    @field_validator("shapes")
+    @classmethod
+    def _real(cls, value):
+        if any(isinstance(v, int) and v < 1 for v in value):
+            raise ValueError("Shape numbers start at 1.")
+        if len(set(value)) != len(value):
+            raise ValueError("A shape is named twice: give each one once.")
+        return value
+
+
+class UngroupShapeInput(ShapeRef):
+    pass
+
+
+NO_GROUPS_ON_MAC = ("Word for Mac's scripting cannot {what} shapes, and ms-word-mcp's VBA "
+                    "bridge, which can, cannot be used with this Word ({why}).")
+NOT_A_GROUP = "'{name}' is a {kind}, not a group: word_list_shapes says which shapes are groups."
+
+
+def ungroup_answer(name: str, shapes: list[str], count: int) -> dict:
+    return {"success": True, "ungrouped": name, "shapes": shapes, "count": count,
+            "note": "The shapes are on their own again, each with the name it had in the group."}
 
 
 def spec_of(params: Input, *leave_out: str) -> dict:
@@ -619,6 +665,8 @@ def _describe(doc, s, number: int) -> dict:
            "vertical_from": _name_for(VERTICAL, s.RelativeVerticalPosition),
            "wrap": _name_for(WRAPS, wrap.Type), "z": s.ZOrderPosition,
            "rotation": round(s.Rotation, 2), "alt_text": s.AlternativeText or ""}
+    if kind == "group":
+        out["members"] = _members(s)
     if kind not in ("picture", "linked_picture", "group", "canvas", "smart_art", "chart"):
         out["line_color"] = "none" if not s.Line.Visible else P.hex_of(s.Line.ForeColor.RGB)
         out["line_weight"] = round(s.Line.Weight, 2)
@@ -893,6 +941,41 @@ def _picture_in_line(doc, s, spec: dict):
     return out
 
 
+def _members(s) -> list[str]:
+    items = s.GroupItems
+    return [items.Item(i).Name for i in range(1, items.Count + 1)]
+
+
+def _group_shapes_impl(shapes, name):
+    doc = backend.word.document()
+    found = [_find(doc, ref) for ref in shapes]
+    if len({x.ID for x in found}) != len(found):
+        raise ValueError("A shape is named twice (by its name and by its number): give each "
+                         "one once.")
+    _check_name(doc, name)
+    everything = _all_shapes(doc)
+    places = [next(i for i, x in enumerate(everything, 1) if x.ID == s.ID) for s in found]
+    group = doc.Shapes.Range(places).Group()
+    if name:
+        group.Name = name
+    return {**_result(doc, group, {}, []), "members": _members(group)}
+
+
+def _ungroup_shape_impl(shape):
+    doc = backend.word.document()
+    s = _find(doc, shape)
+    kind = _kind_of(s)
+    if kind != "group":
+        raise ValueError(NOT_A_GROUP.format(name=s.Name, kind=kind))
+    name, names = s.Name, _members(s)
+    follow(doc, s.Anchor)
+    # The names are read before: the ShapeRange Ungroup answers holds the
+    # shapes, but its items refuse to be read ("Exception occurred", measured);
+    # the shapes keep the names they had in the group.
+    s.Ungroup()
+    return ungroup_answer(name, names, doc.Shapes.Count)
+
+
 def _delete_shape_impl(shape):
     doc = backend.word.document()
     s = _find(doc, shape)
@@ -1026,6 +1109,12 @@ def _mac_describe(doc, s, number: int) -> dict:
            "vertical_from": _mac_key(_MAC_VERTICAL, s.relative_vertical_position.get(), _V_PREFIX),
            "wrap": _mac_key(WRAPS_MAC, s.wrap_format.wrap_type.get()),
            "z": s.z_order_position.get(), "rotation": round(s.rotation_.get(), 2)}
+    shape, _ = _mac_shape_remote(s)
+    if shape is not None:  # Word for Mac's scripting cannot read it; VBA can
+        try:
+            out["alt_text"] = shape.AlternativeText or ""
+        except Exception:  # noqa: BLE001 - described without it, as before
+            pass
     if kind not in ("picture", "linked_picture", "group", "canvas", "smart_art", "chart"):
         line = s.line_format
         out["line_color"] = "none" if not line.visible.get() else P._mac_hex(line.fore_color.get())
@@ -1046,6 +1135,13 @@ def _mac_describe(doc, s, number: int) -> dict:
             out["fill_transparency"] = round(fill.transparency.get(), 2)
         out["text"] = m._clean(s.text_frame.text_range.content.get()).replace("\r", "\n")
         out["orientation"] = _mac_key(ORIENTATIONS_MAC, s.text_frame.orientation.get())
+    if kind == "group":
+        try:
+            members = _mac_members(doc, out["name"])
+        except Exception:  # noqa: BLE001 - described without them
+            members = None
+        if members is not None:
+            out["members"] = members
     return out
 
 
@@ -1076,7 +1172,11 @@ def _mac_apply_text(s, spec: dict) -> list[str]:
     if "orientation" in spec:
         frame.orientation.set(getattr(k, ORIENTATIONS_MAC[spec["orientation"]]))
     if "vertical_anchor" in spec:
-        warnings.append(NO_MIDDLE_ON_MAC)
+        frame_remote, why = _mac_shape_remote(s, "TextFrame")
+        if why:
+            warnings.append(NO_MIDDLE_ON_MAC.format(why=why))
+        else:
+            frame_remote.VerticalAnchor = VERTICAL_ANCHORS[spec["vertical_anchor"]]
     return warnings
 
 
@@ -1176,12 +1276,39 @@ def _mac_apply(s, spec: dict, kind: str) -> list[str]:
     _mac_apply_look(s, spec)
     warnings += _mac_apply_text(s, spec)
     if "alt_text" in spec:
-        warnings.append(NO_ALT_ON_MAC)
+        shape, why = _mac_shape_remote(s)
+        if why:
+            warnings.append(NO_ALT_ON_MAC.format(why=why))
+        else:
+            shape.AlternativeText = spec["alt_text"]
     if "z_order" in spec:
         s.z_order(z_order_command=getattr(k, Z_ORDERS_MAC[spec["z_order"]]))
     if "name" in spec:
         s.name.set(spec["name"])
     return warnings
+
+
+def _mac_cut_off(s) -> bool:
+    """Whether a shape's text is cut off, once Word for Mac says it overflows.
+
+    Word for Mac's `overflowing` also counts the blank space after the last
+    paragraph, which shows nowhere. Measured on 16.114: a 150 x 60 pt rounded
+    rectangle with a 2.5 pt outline and two 9 pt lines, all of them visible on
+    the page, answered true, and false with that space taken off; boxes whose
+    text was cut off (40 and 30 pt high) answered true either way. So it is
+    asked again without that space, and the space is put back."""
+    from appscript import k
+
+    text = s.text_frame.text_range
+    last = text.paragraphs[int(text.count(each=k.paragraph))].paragraph_format
+    space = last.space_after.get()
+    if not space:
+        return True
+    last.space_after.set(0)
+    try:
+        return s.text_frame.overflowing.get() is True
+    finally:
+        last.space_after.set(space)
 
 
 def _mac_result(doc, name: str, spec: dict, warnings: list[str]) -> dict:
@@ -1193,7 +1320,8 @@ def _mac_result(doc, name: str, spec: dict, warnings: list[str]) -> dict:
     kind = _mac_kind_of(s)
     # `has text` is true for an empty shape on the Mac, and `overflowing` too.
     overflowing = (kind not in NO_TEXT and s.text_frame.overflowing.get() is True
-                   and bool(m._clean(s.text_frame.text_range.content.get())))
+                   and bool(m._clean(s.text_frame.text_range.content.get()))
+                   and _mac_cut_off(s))
     return _finished(_mac_describe(doc, s, _mac_number_of(doc, name)), spec, _mac_page(doc),
                      warnings, overflowing)
 
@@ -1350,6 +1478,68 @@ def _mac_picture_in_line(doc, s, name: str, spec: dict, kind: str):
     return out
 
 
+def _mac_members(doc, name: str) -> list[str] | None:
+    """A group's shapes, through the VBA bridge (Apple Events have no group
+    items); None without it."""
+    from . import _vba
+    from . import mac as m
+
+    if _vba.usable():
+        return None
+    items = _vba.Remote(m._full(doc), _vba.path_of("Shapes", ("Item", name), "GroupItems"))
+    count = items.Count
+    return _vba.batch(m._full(doc), [("get", items.at(("Item", i))._path, "Name")
+                                     for i in range(1, count + 1)])
+
+
+@mac_impl(_group_shapes_impl)
+def _mac_group_shapes(shapes, name):
+    from . import _vba
+    from . import mac as m
+    from ..backend.bridge import decode, encode
+
+    doc = backend.word.document()
+    names = []
+    for ref in shapes:
+        s, own_name = _mac_find(doc, ref)
+        have = s.name.get()
+        if not own_name:
+            raise ValueError(TWO_NAMES.format(count=_mac_names(doc).count(have), name=have))
+        names.append(have)
+    if len(set(names)) != len(names):
+        raise ValueError("A shape is named twice (by its name and by its number): give each "
+                         "one once.")
+    _mac_check_name(doc, name)
+    why = _vba.usable()
+    if why:
+        raise ValueError(NO_GROUPS_ON_MAC.format(what="group", why=why))
+    word = backend.word
+    made = decode(word.vba.call(word.get_app(), "GroupShapes", encode(m._full(doc)),
+                                encode(name or ""), *[encode(n) for n in names])[0])
+    return {**_mac_result(doc, made, {}, []), "members": _mac_members(doc, made) or names}
+
+
+@mac_impl(_ungroup_shape_impl)
+def _mac_ungroup_shape(shape):
+    from appscript import k
+
+    from . import _vba
+    from . import mac as m
+    from ..backend.bridge import decode, encode
+
+    doc = backend.word.document()
+    s, _ = _mac_find(doc, shape)
+    name, kind = s.name.get(), _mac_kind_of(s)
+    if kind != "group":
+        raise ValueError(NOT_A_GROUP.format(name=name, kind=kind))
+    why = _vba.usable()
+    if why:
+        raise ValueError(NO_GROUPS_ON_MAC.format(what="ungroup", why=why))
+    word = backend.word
+    held = word.vba.call(word.get_app(), "UngroupShape", encode(m._full(doc)), encode(name))
+    return ungroup_answer(name, [decode(x) for x in held], int(doc.count(each=k.shape)))
+
+
 @mac_impl(_delete_shape_impl)
 def _mac_delete_shape(shape):
     from appscript import k
@@ -1455,6 +1645,21 @@ def register(mcp) -> None:
         delete it and insert it there."""
         p = params
         return await call(_set_shape_impl, p.shape, spec_of(p, "shape"), undo="Change shape")
+
+    @mcp.tool(name="word_group_shapes", annotations=annotations("Group shapes", WRITES))
+    async def word_group_shapes(params: GroupShapesInput) -> str:
+        """Group floating shapes, text boxes, lines and pictures into one shape
+        that moves and resizes as one, as a diagram's parts. Answers the group,
+        with the shapes it holds (`members`). On the Mac this goes through
+        ms-word-mcp's VBA bridge."""
+        p = params
+        return await call(_group_shapes_impl, p.shapes, p.name, undo="Group shapes")
+
+    @mcp.tool(name="word_ungroup_shape", annotations=annotations("Ungroup a shape", WRITES))
+    async def word_ungroup_shape(params: UngroupShapeInput) -> str:
+        """Ungroup a group: its shapes are shapes of their own again. On the
+        Mac this goes through ms-word-mcp's VBA bridge."""
+        return await call(_ungroup_shape_impl, params.shape, undo="Ungroup shape")
 
     @mcp.tool(name="word_delete_shape",
               annotations=annotations("Delete a shape", DESTRUCTIVE))
