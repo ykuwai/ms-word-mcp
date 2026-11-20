@@ -76,6 +76,15 @@ follows what the owner asked for in ykuwai/ppt-mcp#352 and since.
   them by number or all at once. While tracking is on, the text tools read and
   report the text as Word shows it, deletions apart.
 
+- Comments: add one on a paragraph or on some text in it, list them with the
+  text each is about, delete them by number or all at once; on Windows, reply
+  and mark one done. Word for Mac's scripting has no replies or done state.
+
+- Checks: Word's spelling and grammar findings and the language the text is
+  checked in, marking text with a language, and a health check before sending
+  (headings, placeholders, alt text, links, comments and changes left, text
+  Word never checks, readability).
+
 - Pictures in line with the text, numbered captions under any label in any
   language, live cross-references to captions, equations and headings.
 - The page: paper, margins, columns, document grid, vertical text; headers,
@@ -123,9 +132,7 @@ Then, ordered roughly by what the owner stressed.
 7. Shapes, the rest. Grouping; shapes in headers and footers; moving a shape to
    another paragraph.
 8. Adding sections (section breaks); a header of several paragraphs.
-9. Comments (making one ends Word for Mac's process when asked through Apple
-   Events: docs/PROBES.md); spelling and a document health check.
-10. Page previews.
+9. Page previews.
 
 ## Platforms
 
