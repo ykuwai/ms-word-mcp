@@ -23,8 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from ms_word_mcp import backend  # noqa: E402
 from ms_word_mcp.backend import call_document  # noqa: E402
 from ms_word_mcp.tools import (  # noqa: E402
-    _common, documents, edit, equations, fields, formatting, links, lists, notes, page,
-    references, revisions, screen, shapes, tables, text)
+    _common, checks, comments, documents, edit, equations, fields, formatting, links, lists, notes, page,
+    references, revisions, screen, selection, shapes, tables, text)
 
 results: list[tuple[str, bool]] = []
 
@@ -35,6 +35,11 @@ def step(label, impl, *args, undo=None, check=lambda out: "error" not in out):
         ok = bool(check(out))
     except (KeyError, IndexError, TypeError):
         ok = False
+    return record(label, ok, out)
+
+
+def record(label, ok, out):
+    """A step's result, from a tool's answer or from what the script worked out."""
     results.append((label, ok))
     print(f"{'PASS' if ok else 'FAIL'}  {label}")
     text = json.dumps(out, ensure_ascii=False)
@@ -117,10 +122,12 @@ def run_steps(path: str) -> None:
          3, None, {"space_before_lines": 0.5, "first_line_indent_chars": 1,
                    "east_asian_line_breaking": True, "hanging_punctuation": True},
          undo="Paragraph format", check=lambda o: "warnings" not in o)
-    # Word for Mac cannot create a style through its scripting; there the
-    # check is that it says so, and the steps after it use Body Text.
-    style = "Body Text" if sys.platform == "darwin" else "MCP 本文"
-    if sys.platform == "darwin":
+    # Word for Mac cannot create a style through its scripting; the VBA
+    # bridge can. Without it the check is that it says so, and the steps after
+    # it use Body Text.
+    no_bridge = sys.platform == "darwin" and not _bridge_usable()
+    style = "Body Text" if no_bridge else "MCP 本文"
+    if no_bridge:
         step("creating a style is refused on the Mac", formatting._set_style_impl,
              "MCP 本文", "paragraph", None, None, None, None, None, None, None, None,
              check=lambda o: "Styles pane" in o.get("error", ""))
@@ -132,12 +139,12 @@ def run_steps(path: str) -> None:
          undo="Paragraph format",
          check=lambda o: (o["paragraphs"][0].get("direction") == "right_to_left"
                           and len(o["paragraphs"][0].get("tab_stops", [])) == 2)
-         if sys.platform != "darwin" else len(o.get("warnings", [])) == 2)
+         if not no_bridge else len(o.get("warnings", [])) == 2)
     step("back to left-to-right, no tab stops", formatting._set_paragraph_format_impl,
          5, None, {"direction": "left_to_right", "tab_stops": []}, undo="Paragraph format",
          check=lambda o: "error" not in o)
     step("define a paragraph style", formatting._set_style_impl, style,
-         None if sys.platform == "darwin" else "paragraph", "Normal", None, {"east_asian_font": "BIZ UDPゴシック", "size": 10.5,
+         None if no_bridge else "paragraph", "Normal", None, {"east_asian_font": "BIZ UDPゴシック", "size": 10.5,
                           "color": "#333333"},
          {"first_line_indent_chars": 1, "space_after_lines": 0.5,
           "line_spacing_rule": "exactly", "line_spacing": 18},
@@ -257,11 +264,22 @@ def run_steps(path: str) -> None:
          text._get_outline_impl, False,
          check=lambda o: o["headings"] == full["headings"] and len(o["headings"]) >= 2)
     run_table_steps()
+    run_table_more_steps()
+    run_style_numbering_steps()
+    run_style_language_steps()
     run_picture_and_page_steps(Path(path).parent)
     run_review_steps()
     run_heading_number_steps()
     run_border_steps()
     run_note_steps()
+    run_comment_steps()
+    run_check_steps()
+    run_section_steps()
+    run_selection_steps()
+    run_pdf_steps()
+    run_bridge_steps()
+    run_find_bridge_steps()
+    run_mac_gap_steps()
     run_revision_steps()
     run_link_steps()
     run_shape_steps()
@@ -592,6 +610,491 @@ def run_note_steps() -> None:
         call_document.reset(token)
 
 
+def run_comment_steps() -> None:
+    """Comments: what they are about, their order, replies and done, deleting."""
+    other = step("a document for comments", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("two paragraphs for comments", text._insert_paragraphs_impl,
+                    [{"text": "Alpha beta gamma.", "style": "Normal"},
+                     {"text": "日本語の本文 𠮷 です。", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        step("a comment on a whole paragraph", comments._add_comment_impl, 2, "コメント 𠮷", None,
+             undo="Add comment",
+             check=lambda o: (o["number"], o["index"], o["on"], o["text"], o["count"])
+             == (1, 2, "日本語の本文 𠮷 です。", "コメント 𠮷", 1) and o["author"])
+        step("a comment on some text takes number 1", comments._add_comment_impl, 1, "Which beta?",
+             "beta", undo="Add comment",
+             check=lambda o: (o["number"], o["index"], o["on"], o["text"]) == (1, 1, "beta", "Which beta?"))
+        step("the commented text reads as it was", text._get_paragraphs_impl, 1, 2, False,
+             check=lambda o: [p["text"] for p in o["paragraphs"]]
+             == ["Alpha beta gamma.", "日本語の本文 𠮷 です。"])
+        step("the comments in order", comments._list_comments_impl, 1, 100,
+             check=lambda o: [(c["number"], c["index"], c["on"], c["text"]) for c in o["comments"]]
+             == [(1, 1, "beta", "Which beta?"), (2, 2, "日本語の本文 𠮷 です。", "コメント 𠮷")]
+             and all(c["date"] for c in o["comments"]))
+        step("a picture of the page with its comments", screen._get_page_image_impl, 1, None,
+             check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 5000)
+        step("and the comments are all still there", comments._list_comments_impl, 1, 100,
+             check=lambda o: o["count"] == 2)
+        step("one comment at a time says what follows", comments._list_comments_impl, 1, 1,
+             check=lambda o: len(o["comments"]) == 1 and "start=2" in o["more"])
+        step("text that is not there is refused", comments._add_comment_impl, 1, "no", "nowhere",
+             check=lambda o: "is not in paragraph 1" in o["error"])
+        step("a comment that is not there is refused", comments._delete_comments_impl, [9], False,
+             check=lambda o: "There is no comment 9" in o["error"])
+        if backend.IS_MACOS and not _bridge_usable():
+            step("without the bridge a reply says why", comments._reply_to_comment_impl, 1, "x",
+                 check=lambda o: "no replies" in o["error"] and "cannot be used" in o["error"])
+            step("without the bridge done says why", comments._resolve_comment_impl, 1, True,
+                 check=lambda o: "no done state" in o["error"])
+        else:
+            step("a reply follows its comment", comments._reply_to_comment_impl, 1, "Agreed ✓",
+                 undo="Reply to comment",
+                 check=lambda o: (o["number"], o["reply_to"], o["text"], o["count"]) == (2, 1, "Agreed ✓", 3))
+            step("a reply to the reply goes to the comment", comments._reply_to_comment_impl, 2, "And?",
+                 undo="Reply to comment", check=lambda o: o["reply_to"] == 1 and o["count"] == 4)
+            step("a comment is marked done", comments._resolve_comment_impl, 1, True,
+                 undo="Resolve comment", check=lambda o: o["done"] is True)
+            step("the list says which are done and what each reply answers",
+                 comments._list_comments_impl, 1, 100,
+                 check=lambda o: [(c["number"], c.get("reply_to")) for c in o["comments"]]
+                 == [(1, None), (2, 1), (3, 1), (4, None)]
+                 and (o["comments"][0]["done"], o["comments"][3]["done"]) == (True, False))
+            step("deleting a comment takes its replies", comments._delete_comments_impl, [1], False,
+                 undo="Delete comments",
+                 check=lambda o: (o["deleted"], o["left"]) == (3, 1) and "replies" in o["note"])
+        step("every comment goes", comments._delete_comments_impl, None, True,
+             undo="Delete comments", check=lambda o: o["left"] == 0)
+        step("and the text is as it was", text._get_paragraphs_impl, 1, 2, False,
+             check=lambda o: [p["text"] for p in o["paragraphs"]]
+             == ["Alpha beta gamma.", "日本語の本文 𠮷 です。"])
+        step("close the document of comments", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_check_steps() -> None:
+    """Spelling in the language the text is marked with, and the health check."""
+    other = step("a document for checks", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("paragraphs with slips", text._insert_paragraphs_impl,
+                    [{"text": "Thiss sentense has erors.", "style": "Normal"},
+                     {"text": "TODO: write the the end.", "style": "Normal"},
+                     {"text": "", "style": "Normal"}, {"text": "", "style": "Normal"},
+                     {"text": "日本語の本文です。", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        before = step("the language the text is checked in", checks._check_spelling_impl, 50)
+        print(f"      (marked as {before.get('language')} before word_set_language)")
+        step("marked as English", checks._set_language_impl, "english_us", 1, 4,
+             undo="Set language", check=lambda o: (o["language"], o["start"], o["end"])
+             == ("english_us", 1, 4))
+        step("the misspelled words, with their paragraphs", checks._check_spelling_impl, 50,
+             check=lambda o: {"Thiss", "sentense", "erors"} <= {w["word"] for w in o["misspelled"]}
+             and all(w["paragraphs"] == [1] for w in o["misspelled"] if w["word"] in ("Thiss", "erors"))
+             and o["language"] in ("english_us", "mixed"))
+        step("the Japanese paragraph is marked Japanese", checks._set_language_impl, "japanese", 5,
+             None, undo="Set language", check=lambda o: o["language"] == "japanese")
+        step("a span that is not there is refused", checks._set_language_impl, "japanese", 1, 99,
+             check=lambda o: "not all in the document" in o["error"])
+        step("the health check finds the slips", checks._check_document_impl, 100,
+             check=lambda o: {"placeholder", "repeated_word", "blank_paragraphs"} <= set(o["counts"])
+             and o["paragraphs"] == 5)
+        step("close the document of checks", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_section_steps() -> None:
+    """Section breaks, and a header of several paragraphs in each section."""
+    other = step("a document for sections", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("three paragraphs for sections", text._insert_paragraphs_impl,
+                    [{"text": "Chapter one.", "style": "Normal"},
+                     {"text": "Chapter two.", "style": "Normal"},
+                     {"text": "第三章。", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        step("a header of two paragraphs", page._set_header_footer_impl, "header", None, "primary",
+             1, None, [{"text": "Example Ltd", "alignment": "left"},
+                       {"text": "1 Main Street · page {page}", "alignment": "right"}],
+             undo="Set header or footer",
+             check=lambda o: o["paragraphs"] == 2
+             and re.fullmatch(r"Example Ltd\r1 Main Street · page \d+", o["reads"]))
+        step("a section break after paragraph 1", page._insert_section_break_impl, 1, "next_page",
+             undo="Insert section break",
+             check=lambda o: (o["section"], o["sections"], o["starts_at"], o["paragraphs"])
+             == (2, 2, 3, 4))
+        step("the paragraphs after it moved down by one", text._get_paragraphs_impl, 3, 4, False,
+             check=lambda o: [p["text"] for p in o["paragraphs"]] == ["Chapter two.", "第三章。"])
+        step("section 2 gets a header of its own", page._set_header_footer_impl, "header",
+             "Second part", "primary", 2, "center", None, undo="Set header or footer",
+             check=lambda o: o["reads"] == "Second part" and "its own header" in o["note"])
+        step("each section's header reads back", page._get_headers_footers_impl,
+             check=lambda o: len(o["sections"]) == 2
+             and o["sections"][0]["header"]["primary"]["text"].startswith("Example Ltd\r")
+             and o["sections"][1]["header"]["primary"]["text"] == "Second part")
+        step("a continuous break after the last paragraph", page._insert_section_break_impl, 4,
+             "continuous", undo="Insert section break",
+             check=lambda o: (o["section"], o["sections"], o["starts_at"], o["paragraphs"]) == (3, 3, 5, 5)
+             and "empty paragraph" in o["note"])
+        step("three sections in the page setup", page._get_page_setup_impl,
+             check=lambda o: len(o["sections"]) == 3)
+        step("a paragraph that is not there is refused", page._insert_section_break_impl, 99,
+             "next_page", check=lambda o: "There is no paragraph 99" in o["error"])
+        step("close the document of sections", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def _select(full_name, start, end):
+    """Select [start, end) in a document, as the user would: only the live check
+    moves the selection, never a tool."""
+    def select():
+        app = backend.word.get_app()
+        if backend.IS_MACOS:
+            doc = next(d for d in app.documents.get() if d.name.get() == full_name)
+            doc.activate_object()
+            # No `select` command; the selection's own bounds are set.
+            app.selection.selection_start.set(start)
+            app.selection.selection_end.set(end)
+        else:
+            doc = app.Documents.Item(full_name)
+            doc.Activate()
+            doc.Range(start, end).Select()
+        return {"success": True}
+    return backend.word.execute(select)
+
+
+def run_selection_steps() -> None:
+    """What the user has selected, read back."""
+    other = step("a document for the selection", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("three paragraphs for the selection", text._insert_paragraphs_impl,
+                    [{"text": "First.", "style": "Normal"},
+                     {"text": "Second paragraph 𠮷.", "style": "Normal"},
+                     {"text": "第三段落。", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        name = other["full_name"]
+        _select(name, 7, 27)  # 𠮷 is two places in Word's count
+        step("a selection in one paragraph", selection._get_selection_impl,
+             check=lambda o: (o["start"], o["end"], o["text"], o["story"], o["empty"])
+             == (2, 2, "Second paragraph 𠮷.", "main", False))
+        _select(name, 3, 31)
+        step("a selection across paragraphs", selection._get_selection_impl,
+             check=lambda o: (o["start"], o["end"]) == (1, 3) and o["text"].startswith("st.\r"))
+        _select(name, 28, 28)
+        step("the cursor alone", selection._get_selection_impl,
+             check=lambda o: o["empty"] is True and o["text"] == "" and (o["start"], o["end"]) == (3, 3)
+             and "cursor is in paragraph 3" in o["note"])
+        third = step("a second document", documents._create_document_impl, None, None)
+        if "error" not in third:
+            _select(name, 0, 6)
+            call_document.reset(token)
+            token = call_document.set(third["full_name"])
+            step("a selection in another document says how to reach it",
+                 selection._get_selection_impl,
+                 check=lambda o: o["text"] == "First." and f"document={name!r}" in o["note"])
+            step("close the second document", documents._close_document_impl, False)
+            call_document.reset(token)
+            token = call_document.set(name)
+        step("close the document of the selection", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def _pdf_text(path):
+    """The text of a PDF, on the Mac (PDFKit); None elsewhere."""
+    if not backend.IS_MACOS:
+        return None
+    import Quartz
+    from Foundation import NSURL
+
+    return str(Quartz.PDFDocument.alloc().initWithURL_(NSURL.fileURLWithPath_(path)).string())
+
+
+def run_pdf_steps() -> None:
+    """A PDF of some pages, as it will print or with its comments drawn."""
+    other = step("a document for PDFs", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    folder = references.CONTAINER if backend.IS_MACOS else tempfile.gettempdir()
+    stamp = time.strftime("%H%M%S")
+    try:
+        made = step("three pages for PDFs", text._insert_paragraphs_impl,
+                    [{"text": "Page one.", "style": "Normal"}, {"text": "Page two.", "style": "Normal"},
+                     {"text": "Page three.", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        step("a break before page two", page._insert_section_break_impl, 1, "next_page")
+        step("a break before page three", page._insert_section_break_impl, 3, "next_page")
+        step("a comment on page one", comments._add_comment_impl, 1, "REVIEWNOTE on page one", None)
+        whole = os.path.join(folder, f"ms-word-mcp-print-{stamp}.pdf")
+        step("a PDF as it will print", documents._save_document_as_impl, whole, True, None, None, False,
+             check=lambda o: o["markup"] is False and o["bytes"] > 0
+             and (_pdf_text(whole) is None or ("Page one" in _pdf_text(whole)
+                                               and "REVIEWNOTE" not in _pdf_text(whole))))
+        marked = os.path.join(folder, f"ms-word-mcp-markup-{stamp}.pdf")
+        step("a PDF with its comments drawn", documents._save_document_as_impl, marked, True, None, None,
+             True, check=lambda o: o["markup"] is True and o["document"] == other["full_name"]
+             and (_pdf_text(marked) is None or "REVIEWNOTE" in _pdf_text(marked)))
+        part = os.path.join(folder, f"ms-word-mcp-pages-{stamp}.pdf")
+        step("pages two to three", documents._save_document_as_impl, part, True, 2, 3, False,
+             check=lambda o: o["pages"] == [2, 3]
+             and (_pdf_text(part) is None or ("Page two" in _pdf_text(part)
+                                              and "Page one" not in _pdf_text(part))))
+        step("a page that is not there is refused", documents._save_document_as_impl,
+             os.path.join(folder, f"ms-word-mcp-none-{stamp}.pdf"), True, 4, None, False,
+             check=lambda o: "There is no page 4" in o["error"])
+        step("and the comment is still in the document", comments._list_comments_impl, 1, 10,
+             check=lambda o: o["count"] == 1)
+        for path in (whole, marked, part):
+            if os.path.exists(path):
+                os.remove(path)
+        step("close the document of PDFs", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def _bridge_usable() -> bool:
+    """Whether the VBA bridge works in this Word (it is loaded on first use)."""
+    from ms_word_mcp.backend.bridge import Unavailable
+
+    def ping():
+        try:
+            from ms_word_mcp.backend.bridge import VERSION
+
+            return backend.word.vba.call(backend.word.get_app(), "Ping") == [VERSION]
+        except Unavailable:
+            return False
+    return backend.word.execute(ping)
+
+
+def run_bridge_steps() -> None:
+    """Paragraphs read by the VBA bridge, against the same read without it."""
+    other = step("a document for the bridge", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        items = [{"text": "Bridge heading", "style": "Heading 1"},
+                 {"text": "English, 日本語 and 𠮷 in one paragraph.", "style": "Normal"},
+                 {"text": "A bold red paragraph.", "style": "Normal"},
+                 {"text": "Words to strike out stay here.", "style": "Normal"},
+                 {"text": "Second heading", "style": "Heading 2"}]
+        items += [{"text": f"Body paragraph {i} with a few words in it.", "style": "Normal"}
+                  for i in range(1, 196)]
+        made = step("200 paragraphs for the bridge", text._insert_paragraphs_impl, items, None, None)
+        if "error" in made:
+            return
+        step("one of them bold and red", formatting._format_text_impl, 3, None, None,
+             {"bold": True, "color": "#C00000"}, undo="Format text")
+        step("a table after them", tables._insert_table_impl, [["a", "b"], ["c", "d"]], 5, None,
+             None, None, None, None, None, None, None, undo="Insert table")
+        step("track changes on", revisions._set_track_changes_impl, True, undo="Track changes")
+        step("a tracked deletion", text._find_replace_impl, "to strike out ", "", True, False,
+             False, undo="Find and replace", check=lambda o: o["replaced"] == 1)
+        step("track changes off", revisions._set_track_changes_impl, False, undo="Track changes")
+        _bridge_usable()  # loaded on first use
+        if step("the bridge is loaded", documents._get_app_info_impl,
+                check=lambda o: o["vba_bridge"] == "on").get("vba_bridge") != "on":
+            step("close the document of the bridge", documents._close_document_impl, False)
+            return
+        timed = {}
+
+        def read(on, detail):
+            os.environ["WORD_VBA_BRIDGE"] = "on" if on else "off"
+            began = time.monotonic()
+            out = json.loads(_common.run(text._get_paragraphs_impl, 1, 200, detail))
+            timed[(on, detail)] = time.monotonic() - began
+            return out
+        try:
+            for detail in (False, True):
+                fast, slow = read(True, detail), read(False, detail)
+                differ = [(a, b) for a, b in zip(fast["paragraphs"], slow["paragraphs"]) if a != b]
+                if backend.IS_MACOS and detail:
+                    # The Mac's old read gives fewer fields and colors as RGB;
+                    # the bridge gives Windows' fields. Compared without detail.
+                    keep = ("index", "text", "style", "outline_level", "table", "deleted_text")
+                    differ = [(a, b) for a, b in differ
+                              if {k: a.get(k) for k in keep} != {k: b.get(k) for k in keep}]
+                record(f"the bridge reads as before{' with detail' if detail else ''}",
+                       len(fast["paragraphs"]) == len(slow["paragraphs"]) == 200 and not differ,
+                       {"paragraphs": [len(fast["paragraphs"]), len(slow["paragraphs"])],
+                        "differ": differ[:3], "seconds": [round(timed[(True, detail)], 2),
+                                                          round(timed[(False, detail)], 2)]})
+        finally:
+            os.environ.pop("WORD_VBA_BRIDGE", None)
+        step("the tracked deletion reads as struck out", text._get_paragraphs_impl, 4, 4, True,
+             check=lambda o: o["paragraphs"][0].get("deleted_text") == "to strike out "
+             and "fonts" in o["paragraphs"][0])
+        step("close the document of the bridge", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_find_bridge_steps() -> None:
+    """word_find_replace through the VBA bridge: 3,000 matches in one call."""
+    other = step("a document for many matches", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        items = [{"text": "An equation comes first.", "style": "Normal"}]
+        items += [{"text": f"alpha zeta beta zeta gamma zeta {i}", "style": "Normal"}
+                  for i in range(1, 1001)]
+        items += [{"text": "Then x^2 grows.", "style": "Normal"}]
+        made = step("1,000 paragraphs of three matches each", text._insert_paragraphs_impl, items,
+                    None, None)
+        if "error" in made:
+            return
+        step("an equation before them", equations._insert_equation_impl, "E=mc^2", "latex", True,
+             "Equation", 1, None)
+        if not _bridge_usable():
+            record("the bridge loads", False, {"vba_bridge": "off"})
+            step("close the document of many matches", documents._close_document_impl, False)
+            return
+        timed, counted = {}, {}
+        try:
+            for on in (True, False):
+                os.environ["WORD_VBA_BRIDGE"] = "on" if on else "off"
+                began = time.monotonic()
+                counted[on] = json.loads(_common.run(text._find_replace_impl, "zeta", None, True,
+                                                     False, False))
+                timed[on] = round(time.monotonic() - began, 2)
+        finally:
+            os.environ.pop("WORD_VBA_BRIDGE", None)
+        fast, slow = counted[True], counted[False]
+        record("counted as before", fast.get("matches") == 3000 and "complete" not in fast
+               and fast.get("paragraphs") == slow.get("paragraphs")
+               and (slow.get("matches") == 3000 or slow.get("complete") is False),
+               {"matches": [fast.get("matches"), slow.get("matches")],
+                "complete": [fast.get("complete", True), slow.get("complete", True)],
+                "seconds": [timed[True], timed[False]]})
+        step("a wildcard search", text._find_replace_impl, "z?ta", None, True, False, True,
+             check=lambda o: o.get("matches") == 3000)
+        began = time.monotonic()
+        out = step("all 3,000 replaced in one call", text._find_replace_impl, "zeta", "omega", True,
+                   False, False, undo="Replace",
+                   check=lambda o: o.get("replaced") == 3000 and "complete" not in o
+                   and "warnings" not in o)
+        record("how long it took", True, {"seconds": round(time.monotonic() - began, 2)})
+        step("none is left", text._find_replace_impl, "zeta", None, True, False, False,
+             check=lambda o: o.get("matches") == 0)
+        step("the paragraphs read as replaced", text._find_replace_impl,
+             "alpha omega beta omega gamma omega 1000", None, True, False, False,
+             check=lambda o: o.get("matches") == 1)
+        if "error" not in out:
+            step("one undo takes the replacement back", edit._undo_impl, 1,
+                 check=lambda o: o.get("undone") == 1)
+            step("and every match is back", text._find_replace_impl, "zeta", None, True, False,
+                 False, check=lambda o: o.get("matches") == 3000)
+        after = step("text after the equation", text._find_replace_impl, "x^2", "x squared", True,
+                     False, False, undo="Replace",
+                     check=lambda o: o.get("replaced") == 1 and "warnings" not in o)
+        if after.get("paragraphs"):
+            step("lands where it was found", text._get_paragraphs_impl, after["paragraphs"][0],
+                 after["paragraphs"][0], False,
+                 check=lambda o: o["paragraphs"][0]["text"] == "Then x squared grows.")
+        step("close the document of many matches", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_mac_gap_steps() -> None:
+    """What Word for Mac's scripting lacks, through the VBA bridge there; on
+    Windows the same steps run over COM, so the answers can be compared."""
+    other = step("a document for the gaps", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("three paragraphs for the gaps", text._insert_paragraphs_impl,
+                    [{"text": "English and مرحبا بالعالم", "style": "Normal"},
+                     {"text": "Name\tValue", "style": "Normal"},
+                     {"text": "Plain.", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        if backend.IS_MACOS and not _bridge_usable():
+            record("the bridge loads", False, {"vba_bridge": "off"})
+            return
+        step("complex-script size and an underline color", formatting._format_text_impl, 1, None,
+             None, {"size_complex_script": 16, "underline": "single", "underline_color": "#C00000"},
+             undo="Format text",
+             check=lambda o: "warnings" not in o
+             and o["read_back"][0].get("size_complex_script") == 16
+             and o["read_back"][0].get("underline_color") == "#C00000")
+        step("right to left", formatting._set_paragraph_format_impl, 1, None,
+             {"direction": "right_to_left"}, undo="Paragraph format",
+             check=lambda o: "warnings" not in o
+             and o["paragraphs"][0].get("direction") == "right_to_left")
+        step("tab stops", formatting._set_paragraph_format_impl, 2, None,
+             {"tab_stops": [{"position": 72, "alignment": "left", "leader": "none"},
+                            {"position": 200, "alignment": "right", "leader": "dots"}]},
+             undo="Paragraph format",
+             check=lambda o: "warnings" not in o
+             and [t["position"] for t in o["paragraphs"][0]["tab_stops"]] == [72, 200]
+             and o["paragraphs"][0]["tab_stops"][1]["leader"] == "dots")
+        step("tab stops cleared", formatting._set_paragraph_format_impl, 2, None,
+             {"tab_stops": []}, undo="Paragraph format",
+             check=lambda o: o["paragraphs"][0]["tab_stops"] == [])
+        name = f"MCP Gap {time.strftime('%H%M%S')}"
+        step("a new paragraph style", formatting._set_style_impl, name, "paragraph", "Normal", None,
+             {"size": 11, "size_complex_script": 13, "color": "#1F4E79"},
+             {"space_after": 6, "tab_stops": [{"position": 36, "alignment": "center",
+                                               "leader": "none"}]},
+             True, 5, None, None, undo="Define style",
+             check=lambda o: o.get("created") is True and "warnings" not in o)
+        step("it reads back with what the Mac could not read before", formatting._get_style_impl,
+             name, check=lambda o: (o["style"]["quick_style"], o["style"]["priority"]) == (True, 5)
+             and o["style"]["font"]["size_complex_script"] == 13
+             and [t["position"] for t in o["style"]["paragraph"]["tab_stops"]] == [36]
+             and o["style"]["base_style"] is not None)
+        step("a new character style", formatting._set_style_impl, name + " C", "character", None,
+             None, {"bold": True}, None, None, None, None, None, undo="Define style",
+             check=lambda o: o.get("created") is True and "warnings" not in o)
+        step("the paragraph style applied", formatting._apply_style_impl, 3, None, name, False,
+             undo="Apply style", check=lambda o: "warnings" not in o)
+        table = step("a table of two columns", tables._insert_table_impl,
+                     [["a", "b"], ["c", "d"]], 3, None, None, None, None, None, None, None, None,
+                     undo="Insert table")
+        if "error" not in table:
+            n = table["table"]
+            step("a column in the middle", tables._insert_columns_impl, n, 1, None, [["x", "y"]],
+                 undo="Insert table columns",
+                 check=lambda o: o["columns"] == 3 and o["cells"] == [["a", "x", "b"], ["c", "y", "d"]])
+            step("two at the right", tables._insert_columns_impl, n, None, 2, None,
+                 undo="Insert table columns",
+                 check=lambda o: o["columns"] == 5 and o["inserted_columns"] == [4, 5])
+        step("a box", shapes._insert_shape_impl, "rectangle", 1, 120.0, 60.0,
+             {"name": "Gap box", "text": "Inside", "alt_text": "A blue box",
+              "vertical_anchor": "middle"}, undo="Insert shape",
+             check=lambda o: "warnings" not in o and o.get("alt_text") == "A blue box")
+        step("its alt text changed", shapes._set_shape_impl, "Gap box",
+             {"alt_text": "日本語の説明 𠮷"}, undo="Change shape",
+             check=lambda o: "warnings" not in o and o.get("alt_text") == "日本語の説明 𠮷")
+        step("listed with its alt text", shapes._list_shapes_impl, 1, 50,
+             check=lambda o: [s.get("alt_text") for s in o["shapes"]] == ["日本語の説明 𠮷"])
+        step("close the document of the gaps", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
 def run_link_steps() -> None:
     """Hyperlinks to addresses and bookmarks, and the user's own bookmarks."""
     other = step("a document for links", documents._create_document_impl, None, None)
@@ -765,7 +1268,7 @@ def run_shape_steps() -> None:
              check=lambda o: o["count"] == 5 and o["shapes"][0]["name"] == "First"
              and o["shapes"][0]["text"] == "中身\nSecond"
              and [s["index"] for s in o["shapes"]] == sorted(s["index"] for s in o["shapes"]))
-        if not backend.IS_MACOS:
+        if not backend.IS_MACOS or _bridge_usable():
             step("alternative text", change, "Line", {"alt_text": "矢印"}, undo="Change shape",
                  check=lambda o: o["alt_text"] == "矢印")
             step("vertical anchor", change, "First", {"vertical_anchor": "top"},
@@ -1027,13 +1530,13 @@ def run_picture_and_page_steps(folder: Path) -> None:
                                  for t in o["tables"]))
         step("the reference followed", text._get_paragraphs_impl, at + 1, at + 1, False,
              undo=None, check=lambda o: "Figure 2" in o["paragraphs"][0]["text"])
-    step("a header", page._set_header_footer_impl, "header", "Live check", "primary", 1, "right",
+    step("a header", page._set_header_footer_impl, "header", "Live check", "primary", 1, "right", None,
          undo="Set header or footer", check=lambda o: o["reads"] == "Live check")
     step("a footer with the page number and count", page._set_header_footer_impl, "footer",
-         "Page {page} of {pages}", "primary", 1, "center", undo="Set header or footer",
+         "Page {page} of {pages}", "primary", 1, "center", None, undo="Set header or footer",
          check=lambda o: re.fullmatch(r"Page \d+ of \d+", o["reads"]))
     step("a first page of its own", page._set_header_footer_impl, "header", "", "first", 1, None,
-         undo="Set header or footer", check=lambda o: o["reads"] == "")
+         None, undo="Set header or footer", check=lambda o: o["reads"] == "")
     step("roman page numbers from 5", page._set_page_numbers_impl, 1, "lowercase_roman", 5, None,
          undo="Set page numbering",
          check=lambda o: o["style"] == "lowercase_roman" and o["start_at"] == 5)
@@ -1112,6 +1615,165 @@ def _active_document():
 _common.MAC_IMPLS[_active_document.__name__] = _active_document  # a Mac-only check
 
 
+def run_table_more_steps() -> None:
+    """Borders one side at a time, sorting and splitting a cell, in a document
+    that is not the active one."""
+    other = step("a document for borders and sorting", documents._create_document_impl, None,
+                 None)
+    if "error" in other:
+        return
+    front = step("another document in front", documents._create_document_impl, None, None)
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("a paragraph before the table", text._insert_paragraphs_impl,
+                    [{"text": "Prices", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        t = step("a table with a heading row", tables._insert_table_impl,
+                 [["Item", "Qty"], ["Pear", "10"], ["Apple", "3"], ["Fig", "25"], ["日本", "7"]],
+                 1, None, 1, None, None, None, None, None, None, undo="Insert table")
+        if "error" in t:
+            return
+        n = t["table"]
+        step("a double rule under the heading row", tables._format_cells_impl, n, 1, 1, 1, None,
+             None, None, None, None, None, None, None,
+             {"bottom": {"style": "double", "width": 1.5, "color": "#1F4E79"}},
+             undo="Format table cells",
+             check=lambda o: "warnings" not in o
+             and o["first_cell_reads"]["borders"]["bottom"] == {
+                 "style": "double", "width": 1.5, "color": "#1F4E79"})
+        step("no lines between the body rows, a box around them", tables._format_cells_impl, n, 2,
+             None, 1, None, None, None, None, None, None, None, None,
+             {"inside_horizontal": {"style": "none"}, "left": {"style": "single", "width": 0.5},
+              "right": {"style": "single", "width": 0.5},
+              "bottom": {"style": "single", "width": 0.5}},
+             undo="Format table cells",
+             check=lambda o: "warnings" not in o and o["cells"] == 8
+             and "bottom" not in o["first_cell_reads"]["borders"]
+             and o["first_cell_reads"]["borders"]["left"]["width"] == 0.5)
+        step("sorted by quantity, largest first, the heading row kept", tables._sort_table_impl, n,
+             [{"column": 2, "order": "descending", "kind": "number"}], None, undo="Sort table",
+             check=lambda o: o["header_kept"] is True
+             and [r[0] for r in o["cells"]] == ["Item", "Fig", "Pear", "日本", "Apple"])
+        step("sorted by name", tables._sort_table_impl, n,
+             [{"column": 1, "order": "ascending", "kind": "text"}], True, undo="Sort table",
+             check=lambda o: o["cells"][0] == ["Item", "Qty"]
+             and [r[0] for r in o["cells"]][1:4] == ["Apple", "Fig", "Pear"])
+        step("a column past the last is refused", tables._sort_table_impl, n,
+             [{"column": 5, "order": "ascending", "kind": "text"}], None,
+             check=lambda o: "There is no column 5" in o.get("error", ""))
+        step("a cell split in two", tables._split_cell_impl, n, 2, 2, 1, 2,
+             undo="Split table cell",
+             check=lambda o: len(o["cells"][1]) == 3 and len(o["cells"][2]) == 2)
+        step("a cell that is not there is refused", tables._split_cell_impl, n, 9, 1, 1, 2,
+             check=lambda o: "There is no cell at row 9" in o.get("error", ""))
+        step("and nothing was split", tables._get_table_impl, n, 1,
+             check=lambda o: [len(r) for r in o["cells"]] == [2, 3, 2, 2, 2])
+        step("bold across the uneven rows skips what is not there", tables._format_cells_impl, n,
+             1, None, 3, 3, None, True, None, None, None, None, None, None,
+             undo="Format table cells",
+             check=lambda o: o["cells"] == 1 and "no cell of their own" in o["warnings"][0])
+        if backend.IS_MACOS and "error" not in front:
+            step("the other document is still the active one", _active_document,
+                 check=lambda o: o["name"] == front["name"])
+        step("close the document for borders and sorting", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+    if "error" not in front:
+        token = call_document.set(front["full_name"])
+        try:
+            step("close the document in front", documents._close_document_impl, False)
+        finally:
+            call_document.reset(token)
+
+
+def run_style_numbering_steps() -> None:
+    """A style's numbering: read it, join another style's at a level, take it off."""
+    other = step("a document for numbered styles", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("headings at three levels", text._insert_paragraphs_impl,
+                    [{"text": "Intro", "style": "Heading 1"}, {"text": "Part", "style": "Heading 2"},
+                     {"text": "Deep", "style": "Heading 3"}, {"text": "Body.", "style": "Normal"},
+                     {"text": "Next", "style": "Heading 1"}], None, None)
+        if "error" in made:
+            return
+        step("Heading 1 and 2 numbered", lists._apply_list_impl, 1, 1,
+             [{"level": 1, "number_style": "arabic", "number_format": "%1.",
+               "linked_style": "Heading 1"},
+              {"level": 2, "number_style": "arabic", "number_format": "%1.%2",
+               "linked_style": "Heading 2"},
+              {"level": 3, "number_style": "arabic", "number_format": "%1.%2.%3"}], None, False,
+             undo="Apply list")
+        if backend.IS_MACOS and not _bridge_usable():
+            record("the bridge loads", False, {"vba_bridge": "off"})
+            return
+        step("Heading 1's numbering reads back", formatting._get_style_impl, "Heading 1",
+             check=lambda o: o["style"]["numbering"]["level"] == 1
+             and o["style"]["numbering"]["number_format"] == "%1."
+             and len(o["style"]["numbering"]["linked_styles"]) == 2)
+        step("Heading 3 has none yet", formatting._get_style_impl, "Heading 3",
+             check=lambda o: o["style"].get("numbering") is None)
+        step("Heading 3 joins Heading 1's numbering at level 3", formatting._set_style_impl,
+             "Heading 3", None, None, None, None, None, None, None, None, None,
+             {"like": "Heading 1", "level": 3}, undo="Define style",
+             check=lambda o: "warnings" not in o and o["style"]["numbering"]["level"] == 3
+             and o["style"]["numbering"]["number_format"] == "%1.%2.%3"
+             and len(o["style"]["numbering"]["linked_styles"]) == 3)
+        step("its paragraph is numbered 1.1.1", lists._get_list_impl, 3,
+             check=lambda o: o["paragraph"]["list_string"] == "1.1.1")
+        step("its numbering taken off", formatting._set_style_impl, "Heading 3", None, None, None,
+             None, None, None, None, None, None, "none", undo="Define style",
+             check=lambda o: "warnings" not in o and o["style"].get("numbering") is None)
+        step("and the paragraph with it", lists._get_list_impl, 3,
+             check=lambda o: o["paragraph"]["list"] == "none")
+        step("the headings around it keep theirs", lists._get_list_impl, 5,
+             check=lambda o: o["paragraph"]["list_string"] == "2.")
+        step("joining a style that has no numbering is refused", formatting._set_style_impl,
+             "Heading 3", None, None, None, None, None, None, None, None, None,
+             {"like": "Body Text", "level": 2},
+             check=lambda o: "has no numbering to join" in o.get("error", ""))
+        step("close the document for numbered styles", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_style_language_steps() -> None:
+    """A style's language: set it, turn checking off and on again."""
+    other = step("a document for a style's language", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("a quote to set the language of", text._insert_paragraphs_impl,
+                    [{"text": "Colour and behaviour.", "style": "Normal"},
+                     {"text": "A quote in British English.", "style": "Quote"}], None, None)
+        if "error" in made:
+            return
+        step("Quote's language reads", formatting._get_style_impl, "Quote",
+             check=lambda o: "language" in o["style"] and "east_asian_language" in o["style"])
+        step("Quote in British English, its East Asian text in Japanese", formatting._set_style_impl,
+             "Quote", None, None, None, None, None, None, None, None, None, None, "english_uk",
+             "japanese", undo="Define style",
+             check=lambda o: "warnings" not in o
+             and (o["style"]["language"], o["style"]["east_asian_language"]) == ("english_uk",
+                                                                                 "japanese"))
+        step("checking off for Quote", formatting._set_style_impl, "Quote", None, None, None, None,
+             None, None, None, None, None, None, "no_proofing", None, undo="Define style",
+             check=lambda o: "warnings" not in o and o["style"]["language"] == "no_proofing")
+        step("and on again, in American English", formatting._set_style_impl, "Quote", None, None,
+             None, None, None, None, None, None, None, None, "english_us", None, undo="Define style",
+             check=lambda o: "warnings" not in o and o["style"]["language"] == "english_us")
+        step("a character style takes a language too", formatting._set_style_impl, "Strong",
+             None, None, None, None, None, None, None, None, None, None, "english_uk", None,
+             undo="Define style", check=lambda o: o["style"].get("language") == "english_uk")
+        step("close the document for a style's language", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
 def run_table_steps() -> None:
     t = step("table at the end, bold heading row, numbers on the right",
              tables._insert_table_impl,
@@ -1159,7 +1821,7 @@ def run_table_steps() -> None:
          check=lambda o: o["header_rows"] == 1 and o["cells"][4][0] == "Fig")
     step("delete a row", tables._delete_rows_impl, n, 4, None, undo="Delete table rows",
          check=lambda o: o["rows"] == 4)
-    if backend.IS_MACOS:
+    if backend.IS_MACOS and not _bridge_usable():
         step("adding a column is refused on the Mac", tables._insert_columns_impl, n, 1,
              None, [["Unit", "kg", "kg", "kg"]], undo="Insert table columns",
              check=lambda o: "cannot add a column" in o.get("error", ""))
