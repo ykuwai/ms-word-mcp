@@ -366,3 +366,16 @@ listing stops after 40 s and says where to go on.
 
 Because a search matches text marked deleted, a replacement run a second time
 would replace it again. The search leaves those matches out.
+
+## Tate-chu-yoko (Word 16, both platforms)
+
+Measured 2026-11-21; `run_tate_chu_yoko_steps` in `scripts/live_check.py`
+repeats it.
+
+| What | Windows | Mac |
+|---|---|---|
+| Where it is set | `Range.HorizontalInVertical` (WdHorizontalInVerticalType 0, 1, 2), not the Font | `text range`'s `horizontal in vertical` (`horizontal in vertical none`, `fit in line`, `resize line`) |
+| "12", "20", "15" in a vertical line, set across | Read back as set | Read back as set; on the page each sits upright and across in one character's place, while an unset "7" lies on its side |
+| With a font change in the same call | Both kept | Both kept |
+| Set back to none | Reads none; the text is unchanged | The same |
+

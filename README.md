@@ -176,7 +176,7 @@ Every member and constant is checked against Microsoft's documentation ([docs/re
 ### 🌏 Every Script
 
 - **Three fonts on all text** — Latin, East Asian and complex script are set separately
-- **East Asian layout** — spacing in grid lines, indents in character widths, line breaking rules, hanging punctuation, emphasis marks, vertical text and ruby (furigana) with `word_add_ruby`
+- **East Asian layout** — spacing in grid lines, indents in character widths, line breaking rules, hanging punctuation, emphasis marks, vertical text, tate-chu-yoko (numbers set across in vertical text, `word_format_text`'s `horizontal_in_vertical`) and ruby (furigana) with `word_add_ruby`
 - **List numbering** — full-width digits, ①, 一, ア, 가, א, α, а and more
 
 ### 🎨 Styles

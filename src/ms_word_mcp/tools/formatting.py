@@ -75,22 +75,57 @@ def font_readback(got: dict, spec: dict) -> dict:
 
 # -- character formatting -------------------------------------------------------
 
+#: Range.HorizontalInVertical (WdHorizontalInVerticalType): tate-chu-yoko, a
+#: few characters set across in vertical text. The Mac names are Word.sdef's.
+HORIZONTAL_IN_VERTICAL = {"none": 0, "fit_in_line": 1, "resize_line": 2}
+HORIZONTAL_IN_VERTICAL_MAC = {"none": "horizontal_in_vertical_none",
+                              "fit_in_line": "horizontal_in_vertical_fit_in_line",
+                              "resize_line": "horizontal_in_vertical_resize_line"}
+
+
+def across_answer(wanted: str | None, got) -> tuple[dict, list[str]]:
+    """The read-back of tate-chu-yoko, and a warning if Word did not take it."""
+    if wanted is None:
+        return {}, []
+    name = next((k for k, v in HORIZONTAL_IN_VERTICAL.items() if v == got), got)
+    if name == wanted:
+        return {"horizontal_in_vertical": name}, []
+    return {"horizontal_in_vertical": name}, [
+        f"horizontal_in_vertical reads back as {name!r}, not {wanted!r}: Word sets a few "
+        "characters across (tate-chu-yoko), such as a number in vertical text, not a "
+        "longer run."]
+
+
 class FormatTextInput(Target, P.FontSpec):
+    horizontal_in_vertical: Literal[tuple(HORIZONTAL_IN_VERTICAL)] | None = Field(  # type: ignore[valid-type]
+        None, description=(
+            "Tate-chu-yoko (縦中横): set the text across, upright, inside vertical text, as "
+            "a two-digit number in a vertical Japanese line. fit_in_line squeezes it into "
+            "one character's width; resize_line widens the line to fit it; none sets it "
+            "back. Give it with `match` for the characters to set across."))
+
     @model_validator(mode="after")
     def _something(self):
-        return _needs_something(self, P.FONT_NAMES, "formatting argument")
+        return _needs_something(self, (*P.FONT_NAMES, "horizontal_in_vertical"),
+                                "formatting argument")
 
 
-def _format_text_impl(start, end, match, font):
+def _format_text_impl(start, end, match, font, horizontal_in_vertical=None):
     doc = backend.word.document()
     spec = P.with_latin_extended(P.given(font, P.FONT_NAMES))
     ranges = _target_ranges(doc, start, end, match)
     warnings, readback = [], []
     for rng in ranges:
         refused = P.com_apply(rng.Font, P.FONT_PROPS, spec)
+        if horizontal_in_vertical is not None:
+            rng.HorizontalInVertical = HORIZONTAL_IN_VERTICAL[horizontal_in_vertical]
         got = P.com_read(rng.Font, P.FONT_PROPS)
         warnings += P.mismatches(spec, got, refused)
-        readback.append({"text": clean_text(rng.Text)[:80], **font_readback(got, spec)})
+        across, said = across_answer(horizontal_in_vertical, rng.HorizontalInVertical
+                                     if horizontal_in_vertical is not None else None)
+        warnings += said
+        readback.append({"text": clean_text(rng.Text)[:80], **font_readback(got, spec),
+                         **across})
     follow(doc, ranges[0])
     result = {"success": True, "ranges": len(ranges), "read_back": readback[:20]}
     if warnings:
@@ -470,7 +505,8 @@ def register(mcp) -> None:
         `match` inside them: fonts, size, bold, italic, underline style and
         color, color, strikethrough, super- and subscript, caps, hidden,
         character spacing, scaling, kerning, raised or lowered position,
-        Japanese emphasis dots, and the character grid.
+        Japanese emphasis dots, the character grid, and tate-chu-yoko (a few
+        characters set across in vertical text).
 
         Latin, East Asian and complex-script (right-to-left) text each have
         their own font; set the ones you mean. What was set is read back, and
@@ -479,7 +515,8 @@ def register(mcp) -> None:
         """
         p = params
         return await call(_format_text_impl, p.start, p.end, p.match,
-                          p.model_dump(include=set(P.FONT_NAMES)), undo="Format text")
+                          p.model_dump(include=set(P.FONT_NAMES)), p.horizontal_in_vertical,
+                          undo="Format text")
 
     @mcp.tool(name="word_set_paragraph_format",
               annotations=annotations("Paragraph format", WRITES))

@@ -764,7 +764,7 @@ TABS_ON_MAC = ("tab_stops was not applied: Word for Mac's scripting cannot make 
                "stops (measured: -1708). It works on Windows.")
 
 @mac_impl(formatting._format_text_impl)
-def format_text(start, end, match, font):
+def format_text(start, end, match, font, horizontal_in_vertical=None):
     doc = backend.word.document()
     spec = P.with_latin_extended(P.given(font, P.FONT_NAMES))
     start, end = _span(doc, start, end)
@@ -782,10 +782,19 @@ def format_text(start, end, match, font):
     for s, e in spans:
         rng = doc.create_range(start=s, end_=e)
         refused = P.mac_apply(rng.font_object, P.FONT_PROPS, spec)
+        across = {}
+        if horizontal_in_vertical is not None:
+            rng.horizontal_in_vertical.set(getattr(
+                _k(), formatting.HORIZONTAL_IN_VERTICAL_MAC[horizontal_in_vertical]))
+            have = _name(rng.horizontal_in_vertical.get())
+            code = next((formatting.HORIZONTAL_IN_VERTICAL[n] for n, v in
+                         formatting.HORIZONTAL_IN_VERTICAL_MAC.items() if v == have), have)
+            across, said = formatting.across_answer(horizontal_in_vertical, code)
+            warnings += said
         got = P.mac_read(rng.font_object, P.FONT_PROPS)
         warnings += P.mismatches(spec, got, refused)
         readback.append({"text": _clean(rng.content.get())[:80],
-                         **formatting.font_readback(got, spec)})
+                         **formatting.font_readback(got, spec), **across})
     _scroll(doc, *spans[0])
     out = {"success": True, "ranges": len(spans), "read_back": readback[:20]}
     if warnings:

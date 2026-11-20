@@ -260,6 +260,7 @@ def run_steps(path: str) -> None:
     run_picture_and_page_steps(Path(path).parent)
     run_review_steps()
     run_heading_number_steps()
+    run_tate_chu_yoko_steps()
     run_border_steps()
     run_note_steps()
     run_revision_steps()
@@ -336,6 +337,43 @@ def run_review_steps() -> None:
         step("the old reading is still there", text._get_paragraphs_impl, 9, 9, False,
              check=lambda o: [r["ruby"] for r in o["paragraphs"][0].get("ruby", [])] == ["かんじ"])
         step("close the document of the review's cases", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_tate_chu_yoko_steps() -> None:
+    """Numbers set across in vertical Japanese text (tate-chu-yoko)."""
+    other = step("a document for tate-chu-yoko", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("a line of Japanese with numbers", text._insert_paragraphs_impl,
+                    [{"text": "令和7年12月20日に、第15回の会を開く。", "style": "Normal"}],
+                    None, None)
+        if "error" in made:
+            return
+        step("vertical text", page._set_page_setup_impl, None,
+             {"text_direction": "vertical"}, undo="Set page setup")
+        step("12 set across, fitted to the line", formatting._format_text_impl, 1, None, "12", {},
+             "fit_in_line", undo="Format text",
+             check=lambda o: o.get("ranges") == 1 and "warnings" not in o
+             and o["read_back"][0].get("horizontal_in_vertical") == "fit_in_line")
+        step("20 and 15 across, the line widened", formatting._format_text_impl, 1, None, "20",
+             {}, "resize_line", undo="Format text",
+             check=lambda o: o["read_back"][0].get("horizontal_in_vertical") == "resize_line")
+        step("with a font change in the same call", formatting._format_text_impl, 1, None, "15",
+             {"bold": True}, "fit_in_line", undo="Format text",
+             check=lambda o: o["read_back"][0].get("horizontal_in_vertical") == "fit_in_line"
+             and o["read_back"][0].get("bold") is True)
+        step("a picture of the page", screen._get_page_image_impl, 1, None,
+             check=lambda o: o.get("page") == 1)
+        step("12 set back", formatting._format_text_impl, 1, None, "12", {}, "none",
+             undo="Format text",
+             check=lambda o: o["read_back"][0].get("horizontal_in_vertical") == "none")
+        step("the text is as it was", text._get_paragraphs_impl, 1, 1, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "令和7年12月20日に、第15回の会を開く。")
+        step("close the document for tate-chu-yoko", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
 
