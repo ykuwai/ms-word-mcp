@@ -441,3 +441,21 @@ def test_a_floating_picture_takes_a_full_path_and_floats():
         shapes.InsertFloatingPictureInput(path="a.png", index=1)
     with pytest.raises(ValidationError, match="word_insert_picture"):
         shapes.InsertFloatingPictureInput(path="/a.png", index=1, wrap="inline")
+
+
+def test_shapes_to_group_are_two_or_more_and_each_once():
+    from pydantic import ValidationError
+
+    assert shapes.GroupShapesInput(shapes=["A", 2], name="Pair").shapes == ["A", 2]
+    with pytest.raises(ValidationError):
+        shapes.GroupShapesInput(shapes=["A"])
+    with pytest.raises(ValidationError, match="named twice"):
+        shapes.GroupShapesInput(shapes=["A", "A"])
+    with pytest.raises(ValidationError, match="start at 1"):
+        shapes.GroupShapesInput(shapes=[0, 1])
+
+
+def test_ungrouping_says_which_shapes_came_out():
+    out = shapes.ungroup_answer("Pair", ["A", "B"], 3)
+    assert (out["ungrouped"], out["shapes"], out["count"]) == ("Pair", ["A", "B"], 3)
+    assert "not a group" in shapes.NOT_A_GROUP.format(name="C", kind="line")
