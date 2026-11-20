@@ -366,3 +366,18 @@ listing stops after 40 s and says where to go on.
 
 Because a search matches text marked deleted, a replacement run a second time
 would replace it again. The search leaves those matches out.
+
+## The view on Word for Mac (Word 16.114)
+
+Measured 2026-11-20; `run_view_steps` in `scripts/live_check.py` repeats it on
+both platforms.
+
+| What | Answer |
+|---|---|
+| `view type` set to `web view` | Web layout on screen (text the window's width), and read back as `online view`: Word.sdef gives both the code 0x025a0006 |
+| `normal view` and `draft view`; `page view` and `print view` | One code each pair (0x025a0001; 0x025a0003); Word answers either name |
+| `view type` set to `reading view` | Refused, error -1708; Word for Mac's Focus mode is not in its dictionary |
+| Fits in print view | `whole_page`, `page_width`, `text_width` each read back as set |
+| `whole_page` or `text_width` in draft view | Not taken: the fit reads back as it was |
+| A new document | Print view, at the zoom Word last used |
+

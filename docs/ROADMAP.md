@@ -118,8 +118,9 @@ Then, ordered roughly by what the owner stressed.
    figures, numbers with the chapter (2.1); splitting cells, sorting, table
    borders one side at a time.
 5. **Japanese typography, the rest.** Removing ruby outright, tate-chu-yoko.
-6. **View.** Zoom (percentage, page width, whole page), view type, follow
-   edits in a second window.
+6. ~~**View.**~~ Done: zoom, fits and view type (word_get_view, word_set_view),
+   and edits followed in a second window (View > New Window) while the first
+   stays where the user is.
 7. Shapes, the rest. Grouping; shapes in headers and footers; moving a shape to
    another paragraph.
 8. Adding sections (section breaks); a header of several paragraphs.

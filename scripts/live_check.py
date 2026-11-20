@@ -265,6 +265,7 @@ def run_steps(path: str) -> None:
     run_revision_steps()
     run_link_steps()
     run_shape_steps()
+    run_view_steps()
     run_floating_picture_steps(Path(path).parent)
     run_safety_steps(Path(path).parent)
     step("picture of page 1", screen._get_page_image_impl, 1, None,
@@ -660,6 +661,47 @@ def run_link_steps() -> None:
         step("a bookmark that is not there is refused", links._delete_bookmark_impl, "Whole",
              check=lambda o: "no bookmark named 'Whole'" in o["error"])
         step("close the document of links", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_view_steps() -> None:
+    """Zoom, fits and view types, in a document of its own."""
+    from ms_word_mcp.tools import view
+
+    other = step("a document for the view", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        step("some text to show", text._insert_paragraphs_impl,
+             [{"text": "A view. " * 60, "style": "Normal"}], None, None)
+        step("print view", view._set_view_impl, None, None, "print",
+             check=lambda o: o.get("view") == "print" and "warnings" not in o)
+        step("zoom 150", view._set_view_impl, 150, None, None,
+             check=lambda o: o.get("zoom") == 150 and o.get("fit") == "none")
+        for fit in ("whole_page", "page_width", "text_width"):
+            step(f"fit {fit}", view._set_view_impl, None, fit, None,
+                 check=lambda o, fit=fit: o.get("fit") == fit and "warnings" not in o)
+        step("back to a fixed zoom", view._set_view_impl, 90, None, None,
+             check=lambda o: o.get("zoom") == 90 and o.get("fit") == "none")
+        for kind in ("web", "draft", "outline", "print"):
+            step(f"{kind} view", view._set_view_impl, None, None, kind,
+                 check=lambda o, kind=kind: o.get("view") == kind and "warnings" not in o)
+        step("a whole page in draft view says it needs print view", view._set_view_impl,
+             None, "whole_page", "draft",
+             check=lambda o: "need print view" in " ".join(o.get("warnings", [])))
+        if backend.IS_MACOS:
+            step("reading view is refused on the Mac, saying why", view._set_view_impl, None, None,
+                 "reading", check=lambda o: "no reading view" in o.get("error", ""))
+        else:
+            step("reading view", view._set_view_impl, None, None, "reading",
+                 check=lambda o: o.get("view") == "reading")
+        step("print view again", view._set_view_impl, 100, None, "print",
+             check=lambda o: o.get("view") == "print" and o.get("zoom") == 100)
+        step("the view read back", view._get_view_impl,
+             check=lambda o: (o.get("view"), o.get("zoom")) == ("print", 100))
+        step("close the document for the view", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
 

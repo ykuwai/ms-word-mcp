@@ -18,6 +18,14 @@ from ._common import READ_ONLY, WRITES, Input, annotations, call, mac_impl
 VIEW_TYPES = {"print": 3, "web": 6, "draft": 1, "outline": 2, "reading": 7}
 VIEW_TYPES_MAC = {"print": "print_view", "web": "web_view", "draft": "draft_view",
                   "outline": "outline_view", "reading": "reading_view"}
+#: Word for Mac's other names for the same views: Word.sdef gives "online
+#: view" the code of "web view" (0x025a0006), "normal view" that of "draft
+#: view" and "page view" that of "print view", and Word answers the other name.
+MAC_SAME_VIEW = {"online_view": "web", "normal_view": "draft", "page_view": "print"}
+NO_READING_ON_MAC = (
+    "Word for Mac has no reading view to switch to from a script: it refuses it (error "
+    "-1708). Its Focus mode, the nearest, can only be turned on in Word. Use print, web, "
+    "draft or outline. Nothing was changed.")
 PAGE_FITS = {"none": 0, "whole_page": 1, "page_width": 2, "text_width": 3}
 PAGE_FITS_MAC = {"none": "page_fit_none", "whole_page": "page_fit_full_page",
                  "page_width": "page_fit_best_fit", "text_width": "page_fit_text_fit"}
@@ -30,7 +38,8 @@ class SetViewInput(Input):
         "Fit the page instead of a fixed zoom: page_width, whole_page (print "
         "view only), text_width, or none to keep a fixed zoom."))
     view: Literal[tuple(VIEW_TYPES)] | None = Field(None, description=(  # type: ignore[valid-type]
-        "print (page layout), web, draft, outline or reading."))
+        "print (page layout), web, draft, outline or reading (reading: Windows only; Word "
+        "for Mac refuses it)."))
 
     @model_validator(mode="after")
     def _something(self):
@@ -39,6 +48,12 @@ class SetViewInput(Input):
         if self.zoom is not None and self.fit not in (None, "none"):
             raise ValueError("Give zoom or fit, not both: a fit sets the zoom itself.")
         return self
+
+
+def fit_warning(fit: str, got: str) -> str:
+    return (f"The fit reads back as {got!r}"
+            + (" (whole_page and text_width need print view)."
+               if fit in ("whole_page", "text_width") else "."))
 
 
 def _window(doc):
@@ -78,8 +93,7 @@ def _set_view_impl(zoom, fit, view):
     if zoom is not None and got["zoom"] != zoom:
         warnings.append(f"The zoom reads back as {got['zoom']}%.")
     if fit is not None and got["fit"] != fit:
-        warnings.append(f"The fit reads back as {got['fit']!r}"
-                        + (" (whole_page needs print view)." if fit == "whole_page" else "."))
+        warnings.append(fit_warning(fit, got["fit"]))
     if warnings:
         result["warnings"] = warnings
     return result
@@ -94,7 +108,7 @@ def _mac_read(view) -> dict:
     vt = _name(view.view_type.get())
     pf = _name(zoom.page_fit.get())
     return {"view": next((k for k, v in VIEW_TYPES_MAC.items() if v == vt),
-                         "print" if vt == "page_view" else vt),
+                         MAC_SAME_VIEW.get(vt, vt)),
             "zoom": zoom.percentage.get(),
             "fit": next((k for k, v in PAGE_FITS_MAC.items() if v == pf), pf)}
 
@@ -107,6 +121,8 @@ def _mac_get_view():
 
 @mac_impl(_set_view_impl)
 def _mac_set_view(zoom, fit, view):
+    if view == "reading":
+        raise ValueError(NO_READING_ON_MAC)
     from appscript import k
 
     doc = backend.word.document()
@@ -126,7 +142,7 @@ def _mac_set_view(zoom, fit, view):
     if zoom is not None and got["zoom"] != zoom:
         warnings.append(f"The zoom reads back as {got['zoom']}%.")
     if fit is not None and got["fit"] != fit:
-        warnings.append(f"The fit reads back as {got['fit']!r}.")
+        warnings.append(fit_warning(fit, got["fit"]))
     if warnings:
         result["warnings"] = warnings
     return result
