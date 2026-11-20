@@ -298,7 +298,7 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | Alternative text | Yes | `alternative text` is not a property of `shape`; read answers missing value, set -1708 |
 | Vertical anchor, auto size, word wrap of a text frame | Yes | Unknown property or missing value |
 | Vertical text | `TextFrame.Orientation = 4` | `vertical east asian`, code 4; upright kana, Latin on its side ([shape-look](probes/shape_look.py)) |
-| Whether the text fits | `TextFrame.Overflowing` answered True for an empty shape and for two lines of 9 pt in a 60 pt high shape, so it is not used | `overflowing` agrees with the page; `has text` is true for an empty shape, so the text is read instead |
+| Whether the text fits | `TextFrame.Overflowing` answered True for an empty shape and for two lines of 9 pt in a 60 pt high shape, so it is not used | `overflowing` agrees with the page but for one thing: it counts the blank space after the last paragraph. A 150 x 60 pt rounded rectangle with a 2.5 pt outline and two 9 pt lines, all visible, answered true, and false with that space at 0; boxes 40 and 30 pt high, whose second line was cut off, answered true either way (16.114, 2026-11-20). So a true is asked again with that space at 0, and the space is put back. `has text` is true for an empty shape, so the text is read instead |
 | A line's text frame | Touching `TextRange` is refused, even to read | Read answers nothing |
 | Undo | One undo takes a new shape back (live check) | Two undos did not take a new shape back |
 | Document not active | Works, active document unchanged | Works, active document unchanged |
@@ -356,7 +356,8 @@ while no other document is open.
 | Accepting or rejecting one change | The ones after it renumber | The same |
 | `For Each` over changes that include a format change | Two format changes both answered `Index` 1 | Not seen |
 | `Range.Revisions.AcceptAll` | Works | Refused (-1708), so a change is accepted by number |
-| Making a comment | `Comments.Add`, with `Replies.Add`, `Done`, `DeleteRecursively` | `make new Word comment` ended the Word process, both `at` a range and `at` the document with `scope` as a property |
+| Making a comment | `Comments.Add`, with `Replies.Add`, `Done`, `DeleteRecursively` | `make new Word comment` ended the Word process, both `at` a range and `at` the document with `scope` as a property. Given `comment text` as well, `at` the document, it makes the comment (16.114, 2026-11-20: 0.08 s, author read back); without it, Word ended again (-609) |
+| The page picture of a document with comments or tracked changes | `Page.EnhMetaFileBits` draws the page without comments, the changes as accepted, at its full size | The PDF keeps the page size, shrinks the page to about two thirds and draws the comments and changes in a grey pane beside it, whatever the view or print options say (16.114, 2026-11-20). A new document given the original's `formatted text` (0.16 s), its last section's page setup, columns, text direction and headers carried over, its changes accepted and comments deleted, draws the same as Windows: the same pixels as the page without markup, but for the changed line. Setting the lines or characters a page turns on the document grid, so `layout mode` is set after them. A reference to the original by place (`documents[1]`) points at the copy once it is made |
 | Opening a file Word did not make | Opens | Word asks for access in a dialog of its own, and the Apple event times out (-1712) until someone answers |
 
 With 180 changes in a document of 200 paragraphs on the Mac, reading one paragraph
@@ -366,3 +367,41 @@ listing stops after 40 s and says where to go on.
 
 Because a search matches text marked deleted, a replacement run a second time
 would replace it again. The search leaves those matches out.
+
+## The VBA bridge (Word 16, both platforms)
+
+Measured 2026-11-20 on Word for Mac 16.114 and Word for Windows (Microsoft 365,
+x64), with `ms-word-mcp-bridge.dotm` built by Word for Windows from
+`backend/vba/WordMcpBridge.bas` (`scripts/build_vba_bridge.py`; Word's
+AccessVBOM is turned on for the build only and was unset before and after).
+`run_bridge_steps` in `scripts/live_check.py` repeats the comparisons.
+
+| What | Windows | Mac |
+|---|---|---|
+| Loading the template into a running Word | `AddIns.Add(path, Install=True)`, no prompt, also with macros set to "disable all without notification" (VBAWarnings 4) and "with notification" (2) | The scripting has no command that adds an add-in, and the Startup folder is read only as Word starts. `open` of the template makes a new document attached to it, whose macros run (automation security low); `AddIns.Add` in that macro makes the template global, and the document is closed. The app in front stays in front |
+| After Word restarts | Not loaded | Listed in the add-ins, not installed, macros not there (-1708); `delete` of the add-in takes it out of the list |
+| One request | `Application.Run("WordMcpRun", what, request)`, the answer as its value | `run VB macro` passes and answers nothing: a request file, the macro, an answer file, 8-35 ms |
+| A missing macro | A COM error | -1708 |
+| 200 paragraphs, `word_get_paragraphs` | 0.28 s against 8.1 s; with `detail` 0.30 s against 11.7 s. The answers are the same, field for field | 0.45 s against 6.9 s; with `detail` 0.53 s against 26.9 s. Text, style, level, tables and deletions the same |
+| `detail` on the Mac, the bridge against Apple Events | | A paragraph half bold: `bold` mixed (null), where Apple Events said false. A Heading 1 in its theme color: no color, as on Windows, where Apple Events said `#FFBF00`. Automatic color: no color, where Apple Events said `#000000`. `size_complex_script` given |
+| Comments | | `Replies.Add`, `Done` and `Ancestor` work; Apple Events then list a reply as a comment of its own. Marking a comment done marks its replies done. `delete` of a comment that has replies leaves it where it is (deleted 0); `DeleteRecursively` through the bridge takes it and its replies |
+| `word_find_replace`, 1,000 paragraphs holding 3,000 matches after an equation (`run_find_bridge_steps`) | Counted in 1.36 s, against 2,321 in 20 s that ran out of time; all 3,000 replaced in one call, 2.4 s; one Undo takes them back; the same paragraphs listed | Counted in 4.8 s, against 1,181 in 21.8 s that ran out of time (each match read back after the equation); all 3,000 replaced in one call, 7.4 s, and one Undo takes them back (`UndoRecord` inside the macro); a wildcard search works |
+| What Word for Mac's scripting lacks (`run_mac_gap_steps`) | Over COM, as before | Through the bridge's `Member` request: a complex-script size, an underline color, right to left, tab stops, a new paragraph or character style with `quick_style` and `priority`, table columns, a shape's alt text and vertical anchor, each read back as on Windows (17 of 17 steps, the same answers as Windows') |
+| `CallByName` in Word for Mac's VBA | | Works without arguments; with any, it fails (`Range(0, 5)`: error 1004; `Paragraphs.Item(1)`: overflow) and does not pass a value to set. The members the server calls with arguments (`Range`, `Item`, `Add`) and the properties it sets are named in the macro instead |
+| A table after a column is added through VBA | | `uniform` reads false (the new column has another width), and Apple Events then cannot reach the columns one by one; VBA's `Columns(i).Delete` can, as on Windows |
+
+## Table borders, sorting and splitting cells (Word 16, both platforms)
+
+Measured 2026-11-20 on Word for Mac 16.114 and Word for Windows (Microsoft 365);
+`run_table_more_steps` in `scripts/live_check.py` repeats them, in a document
+that is not the active one.
+
+| What | Windows | Mac |
+|---|---|---|
+| A cell's border on one side | `Cell.Borders(wdBorderBottom)` | `get border` of a cell, as of a paragraph |
+| Sorting | `Table.Sort` with up to three fields, `ExcludeHeader` | `table sort`, the same fields (`field number two`...) |
+| Splitting a cell | `Cell.Split(NumRows, NumColumns)` | `split cell`; the row then holds more cells and `uniform` reads false |
+| Sorting or splitting a document that is not the active one | It stays in the background | The same: the active document stays active |
+| A cell asked for at a row past the last | `Table.Cell(9, 1)` of a 5-row table answers a cell of row 5, which was split | The same, through `get cell from table`. The row and the cell's place in it are checked first, on both platforms |
+| A cell past the last of a shorter row (after a merge) | `Table.Cell` raises | `get cell from table` is refused (-1708); formatting a block skips that position, as on Windows |
+

@@ -193,14 +193,14 @@ class FontSpec(Input):
         "Font for Arabic, Hebrew and other right-to-left text."))
     size: float | None = Field(None, gt=0, le=1638, description="Points, Latin and East Asian.")
     size_complex_script: float | None = Field(None, gt=0, le=1638, description=(
-        "Points, complex-script text (Windows only)."))
+        "Points, complex-script text. On the Mac this needs ms-word-mcp's VBA bridge."))
     bold: bool | None = None
     bold_complex_script: bool | None = None
     italic: bool | None = None
     italic_complex_script: bool | None = None
     underline: Literal[tuple(UNDERLINES)] | None = None  # type: ignore[valid-type]
     underline_color: Trimmed | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description=(
-        "#RRGGBB (Windows only)."))
+        "#RRGGBB. On the Mac this needs ms-word-mcp's VBA bridge."))
     color: Trimmed | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description="#RRGGBB.")
     strikethrough: bool | None = None
     double_strikethrough: bool | None = None
@@ -269,10 +269,11 @@ class ParagraphSpec(Input):
     direction: Literal[tuple(DIRECTIONS)] | None = Field(None, description=(  # type: ignore[valid-type]
         "right_to_left for Arabic, Hebrew and other right-to-left paragraphs: "
         "punctuation and numbers then sit where those languages put them. "
-        "Windows only; Word for Mac's scripting has no reading order."))
+        "On the Mac this needs ms-word-mcp's VBA bridge: its scripting has no reading "
+        "order."))
     tab_stops: list[TabStop] | None = Field(None, max_length=20, description=(
         "The paragraphs' own tab stops, replacing the ones they have; [] clears "
-        "them. Windows only for now."))
+        "them. On the Mac this needs ms-word-mcp's VBA bridge."))
     borders: ParagraphBorders | None = Field(None, description=(
         "Lines around the paragraphs, by side: {\"bottom\": {\"style\": \"single\", "
         "\"width\": 1.5, \"color\": \"#1F4E79\"}} for a rule under a heading."))
