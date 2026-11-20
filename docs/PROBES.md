@@ -366,3 +366,17 @@ listing stops after 40 s and says where to go on.
 
 Because a search matches text marked deleted, a replacement run a second time
 would replace it again. The search leaves those matches out.
+
+## Picture bullets (Word 16, both platforms)
+
+Measured 2026-11-21; `run_picture_bullet_steps` in `scripts/live_check.py`
+repeats it.
+
+| What | Windows | Mac |
+|---|---|---|
+| How | `ListLevel.ApplyPictureBullet(path)` | `apply picture bullet` on the `list level`, with the picture copied into Word's container |
+| On a new list template's level, as it comes (numbered) | | Answered without error; the list stayed numbered (`simple_numbering`) |
+| On a level made a bullet first (number format "•", style bullet) | | Taken: the paragraphs read as `picture_bullet` |
+| On the list's level after the template is on the paragraphs | | The same: taken only when that level is a bullet |
+| On the page | | The picture at the text's size before each item |
+

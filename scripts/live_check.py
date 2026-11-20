@@ -260,6 +260,7 @@ def run_steps(path: str) -> None:
     run_picture_and_page_steps(Path(path).parent)
     run_review_steps()
     run_heading_number_steps()
+    run_picture_bullet_steps()
     run_border_steps()
     run_note_steps()
     run_revision_steps()
@@ -336,6 +337,40 @@ def run_review_steps() -> None:
         step("the old reading is still there", text._get_paragraphs_impl, 9, 9, False,
              check=lambda o: [r["ruby"] for r in o["paragraphs"][0].get("ruby", [])] == ["かんじ"])
         step("close the document of the review's cases", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_picture_bullet_steps() -> None:
+    """A bulleted list whose bullet is a picture."""
+    other = step("a document for picture bullets", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    picture = Path(tempfile.mkdtemp()) / "live-bullet.png"
+    rows = [b"".join(b"\xd0\x30\x30" if (x - 8) ** 2 + (y - 8) ** 2 <= 49 else b"\xff\xff\xff"
+                     for x in range(16)) for y in range(16)]
+    picture.write_bytes(screen.png(16, 16, rows))
+    try:
+        made = step("three items", text._insert_paragraphs_impl,
+                    [{"text": t, "style": "Normal"} for t in ("Apples", "Pears", "Plums")],
+                    None, None)
+        if "error" in made:
+            return
+        step("a red dot as their bullet", lists._apply_list_impl, 1, 3,
+             [{"level": 1, "picture": str(picture)}], None, False, undo="Apply list",
+             check=lambda o: [p.get("list") for p in o.get("paragraphs", [])]
+             == ["picture_bullet"] * 3 and "warnings" not in o)
+        step("each reads as a picture bullet", lists._get_list_impl, 2,
+             check=lambda o: o["paragraph"].get("list") == "picture_bullet")
+        step("the text is as it was", text._get_paragraphs_impl, 1, 3, False,
+             check=lambda o: [p["text"] for p in o["paragraphs"]] == ["Apples", "Pears", "Plums"])
+        step("a picture that is not there is refused", lists._apply_list_impl, 1, 1,
+             [{"level": 1, "picture": str(picture) + ".missing"}], None, False,
+             check=lambda o: "There is no picture" in o.get("error", ""))
+        step("a picture of the page", screen._get_page_image_impl, 1, None,
+             check=lambda o: o.get("page") == 1)
+        step("close the document for picture bullets", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
 

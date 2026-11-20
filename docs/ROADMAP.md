@@ -110,7 +110,8 @@ Then, ordered roughly by what the owner stressed.
 
 1. **Styles, the rest.** Tab stops on the Mac, list linkage, the language
    of a style; creating a style on the Mac (through VBA).
-2. **Lists, the rest.** Picture bullets.
+2. ~~**Lists, the rest.**~~ Picture bullets are done (`picture` in a level of
+   word_apply_list).
 3. **Equations, the rest.** Inline equations inside a paragraph,
    chapter-style numbers (2.1) with STYLEREF, cross-references to equations,
    editing an equation in place.

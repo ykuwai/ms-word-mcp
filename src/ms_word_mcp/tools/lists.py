@@ -10,9 +10,10 @@ list as it was (docs/reference/word-object-model.md, D.1).
 
 from __future__ import annotations
 
+import os
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from .. import backend
 from . import _props as P
@@ -66,6 +67,10 @@ class LevelSpec(Input):
         "level's and so on. \"%1.\" gives 1., \"(%1)\" gives (1), \"%1.%2\" "
         "gives 1.1, and words around it go in as they are (\"Chapter %1\", "
         "\"第%1章\")."))
+    picture: Trimmed | None = Field(None, min_length=1, description=(
+        "Full path of a picture to use as the bullet (PNG, JPEG, GIF...): a picture "
+        "bullet, at the size of the text. Makes the level a bulleted one, instead of "
+        "`bullet`."))
     font: BulletFont | None = None
     number_position: float | None = Field(None, ge=-1584, le=1584, description=(
         "Where the bullet or number sits, points from the margin."))
@@ -82,8 +87,19 @@ class LevelSpec(Input):
         "A paragraph style whose paragraphs take this level, such as \"Heading 1\" "
         "for numbered headings."))
 
+    @field_validator("picture")
+    @classmethod
+    def _full_path(cls, value):
+        if value is not None and not (os.path.isabs(value) or value[1:3] in (":\\", ":/")):
+            raise ValueError("picture must be a full path.")
+        return value
+
     @model_validator(mode="after")
     def _bullet_or_number(self):
+        if self.picture is not None and any(
+                v is not None for v in (self.bullet, self.number_style, self.number_format)):
+            raise ValueError("A picture bullet is the level's bullet: give `picture` without "
+                             "`bullet`, `number_style` or `number_format`.")
         if self.bullet is not None and self.number_style not in (None, "bullet"):
             raise ValueError("Give `bullet` for a bulleted level or `number_style` for "
                              "a numbered one, not both.")
@@ -113,10 +129,33 @@ class ApplyListInput(Input):
         return self
 
 
+#: What a picture bullet's level is made first: Word for Mac takes a picture
+#: only on a level that is a bullet already (measured: on a numbered level
+#: `apply picture bullet` answered without error and the list stayed numbered).
+PICTURE_LEVEL = {"number_style": "bullet", "number_format": "\u2022"}
+
+
 def _level_spec_defaults(spec: dict) -> dict:
+    if spec.get("picture") is not None:
+        return {**spec, **PICTURE_LEVEL}
     if spec.get("bullet") is not None:
         spec = {**spec, "number_style": "bullet", "number_format": spec["bullet"]}
     return spec
+
+
+NO_PICTURE = "There is no picture at '{path}'. Nothing was changed."
+
+
+def picture_warnings(specs: list[dict], kinds: list[str]) -> list[str]:
+    """A warning when a level given a picture did not come out as picture bullets
+    (`kinds`: the list kind of the paragraphs at each such level)."""
+    # In a list of several levels Word calls the list outline numbering, and a
+    # bulleted level reads as a bullet (list_kind).
+    if any(s.get("picture") for s in specs) and kinds and \
+            not any(k in ("picture_bullet", "bullet") for k in kinds):
+        return ["The paragraphs read back as a list of kind "
+                f"{kinds[0]!r}, not picture bullets: Word did not take the picture."]
+    return []
 
 
 def _set_level(doc, lv, spec: dict, refused: dict) -> None:
@@ -141,6 +180,13 @@ def _set_level(doc, lv, spec: dict, refused: dict) -> None:
     for key, member, value in steps:
         if value is not None:
             put(key, member, value)
+    if spec.get("picture") is not None:  # on the bullet the steps made
+        try:
+            lv.ApplyPictureBullet(spec["picture"])
+        except Exception as exc:  # noqa: BLE001 - reported to the caller
+            from ._common import error_text
+
+            refused[f"level {spec['level']} picture"] = error_text(exc)
     for key, member in (("number_position", "NumberPosition"),
                         ("text_position", "TextPosition"),
                         ("tab_position", "TabPosition"), ("start_at", "StartAt")):
@@ -215,6 +261,9 @@ def describe_paragraph_list(index, p) -> dict:
 
 
 def _apply_list_impl(start, end, levels, level, continue_previous):
+    for s in levels:
+        if s.get("picture") and not os.path.isfile(s["picture"]):
+            raise ValueError(NO_PICTURE.format(path=s["picture"]))
     doc = backend.word.document()
     start, end = check_span(doc, start, end)
     specs = [_level_spec_defaults(dict(s)) for s in levels]
@@ -235,6 +284,7 @@ def _apply_list_impl(start, end, levels, level, continue_previous):
     used = paragraph(doc, start).Range.ListFormat.ListTemplate
     described = [describe_level(used.ListLevels.Item(s["level"])) for s in specs]
     warnings = [f"{key} was refused: {why}" for key, why in refused.items()]
+    warnings += picture_warnings(specs, [p.get("list") for p in out])
     for spec, got in zip(specs, described):
         for key in ("bullet", "number_format", "number_position", "text_position",
                     "start_at"):

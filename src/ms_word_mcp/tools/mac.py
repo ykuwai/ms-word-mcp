@@ -1207,6 +1207,18 @@ def _mac_set_level(doc, lv, spec, refused) -> None:
     for key, prop, value in steps:
         if value is not None:
             put(key, prop, value)
+    if spec.get("picture") is not None:  # on the bullet the steps made
+        from .references import _mac_stage
+
+        # Word for Mac reads files in its own container only, as for pictures.
+        staged, copied = _mac_stage(spec["picture"])
+        try:
+            lv.apply_picture_bullet(path=staged)
+        except Exception as exc:  # noqa: BLE001 - reported to the caller
+            refused[f"level {spec['level']} picture"] = str(exc).splitlines()[0]
+        finally:
+            if copied:
+                os.remove(staged)
     for key in ("number_position", "text_position", "tab_position", "start_at"):
         if spec.get(key) is not None:
             put(key, key, spec[key])
@@ -1229,6 +1241,9 @@ def _mac_set_level(doc, lv, spec, refused) -> None:
 
 @mac_impl(lists._apply_list_impl)
 def apply_list(start, end, levels, level, continue_previous):
+    for s in levels:
+        if s.get("picture") and not os.path.isfile(s["picture"]):
+            raise ValueError(lists.NO_PICTURE.format(path=s["picture"]))
     k = _k()
     doc = backend.word.document()
     start, end = _span(doc, start, end)
@@ -1254,6 +1269,7 @@ def apply_list(start, end, levels, level, continue_previous):
     used = doc.paragraphs[start].text_object.list_format.list_template
     described = [_mac_describe_level(used.list_levels[s["level"]], s["level"]) for s in specs]
     warnings = [f"{key} was refused: {why}" for key, why in refused.items()]
+    warnings += lists.picture_warnings(specs, [p.get("list") for p in out])
     for spec, got in zip(specs, described):
         for key in ("bullet", "number_format", "number_position", "text_position",
                     "start_at"):
