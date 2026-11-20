@@ -108,3 +108,31 @@ def test_spaces_of_a_caption_and_of_ruby_are_kept():
     assert references.InsertCaptionInput(after=1, separator=" ").separator == " "
     assert references.InsertCaptionInput(after=1, label=" 図 ").label == "図"
     assert page.RubySpan(text="a b ", ruby=" x").text == "a b "
+
+
+def test_the_words_with_ruby_are_found_in_a_paragraphs_fields():
+    codes = [' EQ \\* jc2 \\* "Font:游明朝" \\* hps10 \\o\\ad(\\s\\up 9(かんじ),漢字)',
+             " PAGE ", ' EQ \\* jc2 \\* hps10 \\o\\ad(\\s\\up 9(よ),読)']
+    assert page.rubies_in(codes) == ["漢字", "読"]
+    assert page.rubies_in([" PAGE "]) == []
+
+
+def test_removing_ruby_says_which_words_had_none():
+    out = page.removed_answer({"index": 1, "text": "漢字"}, ["漢字", "仮名"], ["漢字"])
+    assert out["removed"] == ["漢字"] and "仮名 had no ruby" in out["warnings"][0]
+    assert "warnings" not in page.removed_answer({}, ["漢字"], ["漢字"])
+
+
+def test_words_to_remove_ruby_from_are_not_empty():
+    from pydantic import ValidationError
+
+    assert page.RemoveRubyInput(index=1).texts is None
+    with pytest.raises(ValidationError, match="none is empty"):
+        page.RemoveRubyInput(index=1, texts=[" "])
+
+
+def test_words_to_take_ruby_off_are_put_in_the_order_they_come():
+    text = "漢字と仮名と漢字。"
+    assert page.in_text_order(text, ["仮名", "漢字"]) == ["漢字", "仮名"]
+    assert page.in_text_order(text, ["漢字", "仮名", "漢字"]) == ["漢字", "仮名", "漢字"]
+    assert page.in_text_order(text, ["ない", "仮名"]) == ["仮名", "ない"]

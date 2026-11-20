@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <strong>Real-time Microsoft Word control on Windows and macOS —<br>an MCP server with <!--tools-->84<!--/tools--> tools that works in the document beside you.</strong>
+  <strong>Real-time Microsoft Word control on Windows and macOS —<br>an MCP server with <!--tools-->85<!--/tools--> tools that works in the document beside you.</strong>
 </p>
 
 ---
@@ -176,7 +176,7 @@ Every member and constant is checked against Microsoft's documentation ([docs/re
 ### 🌏 Every Script
 
 - **Three fonts on all text** — Latin, East Asian and complex script are set separately
-- **East Asian layout** — spacing in grid lines, indents in character widths, line breaking rules, hanging punctuation, emphasis marks, vertical text and ruby (furigana) with `word_add_ruby`
+- **East Asian layout** — spacing in grid lines, indents in character widths, line breaking rules, hanging punctuation, emphasis marks, vertical text and ruby (furigana) with `word_add_ruby`, taken off again with `word_remove_ruby`
 - **List numbering** — full-width digits, ①, 一, ア, 가, א, α, а and more
 
 ### 🎨 Styles

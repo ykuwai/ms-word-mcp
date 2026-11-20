@@ -260,6 +260,7 @@ def run_steps(path: str) -> None:
     run_picture_and_page_steps(Path(path).parent)
     run_review_steps()
     run_heading_number_steps()
+    run_remove_ruby_steps()
     run_border_steps()
     run_note_steps()
     run_revision_steps()
@@ -336,6 +337,44 @@ def run_review_steps() -> None:
         step("the old reading is still there", text._get_paragraphs_impl, 9, 9, False,
              check=lambda o: [r["ruby"] for r in o["paragraphs"][0].get("ruby", [])] == ["かんじ"])
         step("close the document of the review's cases", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_remove_ruby_steps() -> None:
+    """Ruby taken off some words, then off all of them."""
+    other = step("a document for removing ruby", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("a paragraph of Japanese", text._insert_paragraphs_impl,
+                    [{"text": "漢字と仮名と読み方。", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        step("ruby on three words", page._add_ruby_impl, 1,
+             [{"text": "漢字", "ruby": "かんじ"}, {"text": "仮名", "ruby": "かな"},
+              {"text": "読", "ruby": "よ"}], "center", None, undo="Add ruby",
+             check=lambda o: len(o.get("ruby", [])) == 3)
+        step("one word's taken off", page._remove_ruby_impl, 1, ["仮名"], undo="Remove ruby",
+             check=lambda o: o.get("removed") == ["仮名"] and "warnings" not in o
+             and [r["text"] for r in o.get("ruby", [])] == ["漢字", "読"]
+             and o.get("text") == "漢字と仮名と読み方。")
+        step("a word without ruby is said to have none", page._remove_ruby_impl, 1,
+             ["仮名", "漢字"], undo="Remove ruby",
+             check=lambda o: o.get("removed") == ["漢字"]
+             and "仮名 had no ruby" in " ".join(o.get("warnings", [])))
+        step("a word that is not there is refused, nothing taken off", page._remove_ruby_impl, 1,
+             ["ない", "読"], check=lambda o: "Nothing was changed" in o.get("error", ""))
+        step("the rest taken off", page._remove_ruby_impl, 1, None, undo="Remove ruby",
+             check=lambda o: o.get("removed") == ["読"] and not o.get("ruby")
+             and o.get("text") == "漢字と仮名と読み方。")
+        step("no ruby left to take off", page._remove_ruby_impl, 1, None,
+             check=lambda o: "has no ruby" in o.get("error", ""))
+        step("the paragraph reads as plain text", text._get_paragraphs_impl, 1, 1, False,
+             check=lambda o: o["paragraphs"][0]["text"] == "漢字と仮名と読み方。"
+             and not o["paragraphs"][0].get("ruby"))
+        step("close the document for removing ruby", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
 

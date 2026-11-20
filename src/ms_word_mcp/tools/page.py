@@ -16,16 +16,17 @@ which Word stores as an EQ field: the text it covers then reads as a single
 from __future__ import annotations
 
 import re
+from collections import Counter
 from contextlib import contextmanager
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .. import backend
 from ._common import READ_ONLY, WRITES, Input, annotations, call, error_text, follow, mac_impl, mac_with_active
 from ._word import (
     ALIGNMENTS, ALIGNMENT_NAMES, clean_text, locate_spans, paragraph, paragraph_info,
-    ruby_to_drop)
+    ruby_of, ruby_to_drop, with_ruby)
 
 WD_FIELD_EMPTY = -1
 ORIENTATIONS = {"portrait": 0, "landscape": 1}  # WdOrientation
@@ -356,6 +357,50 @@ def _saying_what_was_taken_off(words: list[str]):
                          "then: read the paragraph, and add them again.") from exc
 
 
+class RemoveRubyInput(Input):
+    index: int = Field(..., ge=1, description="The paragraph.")
+    texts: list[str] | None = Field(None, min_length=1, max_length=100, description=(
+        "The words to take the readings off, as they stand in the paragraph: "
+        "[\"漢字\"]. A word written twice is named twice to take both off. Leave out to "
+        "take off every reading in the paragraph."))
+
+    @field_validator("texts")
+    @classmethod
+    def _words(cls, value):
+        if value is not None and any(not t or not t.strip() for t in value):
+            raise ValueError("Each of `texts` is a word that has ruby: none is empty.")
+        return value
+
+
+NO_RUBY = "Paragraph {index} has no ruby. Nothing was changed."
+
+
+def rubies_in(codes: list[str]) -> list[str]:
+    """The words with ruby among a paragraph's field codes, in order."""
+    return [got[0] for got in (ruby_of(c) for c in codes) if got]
+
+
+def in_text_order(text: str, words: list[str]) -> list[str]:
+    """The words in the order they come in `text`, the paragraph's text with
+    its ruby words in place: taking readings off asks no order of its caller.
+    A word named twice takes its next place; one not there goes last, to be
+    refused as word_add_ruby refuses it."""
+    places, taken = [], {}
+    for w in words:
+        at = text.find(w, taken.get(w, 0))
+        taken[w] = (at + len(w)) if at >= 0 else taken.get(w, 0)
+        places.append(at if at >= 0 else len(text) + 1)
+    return [w for _, w in sorted(zip(places, words), key=lambda x: x[0])]
+
+
+def removed_answer(info: dict, texts: list[str], removed: list[str]) -> dict:
+    out = {"success": True, **info, "removed": removed}
+    left = Counter(texts) - Counter(removed)
+    if left:
+        out["warnings"] = [f"{', '.join(sorted(left.elements()))} had no ruby to take off."]
+    return out
+
+
 def _drop_ruby(doc, p, spans) -> list[str]:
     """Turn the ruby of the spans' text, if it has any, back into plain text.
 
@@ -405,6 +450,22 @@ def _add_ruby_impl(index, spans, alignment, size):
     p = paragraph(doc, index)
     follow(doc, p.Range)
     return {"success": True, **paragraph_info(index, p)}
+
+
+def _remove_ruby_impl(index, texts):
+    doc = backend.word.document()
+    p = paragraph(doc, index)
+    fields = p.Range.Fields
+    have = rubies_in([fields.Item(i).Code.Text for i in range(1, fields.Count + 1)])
+    if not have:
+        raise ValueError(NO_RUBY.format(index=index))
+    plain, _ = with_ruby(clean_text(p.Range.Text),
+                         [fields.Item(i).Code.Text for i in range(1, fields.Count + 1)])
+    wanted = have if texts is None else in_text_order(plain, texts)
+    removed = _drop_ruby(doc, p, [{"text": t} for t in wanted])
+    p = paragraph(doc, index)
+    follow(doc, p.Range)
+    return removed_answer(paragraph_info(index, p), wanted, removed)
 
 
 # -- Mac -------------------------------------------------------------------------------
@@ -677,6 +738,27 @@ def _mac_add_ruby(index, spans, alignment, size):
     return {"success": True, **m._info(doc, index)}
 
 
+@mac_impl(_remove_ruby_impl)
+def _mac_remove_ruby(index, texts):
+    from appscript import k
+
+    from . import mac as m
+
+    doc = backend.word.document()
+    m._para(doc, index)
+    rng = doc.paragraphs[index].text_object
+    codes = [rng.fields[i].field_code.content.get()
+             for i in range(1, int(rng.count(each=k.field)) + 1)]
+    have = rubies_in(codes)
+    if not have:
+        raise ValueError(NO_RUBY.format(index=index))
+    plain, _ = with_ruby(clean_text(rng.content.get()), codes)
+    wanted = have if texts is None else in_text_order(plain, texts)
+    removed = _mac_drop_ruby(doc, index, [{"text": t} for t in wanted])
+    m._scroll(doc, *m._bounds(doc, index))
+    return removed_answer(m._info(doc, index), wanted, removed)
+
+
 # -- tools -----------------------------------------------------------------------------
 
 def register(mcp) -> None:
@@ -716,6 +798,13 @@ def register(mcp) -> None:
         p = params
         return await call(_set_page_numbers_impl, p.section, p.style, p.start_at,
                           p.continue_previous, undo="Set page numbering")
+
+    @mcp.tool(name="word_remove_ruby", annotations=annotations("Remove ruby", WRITES))
+    async def word_remove_ruby(params: RemoveRubyInput) -> str:
+        """Take ruby (furigana) off words of a paragraph, or off all of it: the
+        words stay, as plain text. Answers which words lost their readings."""
+        p = params
+        return await call(_remove_ruby_impl, p.index, p.texts, undo="Remove ruby")
 
     @mcp.tool(name="word_add_ruby", annotations=annotations("Add ruby", WRITES))
     async def word_add_ruby(params: AddRubyInput) -> str:

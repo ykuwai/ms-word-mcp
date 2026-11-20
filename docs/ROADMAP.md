@@ -117,7 +117,8 @@ Then, ordered roughly by what the owner stressed.
 4. **Figures and tables, the rest.** A list of
    figures, numbers with the chapter (2.1); splitting cells, sorting, table
    borders one side at a time.
-5. **Japanese typography, the rest.** Removing ruby outright, tate-chu-yoko.
+5. **Japanese typography, the rest.** Tate-chu-yoko. (Removing ruby outright is
+   done: word_remove_ruby.)
 6. **View.** Zoom (percentage, page width, whole page), view type, follow
    edits in a second window.
 7. Shapes, the rest. Grouping; shapes in headers and footers; moving a shape to
