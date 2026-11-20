@@ -496,6 +496,68 @@ class FakeNotes:
         return note
 
 
+class FakeComment:
+    """A comment: the text it is about (its scope), its own text in the comments'
+    story, and for a reply, the comment it answers (Ancestor)."""
+
+    def __init__(self, comments, start, end, text, ancestor=None):
+        self.comments, self.start, self.end, self.text = comments, start, end, text
+        self.Ancestor = ancestor
+        self.Author, self.Initial = "Office User", "OU"
+        self.Date = datetime(2026, 11, 20, 9, 30)
+        self.Done = False
+        self.Replies = SimpleNamespace(Add=self._reply)
+
+    @property
+    def Scope(self):
+        return FakeRange(self.comments.doc, self.start, self.end)
+
+    @property
+    def Range(self):
+        """Where its text sits in the comments' story: one place per comment."""
+        return SimpleNamespace(Text=self.text, Start=self.comments.ordered().index(self) * 100)
+
+    def _reply(self, scope, text):
+        reply = FakeComment(self.comments, scope.Start, scope.End, text, ancestor=self)
+        self.comments.items.append(reply)
+        return reply
+
+    def DeleteRecursively(self):
+        for other in list(self.comments.items):
+            if other.Ancestor is self:
+                other.DeleteRecursively()
+        self.comments.items.remove(self)
+
+
+class FakeComments:
+    """Word's order: by where the text they are about starts, a reply after its
+    comment and the replies before it."""
+
+    def __init__(self, doc):
+        self.doc = doc
+        self.items = []
+
+    def ordered(self):
+        def key(c):
+            root = c
+            while root.Ancestor is not None:
+                root = root.Ancestor
+            return (root.start, self.items.index(root), c.Ancestor is not None, self.items.index(c))
+        return sorted(self.items, key=key)
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def Item(self, number):
+        return self.ordered()[number - 1]
+
+    def Add(self, rng, text):
+        comment = FakeComment(self, rng.Start, rng.End, text)
+        self.items.append(comment)
+        return comment
+
+
 class FakeHyperlink:
     def __init__(self, links, rng, address, sub):
         self.links, self.Range, self._address, self.SubAddress = links, rng, address, sub
@@ -808,6 +870,7 @@ class FakeDocument:
         self.InlineShapes = FakeInlineShapes(self)
         self.Footnotes = FakeNotes(self)
         self.Endnotes = FakeNotes(self)
+        self.Comments = FakeComments(self)
         self.Hyperlinks = FakeHyperlinks()
         self.Bookmarks = FakeBookmarks()
         self.Name = name

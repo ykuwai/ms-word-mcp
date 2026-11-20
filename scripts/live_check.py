@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from ms_word_mcp import backend  # noqa: E402
 from ms_word_mcp.backend import call_document  # noqa: E402
 from ms_word_mcp.tools import (  # noqa: E402
-    _common, documents, edit, equations, fields, formatting, links, lists, notes, page,
+    _common, comments, documents, edit, equations, fields, formatting, links, lists, notes, page,
     references, revisions, screen, shapes, tables, text)
 
 results: list[tuple[str, bool]] = []
@@ -262,6 +262,7 @@ def run_steps(path: str) -> None:
     run_heading_number_steps()
     run_border_steps()
     run_note_steps()
+    run_comment_steps()
     run_revision_steps()
     run_link_steps()
     run_shape_steps()
@@ -588,6 +589,62 @@ def run_note_steps() -> None:
         step("and the deleted mark is gone", text._get_paragraphs_impl, 1, 1, False,
              check=lambda o: o["paragraphs"][0]["text"] == "Alpha beta gamma.\x02")
         step("close the document of notes", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_comment_steps() -> None:
+    """Comments: what they are about, their order, replies and done, deleting."""
+    other = step("a document for comments", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("two paragraphs for comments", text._insert_paragraphs_impl,
+                    [{"text": "Alpha beta gamma.", "style": "Normal"},
+                     {"text": "日本語の本文 𠮷 です。", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        step("a comment on a whole paragraph", comments._add_comment_impl, 2, "コメント 𠮷", None,
+             undo="Add comment",
+             check=lambda o: (o["number"], o["index"], o["on"], o["text"], o["count"])
+             == (1, 2, "日本語の本文 𠮷 です。", "コメント 𠮷", 1) and o["author"])
+        step("a comment on some text takes number 1", comments._add_comment_impl, 1, "Which beta?",
+             "beta", undo="Add comment",
+             check=lambda o: (o["number"], o["index"], o["on"], o["text"]) == (1, 1, "beta", "Which beta?"))
+        step("the commented text reads as it was", text._get_paragraphs_impl, 1, 2, False,
+             check=lambda o: [p["text"] for p in o["paragraphs"]]
+             == ["Alpha beta gamma.", "日本語の本文 𠮷 です。"])
+        step("the comments in order", comments._list_comments_impl, 1, 100,
+             check=lambda o: [(c["number"], c["index"], c["on"], c["text"]) for c in o["comments"]]
+             == [(1, 1, "beta", "Which beta?"), (2, 2, "日本語の本文 𠮷 です。", "コメント 𠮷")]
+             and all(c["date"] for c in o["comments"]))
+        step("one comment at a time says what follows", comments._list_comments_impl, 1, 1,
+             check=lambda o: len(o["comments"]) == 1 and "start=2" in o["more"])
+        step("text that is not there is refused", comments._add_comment_impl, 1, "no", "nowhere",
+             check=lambda o: "is not in paragraph 1" in o["error"])
+        step("a comment that is not there is refused", comments._delete_comments_impl, [9], False,
+             check=lambda o: "There is no comment 9" in o["error"])
+        if backend.IS_MACOS:
+            step("a reply says it works on Windows only", comments._reply_to_comment_impl, 1, "x",
+                 check=lambda o: "no replies" in o["error"])
+            step("done says it works on Windows only", comments._resolve_comment_impl, 1, True,
+                 check=lambda o: "no done state" in o["error"])
+        else:
+            step("a reply follows its comment", comments._reply_to_comment_impl, 1, "Agreed",
+                 undo="Reply to comment",
+                 check=lambda o: (o["number"], o["reply_to"], o["text"], o["count"]) == (2, 1, "Agreed", 3))
+            step("a comment is marked done", comments._resolve_comment_impl, 1, True,
+                 undo="Resolve comment", check=lambda o: o["done"] is True)
+            step("deleting a comment takes its reply", comments._delete_comments_impl, [1], False,
+                 undo="Delete comments",
+                 check=lambda o: (o["deleted"], o["left"]) == (2, 1) and "replies" in o["note"])
+        step("every comment goes", comments._delete_comments_impl, None, True,
+             undo="Delete comments", check=lambda o: o["left"] == 0)
+        step("and the text is as it was", text._get_paragraphs_impl, 1, 2, False,
+             check=lambda o: [p["text"] for p in o["paragraphs"]]
+             == ["Alpha beta gamma.", "日本語の本文 𠮷 です。"])
+        step("close the document of comments", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
 
