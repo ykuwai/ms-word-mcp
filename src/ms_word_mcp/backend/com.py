@@ -52,6 +52,22 @@ def describe_com_error(exc: BaseException) -> str:
     return str(strerror or exc)
 
 
+def names_of(doc) -> tuple[str, str]:
+    """A document's Name and FullName.
+
+    Exporting a document never saved to a PDF leaves Word answering an empty
+    Name and FullName for it until it is closed (measured, Word 365); its
+    window keeps the caption, "Document1", which then stands in for both."""
+    name, full_name = doc.Name, doc.FullName
+    if not name and not full_name:
+        try:
+            caption = doc.Windows.Item(1).Caption if doc.Windows.Count else ""
+        except Exception:  # noqa: BLE001 - no window: the empty name stays
+            caption = ""
+        name = full_name = caption
+    return name, full_name
+
+
 class ComWord(Worker):
     """The worker, connected to Word over COM."""
 
@@ -166,10 +182,7 @@ class ComWord(Worker):
     def open_documents(self) -> list[OpenDocument]:
         app = self.get_app()
         docs = app.Documents
-        return [
-            OpenDocument(i, docs.Item(i).Name, docs.Item(i).FullName)
-            for i in range(1, docs.Count + 1)
-        ]
+        return [OpenDocument(i, *names_of(docs.Item(i))) for i in range(1, docs.Count + 1)]
 
     def document(self):
         """The Document this call works on. Worker thread only.

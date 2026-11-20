@@ -12,6 +12,7 @@ import time
 from pydantic import Field, model_validator
 
 from .. import backend
+from ..backend.com import names_of
 from ._common import DESTRUCTIVE, READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow
 from .shapes import leading_anchors
 from ._word import (
@@ -33,8 +34,8 @@ def _get_document_info_impl():
     setup = doc.PageSetup
     return {
         "success": True,
-        "name": doc.Name,
-        "full_name": doc.FullName,
+        "name": names_of(doc)[0],
+        "full_name": names_of(doc)[1],
         "saved": bool(doc.Saved),
         "paragraphs": doc.Paragraphs.Count,
         "pages": doc.ComputeStatistics(WD_STATISTIC_PAGES),

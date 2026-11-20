@@ -912,8 +912,69 @@ def open_document(path, read_only, visible):
             "note": "This document is now the target of calls without `document`."}
 
 
+def _mac_save_pdf(app, doc, path, from_page, to_page, markup):
+    """Word for Mac's PDF, as it will print unless `markup`, of some pages or all.
+
+    Its PDF of a document with comments or tracked changes shrinks each page
+    beside a pane that draws them (screen.py), so without `markup` such a
+    document is exported from a copy without them. Word for Mac exports every
+    page, so a range is taken out of that PDF afterwards."""
+    from . import screen
+
+    k = _k()
+    source, active = doc, None
+    marked = int(doc.count(each=k.Word_comment)) or int(doc.count(each=k.revision))
+    if marked and not markup:
+        active = screen._mac_active_name(app)
+        source = screen._mac_without_markup(app, doc)
+    staged = path if from_page is None else path + ".all.pdf"
+    try:
+        source.save_as(file_name=staged, file_format=k.format_PDF)
+    finally:
+        if source is not doc:
+            screen._mac_close_copy(app, source, active)
+    if from_page is None:
+        return None
+    try:
+        pages = documents.check_pages(from_page, to_page, pdf_page_count(staged))
+        keep_pdf_pages(staged, path, pages)
+    finally:
+        os.remove(staged)
+    return pages
+
+
+def pdf_page_count(path) -> int:
+    import Quartz
+    from Foundation import NSURL
+
+    document = Quartz.CGPDFDocumentCreateWithURL(NSURL.fileURLWithPath_(path))
+    if document is None:
+        raise RuntimeError("Word answered without error, but its PDF cannot be read.")
+    return int(Quartz.CGPDFDocumentGetNumberOfPages(document))
+
+
+def keep_pdf_pages(source, target, pages) -> None:
+    """Copy pages first..last of one PDF into another, and count what landed."""
+    import Quartz
+    from Foundation import NSURL
+
+    document = Quartz.CGPDFDocumentCreateWithURL(NSURL.fileURLWithPath_(source))
+    context = Quartz.CGPDFContextCreateWithURL(NSURL.fileURLWithPath_(target), None, None)
+    try:
+        for number in range(pages[0], pages[1] + 1):
+            page = Quartz.CGPDFDocumentGetPage(document, number)
+            box = Quartz.CGPDFPageGetBoxRect(page, Quartz.kCGPDFMediaBox)
+            Quartz.CGContextBeginPage(context, box)
+            Quartz.CGContextDrawPDFPage(context, page)
+            Quartz.CGContextEndPage(context)
+    finally:
+        Quartz.CGPDFContextClose(context)
+    if pdf_page_count(target) != pages[1] - pages[0] + 1:
+        raise RuntimeError("The pages asked for did not all reach the PDF.")
+
+
 @mac_impl(documents._save_document_as_impl)
-def save_document_as(path, overwrite):
+def save_document_as(path, overwrite, from_page=None, to_page=None, markup=False):
     if os.path.exists(path) and not overwrite:
         raise ValueError(f"'{path}' already exists. Pass overwrite=true to replace it.")
     folder = os.path.dirname(path)
@@ -924,9 +985,18 @@ def save_document_as(path, overwrite):
     doc = word.document()
     ext = os.path.splitext(path)[1].lower()
     own = _full(doc)
-    doc.save_as(file_name=path, file_format=getattr(k, SAVE_K[ext]))
+    if ext == ".pdf":
+        pages = _mac_save_pdf(word.get_app(), doc, path, from_page, to_page, markup)
+    else:
+        doc.save_as(file_name=path, file_format=getattr(k, SAVE_K[ext]))
     if not os.path.exists(path):
         raise RuntimeError(f"Word answered without error, but there is no file at '{path}'.")
+    if ext == ".pdf":
+        result = {"success": True, "path": path, "bytes": os.path.getsize(path), "document": own,
+                  "markup": markup}
+        if pages is not None:
+            result["pages"] = list(pages)
+        return result
     if ext != ".pdf":
         from ..backend.documents import full_name_key
 
