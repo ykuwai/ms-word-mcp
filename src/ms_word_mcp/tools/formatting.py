@@ -271,6 +271,10 @@ def _describe_style(s) -> dict:
             pass
     if kind == "paragraph":
         out["linked"] = _linked(s)
+        try:
+            out["numbering"] = _style_list(s)
+        except Exception:  # noqa: BLE001 - described without it
+            pass
         for key, member in (("base_style", "BaseStyle"),
                             ("next_style", "NextParagraphStyle")):
             try:
@@ -312,6 +316,51 @@ def _get_style_impl(style):
     return {"success": True, "style": _describe_style(resolve_style(doc, style))}
 
 
+class StyleNumbering(Input):
+    like: Trimmed = Field(..., min_length=1, description=(
+        "A numbered style whose numbering this style joins: \"Heading 1\" once the "
+        "headings are numbered (word_apply_list with linked_style)."))
+    level: int = Field(..., ge=1, le=9, description="The list level this style takes.")
+
+
+def style_list(level: int, levels: list[tuple]) -> dict:
+    """A style's numbering: its level, how that level's number is written, and
+    the style each level of the list is linked to. `levels` holds (index,
+    NumberStyle, NumberFormat, LinkedStyle) for the list's levels."""
+    from .lists import NUMBER_STYLES
+
+    out = {"level": level}
+    for index, number_style, number_format, _ in levels:
+        if index == level:
+            out["number_style"] = next((k for k, v in NUMBER_STYLES.items()
+                                        if v == number_style), number_style)
+            out["number_format"] = number_format
+    out["linked_styles"] = {str(index): linked for index, _, _, linked in levels if linked}
+    return out
+
+
+def _style_list(s) -> dict | None:
+    """The style's numbering over COM, or None when it has none."""
+    template = s.ListTemplate
+    if template is None:
+        return None
+    levels = template.ListLevels
+    return style_list(s.ListLevelNumber, [
+        (i, lv.NumberStyle, lv.NumberFormat, lv.LinkedStyle or None)
+        for i, lv in ((i, levels.Item(i)) for i in range(1, levels.Count + 1))])
+
+
+def numbering_warnings(numbering, got: dict | None, name: str) -> list[str]:
+    if numbering is None:
+        return []
+    if numbering == "none":
+        return [] if got is None else [f"The style still has numbering: {got}."]
+    if got is None or got.get("level") != numbering["level"]:
+        return [f"The style reads back at list level {(got or {}).get('level')}, "
+                f"not {numbering['level']}."]
+    return []
+
+
 class SetStyleInput(Input):
     style: Trimmed = Field(..., min_length=1, description=(
         STYLE_NAME_HELP + " With `create`, the name of the new style."))
@@ -333,18 +382,23 @@ class SetStyleInput(Input):
     no_space_between_same_style: bool | None = Field(None, description=(
         "Paragraph styles: drop the space before and after between paragraphs of "
         "this style (\"Don't add space between paragraphs of the same style\")."))
+    numbering: StyleNumbering | Literal["none"] | None = Field(None, description=(
+        "Paragraph styles: join another style's numbering at a level, as a heading "
+        "style of your own joins Heading 1-3 at level 4 ({\"like\": \"Heading 1\", "
+        "\"level\": 4}), or \"none\" to take the style's numbering off."))
 
     @model_validator(mode="after")
     def _consistent(self):
         if self.create == "character" and self.paragraph is not None:
             raise ValueError("A character style has no paragraph formatting.")
         if self.create == "character" and (self.next_style or self.automatically_update
-                                           or self.no_space_between_same_style):
-            raise ValueError("next_style, automatically_update and "
-                             "no_space_between_same_style apply to paragraph styles.")
+                                           or self.no_space_between_same_style
+                                           or self.numbering):
+            raise ValueError("next_style, automatically_update, no_space_between_same_style "
+                             "and numbering apply to paragraph styles.")
         if self.create is None and all(getattr(self, f) is None for f in (
                 "base_style", "next_style", "font", "paragraph", "quick_style", "priority",
-                "automatically_update", "no_space_between_same_style")):
+                "automatically_update", "no_space_between_same_style", "numbering")):
             raise ValueError("Give something to set, or `create` to make the style.")
         return self
 
@@ -384,7 +438,8 @@ def _start_plain(doc, s, kind, base_style) -> None:
 
 
 def _set_style_impl(style, create, base_style, next_style, font, paragraph, quick_style,
-                    priority, automatically_update, no_space_between_same_style):
+                    priority, automatically_update, no_space_between_same_style,
+                    numbering=None):
     doc = backend.word.document()
     existing = _find_style(doc, style)
     if create:
@@ -400,8 +455,19 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
     kind = _STYLE_TYPES.get(s.Type, s.Type)
     if paragraph and kind != "paragraph":
         raise ValueError(f"'{style}' is a {kind} style, which has no paragraph formatting.")
+    if numbering is not None and kind != "paragraph":
+        raise ValueError(f"'{style}' is a {kind} style, which takes no numbering.")
+    if numbering not in (None, "none"):
+        like = resolve_style(doc, numbering["like"])
+        if like.ListTemplate is None:
+            raise ValueError(f"'{numbering['like']}' has no numbering to join. Number it "
+                             "first: word_apply_list with linked_style on its level.")
 
     refused = {}
+    if numbering == "none":
+        s.LinkToListTemplate(None)
+    elif numbering is not None:
+        s.LinkToListTemplate(like.ListTemplate, numbering["level"])
     # A style just created already has its base (_start_plain); setting it
     # again is left out, since that is the one step the measured clean path
     # (scripts/probes/windows_style_steps.py) does not take.
@@ -457,6 +523,7 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
     warnings += P.mismatches(para_spec, described.get("paragraph", {}), para_refused)
     warnings += _tab_mismatch(para_spec, described.get("paragraph", {}))
     warnings += P.border_mismatches(para_spec, described.get("paragraph", {}))
+    warnings += numbering_warnings(numbering, described.get("numbering"), style)
     result = {"success": True, "created": bool(create), "style": described}
     if warnings:
         result["warnings"] = warnings
@@ -536,4 +603,6 @@ def register(mcp) -> None:
             p.font.model_dump() if p.font else None,
             p.paragraph.model_dump() if p.paragraph else None,
             p.quick_style, p.priority, p.automatically_update,
-            p.no_space_between_same_style, undo="Define style")
+            p.no_space_between_same_style,
+            p.numbering.model_dump() if isinstance(p.numbering, StyleNumbering) else p.numbering,
+            undo="Define style")
