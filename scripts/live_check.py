@@ -23,8 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from ms_word_mcp import backend  # noqa: E402
 from ms_word_mcp.backend import call_document  # noqa: E402
 from ms_word_mcp.tools import (  # noqa: E402
-    _common, documents, edit, equations, fields, formatting, links, lists, notes, page,
-    references, revisions, screen, shapes, tables, text)
+    _common, checks, comments, documents, edit, equations, fields, formatting, links, lists, notes, page,
+    references, revisions, screen, selection, shapes, tables, text)
 
 results: list[tuple[str, bool]] = []
 
@@ -262,6 +262,10 @@ def run_steps(path: str) -> None:
     run_heading_number_steps()
     run_border_steps()
     run_note_steps()
+    run_comment_steps()
+    run_check_steps()
+    run_section_steps()
+    run_selection_steps()
     run_revision_steps()
     run_link_steps()
     run_shape_steps()
@@ -588,6 +592,206 @@ def run_note_steps() -> None:
         step("and the deleted mark is gone", text._get_paragraphs_impl, 1, 1, False,
              check=lambda o: o["paragraphs"][0]["text"] == "Alpha beta gamma.\x02")
         step("close the document of notes", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_comment_steps() -> None:
+    """Comments: what they are about, their order, replies and done, deleting."""
+    other = step("a document for comments", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("two paragraphs for comments", text._insert_paragraphs_impl,
+                    [{"text": "Alpha beta gamma.", "style": "Normal"},
+                     {"text": "日本語の本文 𠮷 です。", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        step("a comment on a whole paragraph", comments._add_comment_impl, 2, "コメント 𠮷", None,
+             undo="Add comment",
+             check=lambda o: (o["number"], o["index"], o["on"], o["text"], o["count"])
+             == (1, 2, "日本語の本文 𠮷 です。", "コメント 𠮷", 1) and o["author"])
+        step("a comment on some text takes number 1", comments._add_comment_impl, 1, "Which beta?",
+             "beta", undo="Add comment",
+             check=lambda o: (o["number"], o["index"], o["on"], o["text"]) == (1, 1, "beta", "Which beta?"))
+        step("the commented text reads as it was", text._get_paragraphs_impl, 1, 2, False,
+             check=lambda o: [p["text"] for p in o["paragraphs"]]
+             == ["Alpha beta gamma.", "日本語の本文 𠮷 です。"])
+        step("the comments in order", comments._list_comments_impl, 1, 100,
+             check=lambda o: [(c["number"], c["index"], c["on"], c["text"]) for c in o["comments"]]
+             == [(1, 1, "beta", "Which beta?"), (2, 2, "日本語の本文 𠮷 です。", "コメント 𠮷")]
+             and all(c["date"] for c in o["comments"]))
+        step("a picture of the page with its comments", screen._get_page_image_impl, 1, None,
+             check=lambda o: o.get("width") == 1200 and os.path.getsize(o["path"]) > 5000)
+        step("and the comments are all still there", comments._list_comments_impl, 1, 100,
+             check=lambda o: o["count"] == 2)
+        step("one comment at a time says what follows", comments._list_comments_impl, 1, 1,
+             check=lambda o: len(o["comments"]) == 1 and "start=2" in o["more"])
+        step("text that is not there is refused", comments._add_comment_impl, 1, "no", "nowhere",
+             check=lambda o: "is not in paragraph 1" in o["error"])
+        step("a comment that is not there is refused", comments._delete_comments_impl, [9], False,
+             check=lambda o: "There is no comment 9" in o["error"])
+        if backend.IS_MACOS:
+            step("a reply says it works on Windows only", comments._reply_to_comment_impl, 1, "x",
+                 check=lambda o: "no replies" in o["error"])
+            step("done says it works on Windows only", comments._resolve_comment_impl, 1, True,
+                 check=lambda o: "no done state" in o["error"])
+        else:
+            step("a reply follows its comment", comments._reply_to_comment_impl, 1, "Agreed",
+                 undo="Reply to comment",
+                 check=lambda o: (o["number"], o["reply_to"], o["text"], o["count"]) == (2, 1, "Agreed", 3))
+            step("a comment is marked done", comments._resolve_comment_impl, 1, True,
+                 undo="Resolve comment", check=lambda o: o["done"] is True)
+            step("deleting a comment takes its reply", comments._delete_comments_impl, [1], False,
+                 undo="Delete comments",
+                 check=lambda o: (o["deleted"], o["left"]) == (2, 1) and "replies" in o["note"])
+        step("every comment goes", comments._delete_comments_impl, None, True,
+             undo="Delete comments", check=lambda o: o["left"] == 0)
+        step("and the text is as it was", text._get_paragraphs_impl, 1, 2, False,
+             check=lambda o: [p["text"] for p in o["paragraphs"]]
+             == ["Alpha beta gamma.", "日本語の本文 𠮷 です。"])
+        step("close the document of comments", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_check_steps() -> None:
+    """Spelling in the language the text is marked with, and the health check."""
+    other = step("a document for checks", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("paragraphs with slips", text._insert_paragraphs_impl,
+                    [{"text": "Thiss sentense has erors.", "style": "Normal"},
+                     {"text": "TODO: write the the end.", "style": "Normal"},
+                     {"text": "", "style": "Normal"}, {"text": "", "style": "Normal"},
+                     {"text": "日本語の本文です。", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        before = step("the language the text is checked in", checks._check_spelling_impl, 50)
+        print(f"      (marked as {before.get('language')} before word_set_language)")
+        step("marked as English", checks._set_language_impl, "english_us", 1, 4,
+             undo="Set language", check=lambda o: (o["language"], o["start"], o["end"])
+             == ("english_us", 1, 4))
+        step("the misspelled words, with their paragraphs", checks._check_spelling_impl, 50,
+             check=lambda o: {"Thiss", "sentense", "erors"} <= {w["word"] for w in o["misspelled"]}
+             and all(w["paragraphs"] == [1] for w in o["misspelled"] if w["word"] in ("Thiss", "erors"))
+             and o["language"] in ("english_us", "mixed"))
+        step("the Japanese paragraph is marked Japanese", checks._set_language_impl, "japanese", 5,
+             None, undo="Set language", check=lambda o: o["language"] == "japanese")
+        step("a span that is not there is refused", checks._set_language_impl, "japanese", 1, 99,
+             check=lambda o: "not all in the document" in o["error"])
+        step("the health check finds the slips", checks._check_document_impl, 100,
+             check=lambda o: {"placeholder", "repeated_word", "blank_paragraphs"} <= set(o["counts"])
+             and o["paragraphs"] == 5)
+        step("close the document of checks", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_section_steps() -> None:
+    """Section breaks, and a header of several paragraphs in each section."""
+    other = step("a document for sections", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("three paragraphs for sections", text._insert_paragraphs_impl,
+                    [{"text": "Chapter one.", "style": "Normal"},
+                     {"text": "Chapter two.", "style": "Normal"},
+                     {"text": "第三章。", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        step("a header of two paragraphs", page._set_header_footer_impl, "header", None, "primary",
+             1, None, [{"text": "Example Ltd", "alignment": "left"},
+                       {"text": "1 Main Street · page {page}", "alignment": "right"}],
+             undo="Set header or footer",
+             check=lambda o: o["paragraphs"] == 2
+             and re.fullmatch(r"Example Ltd\r1 Main Street · page \d+", o["reads"]))
+        step("a section break after paragraph 1", page._insert_section_break_impl, 1, "next_page",
+             undo="Insert section break",
+             check=lambda o: (o["section"], o["sections"], o["starts_at"], o["paragraphs"])
+             == (2, 2, 3, 4))
+        step("the paragraphs after it moved down by one", text._get_paragraphs_impl, 3, 4, False,
+             check=lambda o: [p["text"] for p in o["paragraphs"]] == ["Chapter two.", "第三章。"])
+        step("section 2 gets a header of its own", page._set_header_footer_impl, "header",
+             "Second part", "primary", 2, "center", None, undo="Set header or footer",
+             check=lambda o: o["reads"] == "Second part" and "its own header" in o["note"])
+        step("each section's header reads back", page._get_headers_footers_impl,
+             check=lambda o: len(o["sections"]) == 2
+             and o["sections"][0]["header"]["primary"]["text"].startswith("Example Ltd\r")
+             and o["sections"][1]["header"]["primary"]["text"] == "Second part")
+        step("a continuous break after the last paragraph", page._insert_section_break_impl, 4,
+             "continuous", undo="Insert section break",
+             check=lambda o: (o["section"], o["sections"], o["starts_at"], o["paragraphs"]) == (3, 3, 5, 5)
+             and "empty paragraph" in o["note"])
+        step("three sections in the page setup", page._get_page_setup_impl,
+             check=lambda o: len(o["sections"]) == 3)
+        step("a paragraph that is not there is refused", page._insert_section_break_impl, 99,
+             "next_page", check=lambda o: "There is no paragraph 99" in o["error"])
+        step("close the document of sections", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def _select(full_name, start, end):
+    """Select [start, end) in a document, as the user would: only the live check
+    moves the selection, never a tool."""
+    def select():
+        app = backend.word.get_app()
+        if backend.IS_MACOS:
+            doc = next(d for d in app.documents.get() if d.name.get() == full_name)
+            doc.activate_object()
+            # No `select` command; the selection's own bounds are set.
+            app.selection.selection_start.set(start)
+            app.selection.selection_end.set(end)
+        else:
+            doc = app.Documents.Item(full_name)
+            doc.Activate()
+            doc.Range(start, end).Select()
+        return {"success": True}
+    return backend.word.execute(select)
+
+
+def run_selection_steps() -> None:
+    """What the user has selected, read back."""
+    other = step("a document for the selection", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("three paragraphs for the selection", text._insert_paragraphs_impl,
+                    [{"text": "First.", "style": "Normal"},
+                     {"text": "Second paragraph 𠮷.", "style": "Normal"},
+                     {"text": "第三段落。", "style": "Normal"}], None, None)
+        if "error" in made:
+            return
+        name = other["full_name"]
+        _select(name, 7, 27)  # 𠮷 is two places in Word's count
+        step("a selection in one paragraph", selection._get_selection_impl,
+             check=lambda o: (o["start"], o["end"], o["text"], o["story"], o["empty"])
+             == (2, 2, "Second paragraph 𠮷.", "main", False))
+        _select(name, 3, 31)
+        step("a selection across paragraphs", selection._get_selection_impl,
+             check=lambda o: (o["start"], o["end"]) == (1, 3) and o["text"].startswith("st.\r"))
+        _select(name, 28, 28)
+        step("the cursor alone", selection._get_selection_impl,
+             check=lambda o: o["empty"] is True and o["text"] == "" and (o["start"], o["end"]) == (3, 3)
+             and "cursor is in paragraph 3" in o["note"])
+        third = step("a second document", documents._create_document_impl, None, None)
+        if "error" not in third:
+            _select(name, 0, 6)
+            call_document.reset(token)
+            token = call_document.set(third["full_name"])
+            step("a selection in another document says how to reach it",
+                 selection._get_selection_impl,
+                 check=lambda o: o["text"] == "First." and f"document={name!r}" in o["note"])
+            step("close the second document", documents._close_document_impl, False)
+            call_document.reset(token)
+            token = call_document.set(name)
+        step("close the document of the selection", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
 
@@ -1027,13 +1231,13 @@ def run_picture_and_page_steps(folder: Path) -> None:
                                  for t in o["tables"]))
         step("the reference followed", text._get_paragraphs_impl, at + 1, at + 1, False,
              undo=None, check=lambda o: "Figure 2" in o["paragraphs"][0]["text"])
-    step("a header", page._set_header_footer_impl, "header", "Live check", "primary", 1, "right",
+    step("a header", page._set_header_footer_impl, "header", "Live check", "primary", 1, "right", None,
          undo="Set header or footer", check=lambda o: o["reads"] == "Live check")
     step("a footer with the page number and count", page._set_header_footer_impl, "footer",
-         "Page {page} of {pages}", "primary", 1, "center", undo="Set header or footer",
+         "Page {page} of {pages}", "primary", 1, "center", None, undo="Set header or footer",
          check=lambda o: re.fullmatch(r"Page \d+ of \d+", o["reads"]))
     step("a first page of its own", page._set_header_footer_impl, "header", "", "first", 1, None,
-         undo="Set header or footer", check=lambda o: o["reads"] == "")
+         None, undo="Set header or footer", check=lambda o: o["reads"] == "")
     step("roman page numbers from 5", page._set_page_numbers_impl, 1, "lowercase_roman", 5, None,
          undo="Set page numbering",
          check=lambda o: o["style"] == "lowercase_roman" and o["start_at"] == 5)

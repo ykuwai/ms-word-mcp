@@ -356,7 +356,8 @@ while no other document is open.
 | Accepting or rejecting one change | The ones after it renumber | The same |
 | `For Each` over changes that include a format change | Two format changes both answered `Index` 1 | Not seen |
 | `Range.Revisions.AcceptAll` | Works | Refused (-1708), so a change is accepted by number |
-| Making a comment | `Comments.Add`, with `Replies.Add`, `Done`, `DeleteRecursively` | `make new Word comment` ended the Word process, both `at` a range and `at` the document with `scope` as a property |
+| Making a comment | `Comments.Add`, with `Replies.Add`, `Done`, `DeleteRecursively` | `make new Word comment` ended the Word process, both `at` a range and `at` the document with `scope` as a property. Given `comment text` as well, `at` the document, it makes the comment (16.114, 2026-11-20: 0.08 s, author read back); without it, Word ended again (-609) |
+| The page picture of a document with comments or tracked changes | `Page.EnhMetaFileBits` draws the page without comments, the changes as accepted, at its full size | The PDF keeps the page size, shrinks the page to about two thirds and draws the comments and changes in a grey pane beside it, whatever the view or print options say (16.114, 2026-11-20). A new document given the original's `formatted text` (0.16 s), its last section's page setup, columns, text direction and headers carried over, its changes accepted and comments deleted, draws the same as Windows: the same pixels as the page without markup, but for the changed line. Setting the lines or characters a page turns on the document grid, so `layout mode` is set after them. A reference to the original by place (`documents[1]`) points at the copy once it is made |
 | Opening a file Word did not make | Opens | Word asks for access in a dialog of its own, and the Apple event times out (-1712) until someone answers |
 
 With 180 changes in a document of 200 paragraphs on the Mac, reading one paragraph

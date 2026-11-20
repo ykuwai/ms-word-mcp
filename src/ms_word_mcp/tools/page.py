@@ -92,13 +92,24 @@ class SetPageSetupInput(Input):
         return self
 
 
+class HeaderParagraph(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(..., description="The paragraph's text; {page} and {pages} as in `text`.")
+    alignment: Literal["left", "center", "right"] | None = None
+
+
 class SetHeaderFooterInput(Input):
     part: Literal["header", "footer"] = Field(..., description="Header or footer.")
-    text: str = Field(..., description=(
+    text: str | None = Field(None, description=(
         "Its whole text, or empty to clear it. {page} becomes the page number and "
         "{pages} the number of pages: \"Page {page} of {pages}\". A tab moves to the "
         "next tab stop of the Header or Footer style, by default the centre then "
-        "the right."))
+        "the right. A line break stays in one paragraph; for several paragraphs, "
+        "give `paragraphs` instead."))
+    paragraphs: list[HeaderParagraph] | None = Field(None, min_length=1, max_length=20, description=(
+        "Several paragraphs, each with its own text and alignment, instead of `text`: "
+        "a company name on one line and an address under it, say."))
     which: Literal["primary", "first", "even"] = Field("primary", description=(
         "primary: every page. first: the first page, which then has its own header "
         "and footer. even: even pages, which then have their own. Once the first or "
@@ -108,6 +119,31 @@ class SetHeaderFooterInput(Input):
         "The section. Later sections show the same until a section has its own; "
         "writing to a later section gives it its own."))
     alignment: Literal["left", "center", "right"] | None = None
+
+    @model_validator(mode="after")
+    def _text_or_paragraphs(self):
+        if (self.text is None) == (self.paragraphs is None):
+            raise ValueError("Give `text`, or `paragraphs`: one of the two.")
+        if self.paragraphs is not None and self.alignment is not None:
+            raise ValueError("With `paragraphs`, give each paragraph its own alignment.")
+        if self.paragraphs is not None and any("\r" in p.text or "\n" in p.text
+                                               for p in self.paragraphs):
+            raise ValueError("Each of `paragraphs` is one paragraph: take the line breaks out.")
+        return self
+
+
+SECTION_BREAKS = {"next_page": 2, "continuous": 3, "even_page": 4, "odd_page": 5}  # WdBreakType
+MAC_SECTION_BREAKS = {"next_page": "section_break_next_page", "continuous": "section_break_continuous",
+                      "even_page": "section_break_even_page", "odd_page": "section_break_odd_page"}
+
+
+class InsertSectionBreakInput(Input):
+    after: int = Field(..., ge=1, description=(
+        "The paragraph the section ends with; the new section starts with the next."))
+    kind: Literal["next_page", "continuous", "even_page", "odd_page"] = Field(
+        "next_page", description=(
+            "next_page: the new section starts on a new page. continuous: on the same page, "
+            "for a change of columns, say. even_page, odd_page: on the next even or odd page."))
 
 
 class SetPageNumbersInput(Input):
@@ -152,6 +188,34 @@ class AddRubyInput(Input):
 
 class NoInput(Input):
     pass
+
+
+def header_text(text, paragraphs) -> tuple[str, list[str | None]]:
+    """The whole text to write, paragraphs apart by \r, and each one's alignment."""
+    if paragraphs is None:
+        return text, []
+    return "\r".join(p["text"] for p in paragraphs), [p.get("alignment") for p in paragraphs]
+
+
+def section_starts(after: int, at_end: bool) -> int:
+    """The paragraph a new section starts with. Put in front of the next paragraph,
+    a break is a paragraph of its own; after the last, it ends that paragraph's
+    text and an empty paragraph follows (both measured on both platforms)."""
+    return after + 1 if at_end else after + 2
+
+
+def section_break_answer(kind, after, section, sections, paragraphs, at_end) -> dict:
+    """What word_insert_section_break answers, the same from both platforms."""
+    starts = section_starts(after, at_end)
+    result = {"success": True, "kind": kind, "section": section, "sections": sections,
+              "starts_at": starts, "paragraphs": paragraphs}
+    if at_end:
+        result["note"] = (f"The new section starts with an empty paragraph, {starts}, after the "
+                          f"break that ends paragraph {after}.")
+    else:
+        result["note"] = (f"The break is paragraph {after + 1}, so the paragraphs after it moved "
+                          f"down by one: what was paragraph {after + 1} is now {starts}.")
+    return result
 
 
 def parse_placeholders(text: str) -> tuple[str, list[tuple[int, str]]]:
@@ -272,7 +336,7 @@ def _header_footer(sec, part, which):
     return (sec.Headers if part == "header" else sec.Footers).Item(WHICH[which])
 
 
-def _set_header_footer_impl(part, text, which, section, alignment):
+def _set_header_footer_impl(part, text, which, section, alignment, paragraphs):
     doc = backend.word.document()
     _sections(doc, section)
     sec = doc.Sections.Item(section)
@@ -285,14 +349,36 @@ def _set_header_footer_impl(part, text, which, section, alignment):
     if section > 1 and hf.LinkToPrevious:
         hf.LinkToPrevious = False
         result["note"] = f"Section {section} now has its own {part}."
-    plain, fields = parse_placeholders(text)
+    whole, aligns = header_text(text, paragraphs)
+    plain, fields = parse_placeholders(whole)
     hf.Range.Text = plain
     for offset, code in reversed(fields):
         doc.Fields.Add(hf.Range.Characters.Item(offset + 1), WD_FIELD_EMPTY, code, False)
     if alignment is not None:
         hf.Range.ParagraphFormat.Alignment = ALIGNMENTS[alignment]
+    for i, align in enumerate(aligns, start=1):
+        if align is not None:
+            hf.Range.Paragraphs.Item(i).Alignment = ALIGNMENTS[align]
     result["reads"] = clean_text(hf.Range.Text)
+    if paragraphs is not None:
+        result["paragraphs"] = hf.Range.Paragraphs.Count
     return result
+
+
+def _insert_section_break_impl(after, kind):
+    doc = backend.word.document()
+    last = paragraph(doc, after).Range
+    at_end = after == doc.Paragraphs.Count
+    if at_end:
+        at = doc.Range(last.End - 1, last.End - 1)  # before the last paragraph's mark
+    else:
+        start = paragraph(doc, after + 1).Range.Start
+        at = doc.Range(start, start)
+    at.InsertBreak(SECTION_BREAKS[kind])
+    new = paragraph(doc, section_starts(after, at_end)).Range
+    follow(doc, new)
+    return section_break_answer(kind, after, new.Sections.Item(1).Index, doc.Sections.Count,
+                                doc.Paragraphs.Count, at_end)
 
 
 def _hf_info(hf) -> dict:
@@ -536,7 +622,7 @@ def _mac_hf(sec, part, which):
 
 
 @mac_impl(_set_header_footer_impl)
-def _mac_set_header_footer(part, text, which, section, alignment):
+def _mac_set_header_footer(part, text, which, section, alignment, paragraphs):
     from appscript import k
 
     from . import mac as m
@@ -555,7 +641,8 @@ def _mac_set_header_footer(part, text, which, section, alignment):
     if section > 1 and hf.link_to_previous.get():
         hf.link_to_previous.set(False)
         result["note"] = f"Section {section} now has its own {part}."
-    plain, fields = parse_placeholders(text)
+    whole, aligns = header_text(text, paragraphs)
+    plain, fields = parse_placeholders(whole)
     hf.text_object.content.set(plain)
     for offset, code in reversed(fields):
         target = hf.text_object.characters[offset + 1]
@@ -563,15 +650,46 @@ def _mac_set_header_footer(part, text, which, section, alignment):
             text_range=t, field_type=k.field_empty, field_text=c, preserve_formatting=False))
     if alignment is not None:
         hf.text_object.paragraph_format.alignment.set(getattr(k, m.ALIGN_K[alignment]))
+    for i, align in enumerate(aligns, start=1):
+        if align is not None:
+            hf.text_object.paragraphs[i].paragraph_format.alignment.set(getattr(k, m.ALIGN_K[align]))
     result["reads"] = m._clean(hf.text_object.content.get())
+    if paragraphs is not None:
+        result["paragraphs"] = int(hf.text_object.count(each=k.paragraph))
     return result
+
+
+@mac_impl(_insert_section_break_impl)
+def _mac_insert_section_break(after, kind):
+    from . import mac as m
+
+    k = m._k()
+    app = backend.word.get_app()
+    doc = backend.word.document()
+    count = m._count(doc)
+    m._para(doc, after)
+    at_end = after == count
+    if at_end:
+        at = m._bounds(doc, after)[1] - 1  # before the last paragraph's mark
+    else:
+        at = m._bounds(doc, after + 1)[0]
+    # Made in the document named, which need not be the active one (measured).
+    app.insert_break(at=doc.create_range(start=at, end_=at),
+                     break_type=getattr(k, MAC_SECTION_BREAKS[kind]))
+    first = m._bounds(doc, section_starts(after, at_end))[0]
+    sections = int(doc.count(each=k.section))
+    section = next(n for n in range(sections, 0, -1)
+                   if doc.sections[n].text_object.start_of_content.get() <= first)
+    return section_break_answer(kind, after, section, sections, m._count(doc), at_end)
 
 
 def _mac_hf_info(hf) -> dict:
     from . import mac as m
 
+    alignment = m._from_k(m.ALIGN_K, hf.text_object.paragraph_format.alignment.get())
+    # Paragraphs aligned apart answer a missing value, as Windows answers wdUndefined.
     return {"text": m._clean(hf.text_object.content.get()),
-            "alignment": m._from_k(m.ALIGN_K, hf.text_object.paragraph_format.alignment.get()),
+            "alignment": None if alignment == "missing_value" else alignment,
             "linked_to_previous": bool(hf.link_to_previous.get())}
 
 
@@ -704,10 +822,21 @@ def register(mcp) -> None:
               annotations=annotations("Set a header or footer", WRITES))
     async def word_set_header_footer(params: SetHeaderFooterInput) -> str:
         """Write a header or footer, with {page} and {pages} for the page
-        number and the number of pages."""
+        number and the number of pages: one paragraph (`text`), or several,
+        each with its own alignment (`paragraphs`)."""
         p = params
+        paragraphs = None if p.paragraphs is None else [x.model_dump() for x in p.paragraphs]
         return await call(_set_header_footer_impl, p.part, p.text, p.which, p.section,
-                          p.alignment, undo="Set header or footer")
+                          p.alignment, paragraphs, undo="Set header or footer")
+
+    @mcp.tool(name="word_insert_section_break",
+              annotations=annotations("Insert a section break", WRITES))
+    async def word_insert_section_break(params: InsertSectionBreakInput) -> str:
+        """End a section after a paragraph, so the next starts a new one with
+        its own page setup, columns, headers and footers. The break is a
+        paragraph of its own, so the paragraphs after it move down by one."""
+        p = params
+        return await call(_insert_section_break_impl, p.after, p.kind, undo="Insert section break")
 
     @mcp.tool(name="word_set_page_numbers", annotations=annotations("Set page numbering", WRITES))
     async def word_set_page_numbers(params: SetPageNumbersInput) -> str:
