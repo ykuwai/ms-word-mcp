@@ -533,6 +533,25 @@ NO_TEXT_IN = ("A {kind} holds no text. Only a text box or a drawn shape does; "
               "use word_insert_text_box beside it.")
 
 
+DISPATCH_PROPERTYPUT = 4  # pythoncom.DISPATCH_PROPERTYPUT
+
+
+def set_adjustment(shape, index: int, value: float) -> None:
+    """shape.Adjustments(index) = value, whichever way pywin32 binds Word.
+
+    Item assignment (`Adjustments[1] = v`) works late-bound, but not through
+    the wrappers pywin32 generates for Word once any program on the machine
+    has run gencache.EnsureDispatch for it ("'Adjustments' object does not
+    support item assignment", measured). The property is set through
+    IDispatch, which both have."""
+    adjustments = shape.Adjustments
+    ole = getattr(adjustments, "_oleobj_", None)
+    if ole is None:  # not a COM object: a stand-in
+        adjustments[index] = value
+        return
+    ole.Invoke(ole.GetIDsOfNames("Item"), 0, DISPATCH_PROPERTYPUT, False, index, value)
+
+
 def _check_text_allowed(kind: str, spec: dict) -> None:
     if kind in NO_TEXT and any(key in spec for key in TEXT_KEYS):
         raise ValueError(NO_TEXT_IN.format(kind=kind))
@@ -757,7 +776,7 @@ def _apply(s, spec: dict, kind: str) -> list[str]:
         s.Rotation = spec["rotation"]
     if "corner_radius" in spec:
         if s.AutoShapeType == ROUNDED:
-            s.Adjustments[1] = spec["corner_radius"] * 0.5
+            set_adjustment(s, 1, spec["corner_radius"] * 0.5)
         else:
             warnings.append("corner_radius is for a rounded_rectangle, so it was not set.")
     _apply_look(s, spec)

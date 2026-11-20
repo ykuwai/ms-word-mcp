@@ -441,3 +441,15 @@ def test_a_floating_picture_takes_a_full_path_and_floats():
         shapes.InsertFloatingPictureInput(path="a.png", index=1)
     with pytest.raises(ValidationError, match="word_insert_picture"):
         shapes.InsertFloatingPictureInput(path="/a.png", index=1, wrap="inline")
+
+
+def test_a_corner_radius_is_set_through_idispatch_whichever_way_pywin32_binds():
+    """Generated wrappers for Word refuse item assignment on Adjustments."""
+    from types import SimpleNamespace
+
+    calls = []
+    ole = SimpleNamespace(GetIDsOfNames=lambda name: {"Item": 0}[name],
+                          Invoke=lambda *args: calls.append(args))
+    shape = SimpleNamespace(Adjustments=SimpleNamespace(_oleobj_=ole))
+    shapes.set_adjustment(shape, 1, 0.25)
+    assert calls == [(0, 0, shapes.DISPATCH_PROPERTYPUT, False, 1, 0.25)]
