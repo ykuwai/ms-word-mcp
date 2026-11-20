@@ -257,6 +257,7 @@ def run_steps(path: str) -> None:
          text._get_outline_impl, False,
          check=lambda o: o["headings"] == full["headings"] and len(o["headings"]) >= 2)
     run_table_steps()
+    run_toc_empty_steps()
     run_picture_and_page_steps(Path(path).parent)
     run_review_steps()
     run_heading_number_steps()
@@ -1110,6 +1111,34 @@ def _active_document():
 
 
 _common.MAC_IMPLS[_active_document.__name__] = _active_document  # a Mac-only check
+
+
+def run_toc_empty_steps() -> None:
+    """A table of contents of a document without headings says it lists none."""
+    other = step("a document without headings", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        step("body text only", text._insert_paragraphs_impl,
+             [{"text": "Body.", "style": "Normal"}, {"text": "More body.", "style": "Normal"}],
+             None, None)
+        for hyperlinks, page_numbers in ((True, True), (False, False)):
+            step(f"a table of no headings warns (hyperlinks {hyperlinks}, page numbers {page_numbers})",
+                 fields._insert_toc_impl, 0, None, 1, 3, hyperlinks, page_numbers, None, None,
+                 undo="Insert table of contents",
+                 check=lambda o: o.get("entries") == 0 and "lists no headings" in o["warnings"][0])
+        step("a heading", text._insert_paragraphs_impl, [{"text": "Chapter", "style": "Heading 1"}],
+             None, None)
+        for hyperlinks, page_numbers in ((True, True), (False, False)):
+            step(f"a table of one heading lists it (hyperlinks {hyperlinks}, page numbers "
+                 f"{page_numbers})", fields._insert_toc_impl, None, None, 1, 3, hyperlinks,
+                 page_numbers, None, None, undo="Insert table of contents",
+                 check=lambda o: o.get("entries") == 1 and "warnings" not in o
+                 and o["first_entries"][0].startswith("Chapter"))
+        step("close the document without headings", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
 
 
 def run_table_steps() -> None:

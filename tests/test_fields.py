@@ -111,3 +111,15 @@ def test_updating_all_updates_them_when_allowed(make_doc, monkeypatch):
     doc.Fields = FakeFields(active)
     assert answer(fields._update_fields_impl, "all", None, None)["updated"] == 1
     assert active.updated
+
+
+@pytest.mark.parametrize("inner, hyperlinks, page_numbers, headings, empty", [
+    (0, True, True, 5, True),     # Word's own sentence: no entry's fields
+    (2, True, True, 0, False),
+    (1, False, True, 0, False),
+    (0, False, False, 0, True),   # no switch that makes fields: Word's heading list decides
+    (0, False, False, 3, False),
+])
+def test_an_empty_table_of_contents_is_told_from_one_with_entries(inner, hyperlinks, page_numbers,
+                                                                  headings, empty):
+    assert fields.toc_is_empty(inner, hyperlinks, page_numbers, lambda: headings) is empty

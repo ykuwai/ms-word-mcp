@@ -74,6 +74,9 @@ def _active_note(kinds: list[str]) -> str:
             f"({', '.join(sorted(set(kinds)))}). Set WORD_ALLOW_ACTIVE_FIELDS=on to update them.")
 
 
+WD_REF_TYPE_HEADING = 1  # WdReferenceType
+
+
 def toc_code(upper: int, lower: int, hyperlinks: bool, page_numbers: bool,
              bookmark: str | None) -> str:
     code = f'TOC \\o "{upper}-{lower}"'
@@ -112,6 +115,18 @@ class InsertTocInput(Input):
         if self.from_paragraph and self.to_paragraph < self.from_paragraph:
             raise ValueError("to_paragraph comes before from_paragraph.")
         return self
+
+
+def toc_is_empty(inner_fields: int, hyperlinks: bool, page_numbers: bool, headings) -> bool:
+    """Whether a table of contents lists nothing. Word then fills it with a
+    sentence of its own in its own language ("No table of contents entries
+    found."), which reads as one entry. A real entry holds a HYPERLINK field
+    (\\h) or a PAGEREF field (its page number); the sentence holds none
+    (measured on both platforms). Without either switch the entries hold no
+    field either, so Word's heading list (`headings()`, its count) decides."""
+    if hyperlinks or page_numbers:
+        return inner_fields == 0
+    return inner_fields == 0 and headings() == 0
 
 
 def _toc_summary(doc, field) -> dict:
@@ -160,6 +175,9 @@ def _insert_toc_impl(after, before, upper_level, lower_level, hyperlinks, page_n
                                     bookmark), False)
     field.Update()
     summary = _toc_summary(doc, field)
+    if toc_is_empty(field.Result.Fields.Count, hyperlinks, page_numbers,
+                    lambda: len(doc.GetCrossReferenceItems(WD_REF_TYPE_HEADING) or ())):
+        summary = {**summary, "entries": 0, "first_entries": []}
     follow(doc, field.Result)
     result = {"success": True, "index": at, **summary,
               "paragraphs": doc.Paragraphs.Count}
@@ -387,6 +405,10 @@ def _mac_insert_toc(after, before, upper_level, lower_level, hyperlinks, page_nu
     f.update_field()
     lines = [m._clean(x) for x in (f.result_range.content.get() or "").split("\r")
              if x.strip()]
+    if toc_is_empty(int(f.result_range.count(each=k.field)), hyperlinks, page_numbers,
+                    lambda: len(doc.get_cross_reference_items(
+                        reference_type=k.reference_type_heading) or [])):
+        lines = []
     result = {"success": True, "index": at,
               "code": (f.field_code.content.get() or "").strip(), "entries": len(lines),
               "first_entries": [re.sub(r"\s+", " ", x)[:80] for x in lines[:8]],
