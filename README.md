@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <strong>Real-time Microsoft Word control on Windows and macOS —<br>an MCP server with <!--tools-->84<!--/tools--> tools that works in the document beside you.</strong>
+  <strong>Real-time Microsoft Word control on Windows and macOS —<br>an MCP server with <!--tools-->94<!--/tools--> tools that works in the document beside you.</strong>
 </p>
 
 ---
@@ -116,7 +116,7 @@ uv sync
 
 ## 🛠️ Tool Categories
 
-Documents, reading, writing, formatting, styles, lists, tables, pictures, captions and cross-references, the page, equations, floating shapes and pictures, footnotes and endnotes, hyperlinks and bookmarks, fields and tables of contents, the view, a picture of a page, and undo.
+Documents, reading, writing, formatting, styles, lists, tables, pictures, captions and cross-references, the page, equations, floating shapes and pictures, footnotes and endnotes, comments, spelling and a health check, hyperlinks and bookmarks, fields and tables of contents, the view, a picture of a page, and undo.
 
 The full list of tools, by category, is in [TOOLS.md](https://github.com/ykuwai/ms-word-mcp/blob/main/TOOLS.md). Comments are not here yet.
 
@@ -203,6 +203,7 @@ Every member and constant is checked against Microsoft's documentation ([docs/re
 | `WORD_FOLLOW_EDITS` | `on` | Scroll the document's window to each change. |
 | `WORD_ALLOW_ACTIVE_FIELDS` | `off` | Allow fields that reach outside the document: INCLUDETEXT, INCLUDEPICTURE, INCLUDE, LINK, IMPORT, RD, EMBED, DATABASE, DDE, DDEAUTO, MACROBUTTON, PRINT, ASK, FILLIN. Off, `word_insert_field` refuses them and `word_update_fields` leaves the ones already in a document as they are. On, Word may stop and ask you about them in a dialog of its own, and the tool waits until you answer. |
 | `WORD_ALLOW_NETWORK_PATHS` | `off` | Allow files named by a network path (`\\server\share\...`). Off, they are refused: saving to one sends the document to that server, and even checking for the file connects to it with your credentials. |
+| `WORD_VBA_BRIDGE` | `on` | Load the server's VBA bridge into Word: a few macros that read paragraphs in one call, and on the Mac give comments their replies and done state. Off, everything is read as before, more slowly, and on the Mac replying to or resolving a comment is refused. See [The VBA Bridge](#the-vba-bridge). |
 | `WORD_MAC_FILES_DIR` | the document's folder | macOS: where Word writes the PDF a page picture is drawn from, for a moment. By default the document's own folder, or Word's own folder for a document never saved. |
 
 Set them in the server's `env`:
@@ -237,6 +238,19 @@ Calls reach Word one at a time, in the order they were asked for. When Word has 
 
 If Word is not running, `word_create_document` and `word_open_document` start it; other tools answer that it is not running.
 
+### The VBA Bridge
+
+Reading a paragraph over COM or Apple Events asks Word once for each property, and 200 paragraphs took 8 to 27 seconds. The server ships a Word template, `ms-word-mcp-bridge.dotm`, whose macros read them inside Word in one call. The macros are the source in [`WordMcpBridge.bas`](src/ms_word_mcp/backend/vba/WordMcpBridge.bas), and a test checks the template was built from it.
+
+| `word_get_paragraphs`, 200 paragraphs | Without the bridge | With it |
+|---|---|---|
+| Windows | 8.1 s; 11.7 s with `detail` | 0.28 s; 0.30 s with `detail` |
+| macOS | 6.9 s; 26.9 s with `detail` | 0.45 s; 0.53 s with `detail` |
+
+The answers are the same, and on the Mac `detail` now gives what Windows gives (a mixed paragraph's bold reads as mixed, theme and automatic colors as none). On the Mac the bridge also gives comments their replies and done state, which Word for Mac's scripting lacks.
+
+The first call that needs the template makes it a global template of the Word the server talks to, and the server takes it out again when it stops, so your Word is left as it was. On Windows it is added from the package with `AddIns.Add`. Word for Mac's scripting cannot add one, so the template is copied to Word's own folder, opened for a moment (which makes a new document from it), and that document's macro adds the template and is closed. If the bridge cannot be used, for instance because macros are turned off by policy, the tools read as before and `word_get_app_info` says why in `vba_bridge`.
+
 ### 🔒 Security
 
 The server runs on your computer with your permissions and talks to one local client over stdio; it opens no port and makes no network request of its own.
@@ -246,6 +260,7 @@ An AI using these tools can read and change any document open in Word, open any 
 What the server does about it:
 
 - Macros are disabled while it opens a document or creates one from a template. Word would otherwise run them. The document stays open with macros off.
+- The only macros it runs are its own, from the bridge template in the package, and they only read paragraphs and work with comments. `WORD_VBA_BRIDGE=off` leaves them out.
 - Fields that reach outside the document are refused and left alone unless you set `WORD_ALLOW_ACTIVE_FIELDS`.
 - Network paths are refused unless you set `WORD_ALLOW_NETWORK_PATHS`.
 - A new link goes to http, https, mailto or tel, or to a path relative to the document. A link the document already has is left as it is.
@@ -268,6 +283,7 @@ Not available on macOS:
 Smaller differences:
 
 - Each change is its own Undo step, because Word for Mac's scripting cannot group them, and a style can be changed but not created. Tools say so in their results.
+- Replies to comments and their done state go through the [VBA bridge](#the-vba-bridge). Loading it the first time opens a document made from its template for about a second, and leaves the template and a lock file in Word's own folder.
 - Word for Mac is sandboxed: it writes without asking only inside `~/Library/Containers/com.microsoft.Word/Data/Documents`, and saving elsewhere may make Word ask for access.
 - Word asks you about each file outside its own folder, so `word_insert_picture` puts a copy in Word's folder for a moment and reads it there. The first time, macOS may ask once whether the app the server runs in may use Word's data.
 - `word_get_page_image` has Word save a PDF next to the document for a moment. For a document never saved, the PDF goes in Word's own folder, and macOS may ask the same question.

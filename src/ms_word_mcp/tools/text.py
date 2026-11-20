@@ -7,19 +7,23 @@ document.
 
 from __future__ import annotations
 
+import logging
 import time
 
 from pydantic import Field, model_validator
 
 from .. import backend
+from ..backend.com import names_of
 from ._common import DESTRUCTIVE, READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow
 from .shapes import leading_anchors
 from ._word import (
     WD_COLLAPSE_END, WD_FIND_STOP, WD_OUTLINE_BODY,
     WD_STATISTIC_CHARACTERS, WD_STATISTIC_PAGES, WD_STATISTIC_WORDS,
     check_span, clean_text, deletion_spans, index_of, inside_spans, paragraph, paragraph_info,
-    paragraphs_in, visible_text, BUILTIN_STYLES, resolve_style, style_name,
+    paragraph_detail, paragraphs_in, visible_text, BUILTIN_STYLES, resolve_style, style_name,
 )
+
+logger = logging.getLogger(__name__)
 
 MAX_PARAGRAPHS_PER_READ = 200
 WD_WITHIN_TABLE = 12  # WdInformation
@@ -33,8 +37,8 @@ def _get_document_info_impl():
     setup = doc.PageSetup
     return {
         "success": True,
-        "name": doc.Name,
-        "full_name": doc.FullName,
+        "name": names_of(doc)[0],
+        "full_name": names_of(doc)[1],
         "saved": bool(doc.Saved),
         "paragraphs": doc.Paragraphs.Count,
         "pages": doc.ComputeStatistics(WD_STATISTIC_PAGES),
@@ -145,6 +149,63 @@ def finish_reading(result: dict, last: int, count: int) -> None:
                           f"pass start={reached + 1}.")
 
 
+def paragraph_from_row(fields: list[str], detail: bool) -> tuple[dict, bool]:
+    """A paragraph as the VBA bridge read it (backend/vba/WordMcpBridge.bas,
+    ReadParagraphs), and whether its text has to be read the slow way: tracked
+    changes in it, or ruby (fields), are worked out paragraph by paragraph."""
+    from ..backend.bridge import decode
+
+    index, changes, level = int(fields[0]), int(fields[1]), int(fields[2])
+    text = decode(fields[4])
+    info = {"index": index, "text": clean_text(text), "style": decode(fields[3]) or None}
+    if level != WD_OUTLINE_BODY:
+        info["outline_level"] = level
+    if detail:
+        (alignment, ascii_font, east_asian, complex_font, size, size_complex, bold, italic,
+         color, rule, spacing, before, after) = fields[5:18]
+        info.update(paragraph_detail(
+            int(alignment), decode(ascii_font), decode(east_asian), decode(complex_font),
+            float(size), float(size_complex), int(bold), int(italic), int(color), int(rule),
+            float(spacing), float(before), float(after)))
+    return info, bool(changes) or "\x15" in text
+
+
+def bridge_paragraphs(document, start: int, last: int, detail: bool, revisions: bool,
+                      began: float, read_text) -> list[dict] | None:
+    """Paragraphs start..last read by the VBA bridge, in one call to Word; None
+    when the bridge cannot be used, and the paragraphs are read as before.
+
+    `document()` names the document for the bridge. `read_text(index)` reads one paragraph's text the slow way, as a paragraph
+    without `detail` ("text", "style", and "deleted_text", "ruby"...): the
+    bridge's text holds tracked deletions and ruby fields as they are stored.
+    `revisions` asks the bridge to count each paragraph's changes, for a
+    document that has any."""
+    from ..backend.bridge import BridgeError, Unavailable, encode
+
+    word = backend.word
+    vba = getattr(word, "vba", None)
+    if vba is None:
+        return None
+    seconds = max(1.0, READ_SECONDS - (time.monotonic() - began))
+    try:
+        lines = vba.call(word.get_app(), "Paragraphs", encode(document()), str(start), str(last),
+                         "1" if detail else "0", "1" if revisions else "0", f"{seconds:.1f}")
+    except (Unavailable, BridgeError) as exc:
+        logger.info("Reading paragraphs as before: %s", exc)
+        return None
+    out = []
+    for line in lines[1:]:
+        info, slow = paragraph_from_row(line.split("|"), detail)
+        if slow:
+            # The bridge's detail stays: the slow read gives the text only.
+            info = {**info, **{k: v for k, v in read_text(info["index"]).items()
+                               if k not in ("outline_level",)}}
+        out.append(info)
+        if time.monotonic() > began + READ_SECONDS:
+            break
+    return out
+
+
 def _get_paragraphs_impl(start: int, end: int | None, detail: bool):
     doc = backend.word.document()
     began = time.monotonic()
@@ -156,11 +217,15 @@ def _get_paragraphs_impl(start: int, end: int | None, detail: bool):
         last = start + MAX_PARAGRAPHS_PER_READ - 1
     from .tables import mark_tables
 
-    out = []
-    for i, p in paragraphs_in(doc, start, last):
-        out.append(paragraph_info(i, p, detail))
-        if time.monotonic() > began + READ_SECONDS:
-            break
+    out = bridge_paragraphs(
+        lambda: names_of(doc)[1], start, last, detail, bool(doc.Revisions.Count), began,
+        lambda i: paragraph_info(i, paragraph(doc, i), False))
+    if out is None:
+        out = []
+        for i, p in paragraphs_in(doc, start, last):
+            out.append(paragraph_info(i, p, detail))
+            if time.monotonic() > began + READ_SECONDS:
+                break
     mark_tables(doc, out)
     result = {"success": True, "paragraphs": out, "count": count}
     finish_reading(result, last, count)
