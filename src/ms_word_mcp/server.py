@@ -257,6 +257,22 @@ is accepted. `word_list_revisions` lists the changes;
 `word_accept_revisions` and `word_reject_revisions` take their numbers, which
 move after each call, or `every`.
 
+## Before sending
+
+`word_check_document` lists what to fix before a document goes out: skipped
+heading levels, placeholders, pictures without alt text, comments and tracked
+changes left, and more. `word_check_spelling` gives Word's spelling and grammar
+findings and the language the text is checked in; text marked with a language
+Word has no dictionary for is never checked, and `word_set_language` fixes that.
+
+## Comments
+
+`word_add_comment` puts a comment on a paragraph, or on some text in it
+(`on`). Word signs it as the Office user, whatever name is asked for.
+`word_list_comments` numbers them in the order of the text they are about;
+the numbers move when one is added or deleted. Replying and marking a comment
+done work on Windows only.
+
 ## Paragraph numbers
 
 Paragraphs are numbered from 1, as Word counts them. Inserting or deleting
@@ -297,11 +313,11 @@ mainly Latin document. East Asian layouts measure spacing in grid lines
 mcp = WordServer("ms_word_mcp", lifespan=app_lifespan, instructions=INSTRUCTIONS)
 
 from .tools import (  # noqa: E402,F401 - mac registers the Mac halves
-    documents, edit, equations, fields, formatting, links, lists, mac, notes, page, references, revisions,
-    screen, shapes, tables, text, view)
+    checks, comments, documents, edit, equations, fields, formatting, links, lists, mac, notes, page,
+    references, revisions, screen, shapes, tables, text, view)
 
 for module in (documents, text, formatting, lists, tables, references, shapes, notes, links, equations,
-               fields, revisions, page, view, screen, edit):
+               fields, revisions, comments, checks, page, view, screen, edit):
     module.register(mcp)
 
 
@@ -414,7 +430,8 @@ AREAS = {"documents": "Documents", "text": "Reading and writing text",
          "notes": "Footnotes and endnotes", "links": "Hyperlinks and bookmarks",
          "page": "The page: setup, vertical text, headers, footers, ruby",
          "equations": "Equations", "fields": "Fields and tables of contents",
-         "revisions": "Tracked changes",
+         "revisions": "Tracked changes", "comments": "Comments",
+         "checks": "Checks: spelling, language and the document's health",
          "view": "View", "screen": "Seeing a page", "edit": "Undo"}
 
 
@@ -544,9 +561,9 @@ async def word_describe(names: list[str] | None = None) -> str:
     with word_describe().
     """
     if not names:
-        return (catalog_lines() + "\n\nNot here yet: comments and tracked changes. "
-                "Paragraph direction (right to left), tab stops and "
-                "adding table columns work on Windows only."
+        return (catalog_lines() + "\n\nParagraph direction (right to left), tab stops, "
+                "adding table columns, and replying to or resolving a comment work on "
+                "Windows only."
                 "\n\nNext: word_describe(names=[...]) for the arguments of the tools "
                 "you will use, then word_run or word_run_steps.")
     found, missing = {}, []

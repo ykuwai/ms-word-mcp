@@ -356,7 +356,7 @@ while no other document is open.
 | Accepting or rejecting one change | The ones after it renumber | The same |
 | `For Each` over changes that include a format change | Two format changes both answered `Index` 1 | Not seen |
 | `Range.Revisions.AcceptAll` | Works | Refused (-1708), so a change is accepted by number |
-| Making a comment | `Comments.Add`, with `Replies.Add`, `Done`, `DeleteRecursively` | `make new Word comment` ended the Word process, both `at` a range and `at` the document with `scope` as a property |
+| Making a comment | `Comments.Add`, with `Replies.Add`, `Done`, `DeleteRecursively` | `make new Word comment` ended the Word process, both `at` a range and `at` the document with `scope` as a property. Given `comment text` as well, `at` the document, it makes the comment (16.114, 2026-11-20: 0.08 s, author read back); without it, Word ended again (-609) |
 | Opening a file Word did not make | Opens | Word asks for access in a dialog of its own, and the Apple event times out (-1712) until someone answers |
 
 With 180 changes in a document of 200 paragraphs on the Mac, reading one paragraph
