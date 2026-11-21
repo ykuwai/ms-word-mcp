@@ -424,18 +424,6 @@ def resolve_style(doc, name: str):
             "Word built-in style), or a name word_list_styles gives.") from None
 
 
-def fonts_of(rng) -> dict:
-    """The fonts of a range, one per script. None means the range is mixed."""
-    font = rng.Font
-    return {
-        "latin": font.NameAscii or None,
-        "east_asian": font.NameFarEast or None,
-        "complex_script": font.NameBi or None,
-        "size": undefined(font.Size),
-        "size_complex_script": undefined(font.SizeBi),
-    }
-
-
 def _field_codes(rng) -> list[tuple[str, bool]]:
     """Each field of a range: its code, and whether a tracked deletion covers it."""
     spans = deletion_spans(rng)
@@ -457,26 +445,43 @@ def paragraph_info(index: int, p, detail: bool = False) -> dict:
         info["outline_level"] = level
     if detail:
         fmt = p.Format
-        info["alignment"] = ALIGNMENT_NAMES.get(fmt.Alignment, fmt.Alignment)
-        info["fonts"] = fonts_of(rng)
         font = rng.Font
-        # Bold, italic and color too: a paragraph made to look like a heading
-        # with direct formatting is found by these (asked for in a trial).
-        color = undefined(font.Color)
-        info["fonts"].update({
-            "bold": flag(font.Bold), "italic": flag(font.Italic),
-            "color": (None if color is None or color < 0 or color > 0xFFFFFF else
-                      f"#{color & 0xFF:02X}{(color >> 8) & 0xFF:02X}{(color >> 16) & 0xFF:02X}")})
-        rule = fmt.LineSpacingRule
-        info["line_spacing_rule"] = LINE_SPACING_NAMES.get(rule, rule)
-        lines = spacing_in_lines(rule, fmt.LineSpacing)
-        if lines is not None:
-            info["line_spacing_lines"] = lines
-        else:
-            info["line_spacing_pt"] = fmt.LineSpacing
-        info["space_before"] = fmt.SpaceBefore
-        info["space_after"] = fmt.SpaceAfter
+        info.update(paragraph_detail(
+            fmt.Alignment, font.NameAscii, font.NameFarEast, font.NameBi, font.Size, font.SizeBi,
+            font.Bold, font.Italic, font.Color, fmt.LineSpacingRule, fmt.LineSpacing,
+            fmt.SpaceBefore, fmt.SpaceAfter))
     return info
+
+
+def paragraph_detail(alignment, ascii_font, east_asian_font, complex_font, size, size_complex,
+                     bold, italic, color, rule, spacing, before, after) -> dict:
+    """What `detail` adds to a paragraph, from the values Word's object model
+    gives: read over COM, or by the VBA bridge on either platform."""
+    color = undefined(color)
+    return {
+        "alignment": ALIGNMENT_NAMES.get(alignment, alignment),
+        # The fonts one per script; None where the paragraph is mixed. Bold,
+        # italic and color too: a paragraph made to look like a heading with
+        # direct formatting is found by these (asked for in a trial).
+        "fonts": {"latin": font_name(ascii_font), "east_asian": font_name(east_asian_font),
+                  "complex_script": font_name(complex_font), "size": undefined(size),
+                  "size_complex_script": undefined(size_complex),
+                  "bold": flag(bold), "italic": flag(italic),
+                  "color": (None if color is None or color < 0 or color > 0xFFFFFF else
+                            f"#{color & 0xFF:02X}{(color >> 8) & 0xFF:02X}{(color >> 16) & 0xFF:02X}")},
+        "line_spacing_rule": LINE_SPACING_NAMES.get(rule, rule),
+        **({"line_spacing_lines": lines} if (lines := spacing_in_lines(rule, spacing)) is not None
+           else {"line_spacing_pt": spacing}),
+        "space_before": before, "space_after": after,
+    }
+
+
+def font_name(value) -> str | None:
+    """A font name, None for a mixed range. Word for Mac adds " ()" to a
+    theme font's name, which Windows does not."""
+    if not isinstance(value, str) or not value:
+        return None
+    return value[:-3] if value.endswith(" ()") else value
 
 
 # WdLineSpacing

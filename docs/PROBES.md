@@ -298,7 +298,7 @@ Measured on the Mac with `scripts/probes/mac_notes_links.py`; on Windows through
 | Alternative text | Yes | `alternative text` is not a property of `shape`; read answers missing value, set -1708 |
 | Vertical anchor, auto size, word wrap of a text frame | Yes | Unknown property or missing value |
 | Vertical text | `TextFrame.Orientation = 4` | `vertical east asian`, code 4; upright kana, Latin on its side ([shape-look](probes/shape_look.py)) |
-| Whether the text fits | `TextFrame.Overflowing` answered True for an empty shape and for two lines of 9 pt in a 60 pt high shape, so it is not used | `overflowing` agrees with the page; `has text` is true for an empty shape, so the text is read instead |
+| Whether the text fits | `TextFrame.Overflowing` answered True for an empty shape and for two lines of 9 pt in a 60 pt high shape, so it is not used | `overflowing` agrees with the page but for one thing: it counts the blank space after the last paragraph. A 150 x 60 pt rounded rectangle with a 2.5 pt outline and two 9 pt lines, all visible, answered true, and false with that space at 0; boxes 40 and 30 pt high, whose second line was cut off, answered true either way (16.114, 2026-11-20). So a true is asked again with that space at 0, and the space is put back. `has text` is true for an empty shape, so the text is read instead |
 | A line's text frame | Touching `TextRange` is refused, even to read | Read answers nothing |
 | Undo | One undo takes a new shape back (live check) | Two undos did not take a new shape back |
 | Document not active | Works, active document unchanged | Works, active document unchanged |
@@ -356,7 +356,8 @@ while no other document is open.
 | Accepting or rejecting one change | The ones after it renumber | The same |
 | `For Each` over changes that include a format change | Two format changes both answered `Index` 1 | Not seen |
 | `Range.Revisions.AcceptAll` | Works | Refused (-1708), so a change is accepted by number |
-| Making a comment | `Comments.Add`, with `Replies.Add`, `Done`, `DeleteRecursively` | `make new Word comment` ended the Word process, both `at` a range and `at` the document with `scope` as a property |
+| Making a comment | `Comments.Add`, with `Replies.Add`, `Done`, `DeleteRecursively` | `make new Word comment` ended the Word process, both `at` a range and `at` the document with `scope` as a property. Given `comment text` as well, `at` the document, it makes the comment (16.114, 2026-11-20: 0.08 s, author read back); without it, Word ended again (-609) |
+| The page picture of a document with comments or tracked changes | `Page.EnhMetaFileBits` draws the page without comments, the changes as accepted, at its full size | The PDF keeps the page size, shrinks the page to about two thirds and draws the comments and changes in a grey pane beside it, whatever the view or print options say (16.114, 2026-11-20). A new document given the original's `formatted text` (0.16 s), its last section's page setup, columns, text direction and headers carried over, its changes accepted and comments deleted, draws the same as Windows: the same pixels as the page without markup, but for the changed line. Setting the lines or characters a page turns on the document grid, so `layout mode` is set after them. A reference to the original by place (`documents[1]`) points at the copy once it is made |
 | Opening a file Word did not make | Opens | Word asks for access in a dialog of its own, and the Apple event times out (-1712) until someone answers |
 
 With 180 changes in a document of 200 paragraphs on the Mac, reading one paragraph
@@ -366,3 +367,159 @@ listing stops after 40 s and says where to go on.
 
 Because a search matches text marked deleted, a replacement run a second time
 would replace it again. The search leaves those matches out.
+
+## The VBA bridge (Word 16, both platforms)
+
+Measured 2026-11-20 on Word for Mac 16.114 and Word for Windows (Microsoft 365,
+x64), with `ms-word-mcp-bridge.dotm` built by Word for Windows from
+`backend/vba/WordMcpBridge.bas` (`scripts/build_vba_bridge.py`; Word's
+AccessVBOM is turned on for the build only and was unset before and after).
+`run_bridge_steps` in `scripts/live_check.py` repeats the comparisons.
+
+| What | Windows | Mac |
+|---|---|---|
+| Loading the template into a running Word | `AddIns.Add(path, Install=True)`, no prompt, also with macros set to "disable all without notification" (VBAWarnings 4) and "with notification" (2) | The scripting has no command that adds an add-in, and the Startup folder is read only as Word starts. `open` of the template makes a new document attached to it, whose macros run (automation security low); `AddIns.Add` in that macro makes the template global, and the document is closed. The app in front stays in front |
+| After Word restarts | Not loaded | Listed in the add-ins, not installed, macros not there (-1708); `delete` of the add-in takes it out of the list |
+| One request | `Application.Run("WordMcpRun", what, request)`, the answer as its value | `run VB macro` passes and answers nothing: a request file, the macro, an answer file, 8-35 ms |
+| A missing macro | A COM error | -1708 |
+| 200 paragraphs, `word_get_paragraphs` | 0.28 s against 8.1 s; with `detail` 0.30 s against 11.7 s. The answers are the same, field for field | 0.45 s against 6.9 s; with `detail` 0.53 s against 26.9 s. Text, style, level, tables and deletions the same |
+| `detail` on the Mac, the bridge against Apple Events | | A paragraph half bold: `bold` mixed (null), where Apple Events said false. A Heading 1 in its theme color: no color, as on Windows, where Apple Events said `#FFBF00`. Automatic color: no color, where Apple Events said `#000000`. `size_complex_script` given |
+| Comments | | `Replies.Add`, `Done` and `Ancestor` work; Apple Events then list a reply as a comment of its own. Marking a comment done marks its replies done. `delete` of a comment that has replies leaves it where it is (deleted 0); `DeleteRecursively` through the bridge takes it and its replies |
+| `word_find_replace`, 1,000 paragraphs holding 3,000 matches after an equation (`run_find_bridge_steps`) | Counted in 1.36 s, against 2,321 in 20 s that ran out of time; all 3,000 replaced in one call, 2.4 s; one Undo takes them back; the same paragraphs listed | Counted in 4.8 s, against 1,181 in 21.8 s that ran out of time (each match read back after the equation); all 3,000 replaced in one call, 7.4 s, and one Undo takes them back (`UndoRecord` inside the macro); a wildcard search works |
+| What Word for Mac's scripting lacks (`run_mac_gap_steps`) | Over COM, as before | Through the bridge's `Member` request: a complex-script size, an underline color, right to left, tab stops, a new paragraph or character style with `quick_style` and `priority`, table columns, a shape's alt text and vertical anchor, each read back as on Windows (17 of 17 steps, the same answers as Windows') |
+| `CallByName` in Word for Mac's VBA | | Works without arguments; with any, it fails (`Range(0, 5)`: error 1004; `Paragraphs.Item(1)`: overflow) and does not pass a value to set. The members the server calls with arguments (`Range`, `Item`, `Add`) and the properties it sets are named in the macro instead |
+| A table after a column is added through VBA | | `uniform` reads false (the new column has another width), and Apple Events then cannot reach the columns one by one; VBA's `Columns(i).Delete` can, as on Windows |
+
+## Table borders, sorting and splitting cells (Word 16, both platforms)
+
+Measured 2026-11-20 on Word for Mac 16.114 and Word for Windows (Microsoft 365);
+`run_table_more_steps` in `scripts/live_check.py` repeats them, in a document
+that is not the active one.
+
+| What | Windows | Mac |
+|---|---|---|
+| A cell's border on one side | `Cell.Borders(wdBorderBottom)` | `get border` of a cell, as of a paragraph |
+| Sorting | `Table.Sort` with up to three fields, `ExcludeHeader` | `table sort`, the same fields (`field number two`...) |
+| Splitting a cell | `Cell.Split(NumRows, NumColumns)` | `split cell`; the row then holds more cells and `uniform` reads false |
+| Sorting or splitting a document that is not the active one | It stays in the background | The same: the active document stays active |
+| A cell asked for at a row past the last | `Table.Cell(9, 1)` of a 5-row table answers a cell of row 5, which was split | The same, through `get cell from table`. The row and the cell's place in it are checked first, on both platforms |
+| A cell past the last of a shorter row (after a merge) | `Table.Cell` raises | `get cell from table` is refused (-1708); formatting a block skips that position, as on Windows |
+
+## A style's numbering (Word 16, both platforms)
+
+Measured 2026-11-20; `run_style_numbering_steps` in `scripts/live_check.py`
+repeats it. Heading 1 and 2 numbered with `word_apply_list` (level 1 linked to
+Heading 1, level 2 to Heading 2), then Heading 3 linked at level 3 and taken off.
+
+| What | Windows | Mac |
+|---|---|---|
+| A style's list | `Style.ListTemplate` (Nothing when it has none) and `Style.ListLevelNumber` | `list template` (missing value when none) and `list level number` |
+| The style each level is linked to | `ListLevel.LinkedStyle` | Apple Events answer a missing value for every level, Heading 1's too; the bridge reads `LinkedStyle` |
+| Joining a list at a level | `Style.LinkToListTemplate(template, 3)`: Heading 3's paragraph reads 1.1.1, and the list's level 3 names Heading 3 | `link to list template` is refused (-1708); through the bridge, as on Windows |
+| Taking a style's numbering off | `LinkToListTemplate(None)`: the paragraph has no list, the headings around it keep theirs (the next Heading 1 reads 2.) | Through the bridge (`LinkToListTemplate Nothing`), the same |
+
+## A style's language (Word 16, both platforms)
+
+Measured 2026-11-20; `run_style_language_steps` in `scripts/live_check.py`
+repeats it.
+
+| What | Windows | Mac |
+|---|---|---|
+| Reading and setting it | `Style.LanguageID`, `LanguageIDFarEast`, `NoProofing` | `language ID`, `language ID east asian`, `no proofing`, through Apple Events; the paragraphs in the style follow |
+| Turning checking off | `NoProofing` | Setting `language ID` to no proofing's ID (1024) leaves it as it was; `no proofing` works, so both platforms use it |
+| A new document's Quote style, on a Mac set to English (Israel) | | `language ID` 0x0C00, the custom locale Word has no dictionary for (Checks): setting the style's language puts every paragraph in it back under checking |
+
+## Lists of figures (Word 16, both platforms)
+
+Measured 2026-11-20; `run_list_of_figures_steps` in `scripts/live_check.py`
+repeats it. A list of figures is a TOC field with `\c "Figure"`, the name the
+captions' SEQ fields have.
+
+| What | Windows | Mac |
+|---|---|---|
+| Where it is kept | `TablesOfFigures`, not `TablesOfContents` | `tables of figures` |
+| No caption of the label | Word fills the list with its own sentence, "No table of figures entries found." | The same |
+| A caption added, then `update field` on the list's field | (`TableOfFigures.Update`) | Left as it was: the new caption is not listed. The `table of figures`' `update` rebuilds it |
+
+## Changing an equation in place (Word 16, both platforms)
+
+Measured 2026-11-20; `run_equation_edit_steps` in `scripts/live_check.py`
+repeats it.
+
+| What | Windows | Mac |
+|---|---|---|
+| A numbered equation, linearized | `█(E=mc^2#(1) )`: an array holding the equation and its number, the 1 a SEQ field | The same |
+| The new text put between the array's opening and "#(" | Built up centred with its number at the right margin; the numbers after it stay | The same (the page picture shows it) |
+| The text from the zone's start instead | The array's opening goes, its closing " )" stays: malformed | The same |
+| The SEQ Field read before the edit, after building up | "Object has been deleted": building up makes the field anew | Read before the edit too |
+| A hyphen in the new text | Built up as a minus sign (x−y) | The same |
+
+## References to equations, and text after a last equation (Word 16, both platforms)
+
+Measured 2026-11-20; `run_equation_reference_steps` in `scripts/live_check.py`
+repeats it.
+
+| What | Windows | Mac |
+|---|---|---|
+| `REF` to the bookmarked SEQ field in an equation's number | The result, "2", comes into the text as math: word_list_equations lists the referring paragraph as an equation | The same |
+| The same with `\* CHARFORMAT`, `\# 0` or `\* Arabic` | Text, not math | The same; `\* MERGEFORMAT` is still math |
+| A new equation above, then all fields updated | The references follow: 2 becomes 3 | The same |
+| The equation referred to changed (word_set_equation) | The reference still finds it | The same |
+| Paragraphs inserted at the end when the last paragraph is an equation | Their text went into the equation: "Then text." became an equation of its own | The same |
+| `Paragraph.Range.InsertParagraphAfter` on that last paragraph | A paragraph outside the equation; text put in it stays text | `insert paragraph` at the story's end: -1708; VBA's `InsertParagraphAfter` (the bridge) works |
+
+## Grouping shapes (Word 16, both platforms)
+
+Measured 2026-11-20; `run_group_steps` in `scripts/live_check.py` repeats it.
+
+| What | Windows | Mac |
+|---|---|---|
+| Grouping | `Shapes.Range([...]).Group()` | Apple Events have no grouping and no group items; VBA's `Shapes.Range(...).Group` (the bridge) |
+| `Shapes.Range` in VBA | An array of Variants | An array of Strings: "Invalid procedure call or argument"; an array of Variants works. The bridge's request on the Mac ends with an empty line, which is no shape name |
+| The ShapeRange `Ungroup` answers | The shapes are ungrouped, but reading its items' names is refused ("Exception occurred", every time) | The same in VBA ("The specified value is out of range") |
+| The shapes' names after ungrouping | The names they had in the group: read from `GroupItems` before | The same |
+| A group moved by `dleft` | Its shapes move together | The same |
+
+## Inline equations (Word 16, both platforms)
+
+Measured 2026-11-20; `run_inline_equation_steps` in `scripts/live_check.py`
+repeats it.
+
+| What | Answer |
+|---|---|
+| UnicodeMath written among a paragraph's words, made a math zone (`OMaths.Add`; on the Mac `create new equation`) and built up | An inline equation: `Type` 1 (`display type` inline), set in the line's text |
+| A paragraph's equations | `Range.OMaths` (on the Mac the math objects starting in it) in order: the n-th is the n-th from the start |
+| Linearized, an inline equation's own range | Its UnicodeMath alone; the paragraph's text holds the words around it too |
+| An inline equation's range rewritten while linear, then built up | The words around it stay; the other equations in the paragraph are as they were |
+| Read back | In Word's math letters (𝐸=𝑚𝑐^2), as display equations |
+| `word_get_paragraphs` on a paragraph with a built-up equation | Its structure shows as paragraph marks inside the text (𝑚\r1\r), as for display equations |
+
+## Shapes in headers and footers (Word 16, both platforms)
+
+Measured 2026-11-20; `run_header_shape_steps` in `scripts/live_check.py`
+repeats it.
+
+| What | Windows | Mac |
+|---|---|---|
+| Making a shape | `HeaderFooter.Shapes.AddShape(..., anchor)` with a header paragraph's range as the anchor | `make new shape` with a header paragraph's text as its `anchor`; where it is made (`at`) does not matter, the anchor puts it in the header |
+| The document's shapes | Leave out those in headers and footers | The same: `count shapes` of the document was 0 with two in the header |
+| A header's or footer's shapes | Every header's and footer's, whichever is asked | The same, through `header footer`'s `shape` elements |
+| Where a shape is | `Anchor.StoryType` (7 primary header, 9 primary footer...) and `Anchor.Sections(1)` | `anchor`'s `story type` (`primary header story`...) |
+| A floating picture | Made in line at the header paragraph, then `ConvertToShape` | Apple Events make a picture in line first, and `header footer` has no inline shapes: VBA's `HeaderFooter.Shapes.AddPicture` with the paragraph as its anchor (the bridge), at the picture's own size, then sized as asked |
+| The VBA bridge reaching a header's shape (alt text) | - | Through its header, `Sections(n).Headers(i).Shapes(name)`: the document's `Shapes` has no item by that name ("The item with the specified name wasn't found") |
+
+## Numbers with the chapter (Word 16, both platforms)
+
+Measured 2026-11-21; `run_chapter_number_steps` in `scripts/live_check.py`
+repeats it.
+
+| What | Answer |
+|---|---|
+| A caption's number as `STYLEREF 1 \s`, a separator, `SEQ Figure \* ARABIC \s 1` (as Word's own Insert Caption with the chapter number) | Figure 1.1 under the numbered heading 1; 2.1 and 2.2 under heading 2, the count starting again |
+| The same in a numbered equation's `#(1.1)`, its last 1 the SEQ field and the one before it the STYLEREF | (2.1) at the right margin; a thin space after the period on Windows, a wider one on the Mac, as Word sets a period in math |
+| The separator quoted as ordinary text in the equation, `#(1"."1)` | The equation stayed in its linear form on the page (Mac): not done |
+| Cross-references bookmarking from the STYLEREF to the SEQ | "Figure 2.2", "2.2" and "(2.1)" |
+| A STYLEREF result on Word for Mac | "\u200e2": a left-to-right mark before the number, with every switch (\s, \n, \r, \w, \t) and by style name; the numbers the tools answer leave it out |
+| A caption before any heading of the level | Word searches on and takes the next heading's number (1.1) |
+| A heading level the document does not have | "Error! No text of specified style in document.": the call warns |
+

@@ -7,19 +7,23 @@ document.
 
 from __future__ import annotations
 
+import logging
 import time
 
 from pydantic import Field, model_validator
 
 from .. import backend
+from ..backend.com import names_of
 from ._common import DESTRUCTIVE, READ_ONLY, WRITES, Input, Trimmed, annotations, call, follow
 from .shapes import leading_anchors
 from ._word import (
     WD_COLLAPSE_END, WD_FIND_STOP, WD_OUTLINE_BODY,
     WD_STATISTIC_CHARACTERS, WD_STATISTIC_PAGES, WD_STATISTIC_WORDS,
     check_span, clean_text, deletion_spans, index_of, inside_spans, paragraph, paragraph_info,
-    paragraphs_in, visible_text, BUILTIN_STYLES, resolve_style, style_name,
+    paragraph_detail, paragraphs_in, visible_text, BUILTIN_STYLES, resolve_style, style_name,
 )
+
+logger = logging.getLogger(__name__)
 
 MAX_PARAGRAPHS_PER_READ = 200
 WD_WITHIN_TABLE = 12  # WdInformation
@@ -33,8 +37,8 @@ def _get_document_info_impl():
     setup = doc.PageSetup
     return {
         "success": True,
-        "name": doc.Name,
-        "full_name": doc.FullName,
+        "name": names_of(doc)[0],
+        "full_name": names_of(doc)[1],
         "saved": bool(doc.Saved),
         "paragraphs": doc.Paragraphs.Count,
         "pages": doc.ComputeStatistics(WD_STATISTIC_PAGES),
@@ -145,6 +149,63 @@ def finish_reading(result: dict, last: int, count: int) -> None:
                           f"pass start={reached + 1}.")
 
 
+def paragraph_from_row(fields: list[str], detail: bool) -> tuple[dict, bool]:
+    """A paragraph as the VBA bridge read it (backend/vba/WordMcpBridge.bas,
+    ReadParagraphs), and whether its text has to be read the slow way: tracked
+    changes in it, or ruby (fields), are worked out paragraph by paragraph."""
+    from ..backend.bridge import decode
+
+    index, changes, level = int(fields[0]), int(fields[1]), int(fields[2])
+    text = decode(fields[4])
+    info = {"index": index, "text": clean_text(text), "style": decode(fields[3]) or None}
+    if level != WD_OUTLINE_BODY:
+        info["outline_level"] = level
+    if detail:
+        (alignment, ascii_font, east_asian, complex_font, size, size_complex, bold, italic,
+         color, rule, spacing, before, after) = fields[5:18]
+        info.update(paragraph_detail(
+            int(alignment), decode(ascii_font), decode(east_asian), decode(complex_font),
+            float(size), float(size_complex), int(bold), int(italic), int(color), int(rule),
+            float(spacing), float(before), float(after)))
+    return info, bool(changes) or "\x15" in text
+
+
+def bridge_paragraphs(document, start: int, last: int, detail: bool, revisions: bool,
+                      began: float, read_text) -> list[dict] | None:
+    """Paragraphs start..last read by the VBA bridge, in one call to Word; None
+    when the bridge cannot be used, and the paragraphs are read as before.
+
+    `document()` names the document for the bridge. `read_text(index)` reads one paragraph's text the slow way, as a paragraph
+    without `detail` ("text", "style", and "deleted_text", "ruby"...): the
+    bridge's text holds tracked deletions and ruby fields as they are stored.
+    `revisions` asks the bridge to count each paragraph's changes, for a
+    document that has any."""
+    from ..backend.bridge import BridgeError, Unavailable, encode
+
+    word = backend.word
+    vba = getattr(word, "vba", None)
+    if vba is None:
+        return None
+    seconds = max(1.0, READ_SECONDS - (time.monotonic() - began))
+    try:
+        lines = vba.call(word.get_app(), "Paragraphs", encode(document()), str(start), str(last),
+                         "1" if detail else "0", "1" if revisions else "0", f"{seconds:.1f}")
+    except (Unavailable, BridgeError) as exc:
+        logger.info("Reading paragraphs as before: %s", exc)
+        return None
+    out = []
+    for line in lines[1:]:
+        info, slow = paragraph_from_row(line.split("|"), detail)
+        if slow:
+            # The bridge's detail stays: the slow read gives the text only.
+            info = {**info, **{k: v for k, v in read_text(info["index"]).items()
+                               if k not in ("outline_level",)}}
+        out.append(info)
+        if time.monotonic() > began + READ_SECONDS:
+            break
+    return out
+
+
 def _get_paragraphs_impl(start: int, end: int | None, detail: bool):
     doc = backend.word.document()
     began = time.monotonic()
@@ -156,11 +217,15 @@ def _get_paragraphs_impl(start: int, end: int | None, detail: bool):
         last = start + MAX_PARAGRAPHS_PER_READ - 1
     from .tables import mark_tables
 
-    out = []
-    for i, p in paragraphs_in(doc, start, last):
-        out.append(paragraph_info(i, p, detail))
-        if time.monotonic() > began + READ_SECONDS:
-            break
+    out = bridge_paragraphs(
+        lambda: names_of(doc)[1], start, last, detail, bool(doc.Revisions.Count), began,
+        lambda i: paragraph_info(i, paragraph(doc, i), False))
+    if out is None:
+        out = []
+        for i, p in paragraphs_in(doc, start, last):
+            out.append(paragraph_info(i, p, detail))
+            if time.monotonic() > began + READ_SECONDS:
+                break
     mark_tables(doc, out)
     result = {"success": True, "paragraphs": out, "count": count}
     finish_reading(result, last, count)
@@ -244,6 +309,18 @@ def _insert_paragraphs_impl(paragraphs: list[dict], after: int | None,
             first_index = 1
             rng = doc.Range(last.Range.Start, last.Range.Start)
             rng.InsertAfter("\r".join(texts))
+        elif last.Range.OMaths.Count:
+            # Text put before an equation's paragraph mark went into the
+            # equation (measured on both platforms: "Then text." became an
+            # equation of its own). A paragraph goes after the mark instead,
+            # and the text in it, without the equation's formatting.
+            last.Range.InsertParagraphAfter()
+            first_index = count + 1
+            new = paragraph(doc, first_index).Range
+            doc.Range(new.Start, new.Start).InsertAfter("\r".join(texts))
+            fresh = doc.Range(paragraph(doc, first_index).Range.Start, doc.Content.End)
+            fresh.Font.Reset()
+            fresh.ParagraphFormat.Reset()
         else:
             first_index = count + 1
             end = last.Range.End - 1
@@ -393,7 +470,9 @@ class FindReplaceInput(Input):
         "Replacement. Leave out to only count and locate the matches."))
     match_case: bool = False
     whole_word: bool = False
-    wildcards: bool = Field(False, description="Treat `find` as a Word wildcard pattern.")
+    wildcards: bool = Field(False, description=(
+        "Treat `find` as a Word wildcard pattern. On the Mac this needs ms-word-mcp's VBA "
+        "bridge (word_get_app_info, vba_bridge)."))
 
 
 #: How long one word_find_replace searches, and how long it works in all. A
@@ -436,6 +515,56 @@ def replace_outcome(result: dict, listed: int, searched_all: bool, replaced: int
     result.setdefault("warnings", []).append(note)
 
 
+def bridge_find_replace(document, find: str, replace: str | None, match_case: bool,
+                        whole_word: bool, wildcards: bool, began: float) -> dict | None:
+    """word_find_replace done by the VBA bridge inside Word, in one call; None
+    when the bridge cannot be used, and it is done as before.
+
+    The same search and replacement as _find_all and _find_replace_impl
+    (backend/vba/WordMcpBridge.bas, FindReplace): Find.Execute match by match,
+    matches in tracked deletions left out, the first LISTED_MATCHES numbered,
+    replaced from the last back and each read back, within SEARCH_SECONDS and
+    WORK_SECONDS. Over COM each match cost several calls into Word (about 40 a
+    second); inside Word they cost next to nothing. The answer also carries
+    `_first`, the paragraph of the first match, for the caller to follow."""
+    from ..backend.bridge import BridgeError, Unavailable, encode
+
+    word = backend.word
+    vba = getattr(word, "vba", None)
+    if vba is None:
+        return None
+    spent = time.monotonic() - began
+    pattern = find if wildcards else find.replace("^", "^^")
+    text = "" if replace is None else replace.replace("\n", "\v")
+    try:
+        lines = vba.call(
+            word.get_app(), "FindReplace", encode(document()), encode(pattern), encode(text),
+            "0" if replace is None else "1", "1" if match_case else "0",
+            "1" if whole_word else "0", "1" if wildcards else "0", str(LISTED_MATCHES),
+            f"{max(1.0, SEARCH_SECONDS - spent):.1f}", f"{max(1.0, WORK_SECONDS - spent):.1f}")
+    except Unavailable as exc:
+        logger.info("Finding as before: %s", exc)
+        return None
+    except BridgeError as exc:
+        # Not done again the slow way: what was replaced before the error stays.
+        raise ValueError(str(exc)) from None
+    searched_all, done, missed = lines[0] == "1", int(lines[1]), int(lines[2])
+    matches = [tuple(int(x) for x in line.split(",")) for line in lines[4:]]
+    listed = matches[:LISTED_MATCHES]
+    result = {"success": True, "matches": len(matches),
+              "paragraphs": sorted({m[2] for m in listed})}
+    if replace is None or not matches:
+        replace_outcome(result, len(listed), searched_all, None, find, None)
+        return result
+    result["replaced"] = done - missed
+    if missed:
+        result["warnings"] = [f"{missed} of {done} replacements read back "
+                              "differently. Read the paragraphs back."]
+    replace_outcome(result, len(listed), searched_all, done, find, replace, wildcards)
+    result["_first"] = matches[0][2]
+    return result
+
+
 def _find_all(doc, find, match_case, whole_word, wildcards, deadline):
     """(start, end, paragraph index) of each match, in order, and whether all were found.
 
@@ -472,6 +601,13 @@ def _find_replace_impl(find: str, replace: str | None, match_case: bool,
                        whole_word: bool, wildcards: bool):
     doc = backend.word.document()
     began = time.monotonic()
+    result = bridge_find_replace(lambda: names_of(doc)[1], find, replace, match_case,
+                                 whole_word, wildcards, began)
+    if result is not None:
+        first = result.pop("_first", None)
+        if first is not None:
+            follow(doc, paragraph(doc, first).Range)
+        return result
     matches, searched_all = _find_all(doc, find, match_case, whole_word, wildcards,
                                       began + SEARCH_SECONDS)
     listed = matches[:LISTED_MATCHES]
