@@ -87,6 +87,62 @@ def toc_code(upper: int, lower: int, hyperlinks: bool, page_numbers: bool,
     return code
 
 
+def figures_code(label: str, hyperlinks: bool, page_numbers: bool) -> str:
+    """A list of figures: a table of contents of the captions numbered under
+    `label` (their SEQ fields, references.seq_name), as Word's own command makes it."""
+    from .references import seq_name
+
+    code = "TOC" + (" \\h" if hyperlinks else "") + f' \\z \\c "{seq_name(label)}"'
+    return code + ("" if page_numbers else " \\n")
+
+
+class InsertFiguresInput(Input):
+    label: Trimmed = Field("Figure", min_length=1, max_length=40, description=(
+        "Whose captions it lists, by their label as word_insert_caption gave it: Figure, "
+        "Table, 図, 表... One list a label."))
+    after: int | None = Field(None, ge=0, description=(
+        "Put the list after this paragraph (0 = at the very start)."))
+    before: int | None = Field(None, ge=1, description="Put it before this paragraph.")
+    hyperlinks: bool = Field(True, description="Entries link to their captions.")
+    page_numbers: bool = Field(True, description="Show page numbers.")
+
+    @model_validator(mode="after")
+    def _one_place(self):
+        if self.after is not None and self.before is not None:
+            raise ValueError("Give `after` or `before`, not both.")
+        return self
+
+
+_FIGURES_SWITCH = re.compile(r"\\c\b", re.I)
+
+
+def is_list_of_figures(code: str) -> bool:
+    """A TOC field that lists captions (\\c), not headings."""
+    return _kind(code) == "TOC" and bool(_FIGURES_SWITCH.search(code or ""))
+
+
+def figures_answer(at: int, label: str, summary: dict, captions: list[dict],
+                   paragraphs: int) -> dict:
+    """What word_insert_list_of_figures answers. With no caption of the label,
+    Word fills the list with a sentence of its own, in its own language ("No
+    table of figures entries found.", measured), so the captions are counted
+    rather than the list's lines."""
+    from .references import seq_name
+
+    if not any(c["label"] == seq_name(label) for c in captions):
+        summary = {**summary, "entries": 0, "first_entries": []}
+    result = {"success": True, "index": at, "label": label, **summary, "paragraphs": paragraphs}
+    if summary["entries"] == 0:
+        result["warnings"] = [no_captions(label)]
+    return result
+
+
+def no_captions(label: str) -> str:
+    return (f"The list has no entries: no caption is labeled '{label}'. Captions come from "
+            "word_insert_caption (word_list_captions lists them); add them and update the "
+            "list (word_update_fields with tables_of_contents).")
+
+
 class InsertTocInput(Input):
     after: int | None = Field(None, ge=0, description=(
         "Put the table after this paragraph (0 = at the very start)."))
@@ -171,6 +227,29 @@ def _insert_toc_impl(after, before, upper_level, lower_level, hyperlinks, page_n
     return result
 
 
+def _insert_list_of_figures_impl(label, after, before, hyperlinks, page_numbers):
+    from . import text
+
+    doc = backend.word.document()
+    count = doc.Paragraphs.Count
+    at = _toc_place(count, after, before)
+    if at > count:
+        at = text._insert_paragraphs_impl([{"text": "", "style": "Normal"}], None,
+                                          None)["inserted"][0]["index"]
+    # At the start of the paragraph it comes before, as a table of contents
+    # goes (_insert_toc_impl).
+    p = paragraph(doc, at)
+    field = doc.Fields.Add(doc.Range(p.Range.Start, p.Range.Start), WD_FIELD_EMPTY,
+                           figures_code(label, hyperlinks, page_numbers), False)
+    field.Update()
+    summary = _toc_summary(doc, field)
+    follow(doc, field.Result)
+    from .references import _list_captions_impl
+
+    return figures_answer(at, label, summary, _list_captions_impl()["captions"],
+                          doc.Paragraphs.Count)
+
+
 class UpdateFieldsInput(Input):
     what: Literal["all", "tables_of_contents", "page_numbers", "numbers", "references"] = Field(
         "all", description=(
@@ -209,8 +288,10 @@ def _update_fields_impl(what, start, end):
     count = 0
     if what in ("tables_of_contents", "page_numbers") and start is None:
         tocs = doc.TablesOfContents
-        # TablesOfContents and the document's TOC fields run in the same order.
-        codes = [f.Code.Text for f in _fields_in(doc, None, None) if _kind(f.Code.Text) == "TOC"]
+        # TablesOfContents and the document's TOC fields run in the same order,
+        # lists of figures apart: they are TablesOfFigures.
+        codes = [f.Code.Text for f in _fields_in(doc, None, None)
+                 if _kind(f.Code.Text) == "TOC" and not is_list_of_figures(f.Code.Text)]
         for i in range(1, tocs.Count + 1):
             if i <= len(codes) and not may_update(codes[i - 1]):
                 skipped.append(active_kind(codes[i - 1]))
@@ -269,6 +350,16 @@ def _update_fields_impl(what, start, end):
             # example tests for it).
             ok = f.Update()
             (updated if ok in (True, 1, -1, None) else failed).append(f"{kind} field {i}")
+    if what in ("tables_of_contents", "page_numbers", "all") and start is None:
+        # A list of figures is not among TablesOfContents.
+        figures = doc.TablesOfFigures
+        for i in range(1, figures.Count + 1):
+            try:
+                figures.Item(i).UpdatePageNumbers() if what == "page_numbers" else \
+                    figures.Item(i).Update()
+                updated.append(f"list of figures {i}")
+            except Exception as exc:  # noqa: BLE001 - reported
+                failed.append(f"list of figures {i}: {exc}")
     total = count if what == "all" else len(updated)
     result = {"success": True, "updated": total, "which": updated[:50]}
     warnings = [f"Not updated: {', '.join(failed[:20])}."] if failed else []
@@ -399,6 +490,33 @@ def _mac_insert_toc(after, before, upper_level, lower_level, hyperlinks, page_nu
     return result
 
 
+@mac_impl(_insert_list_of_figures_impl)
+def _mac_insert_list_of_figures(label, after, before, hyperlinks, page_numbers):
+    from . import mac as m
+    from . import text
+    from ._common import MAC_IMPLS
+
+    word = backend.word
+    doc = word.document()
+    count = m._count(doc)
+    at = _toc_place(count, after, before)
+    if at > count:
+        at = MAC_IMPLS[text._insert_paragraphs_impl.__name__](
+            [{"text": "", "style": "Normal"}], None, None)["inserted"][0]["index"]
+    start, _ = m._bounds(doc, at)
+    f = _mac_new_field(word.get_app(), doc, start, start,
+                       figures_code(label, hyperlinks, page_numbers))
+    f.update_field()
+    lines = [m._clean(x) for x in (f.result_range.content.get() or "").split("\r")
+             if x.strip()]
+    summary = {"code": (f.field_code.content.get() or "").strip(), "entries": len(lines),
+               "first_entries": [re.sub(r"\s+", " ", x)[:80] for x in lines[:8]]}
+    from .references import _list_captions_impl
+
+    return figures_answer(at, label, summary,
+                          MAC_IMPLS[_list_captions_impl.__name__]()["captions"], m._count(doc))
+
+
 @mac_impl(_update_fields_impl)
 def _mac_update_fields(what, start, end):
     from . import mac as m
@@ -420,6 +538,8 @@ def _mac_update_fields(what, start, end):
             continue
         if what in ("tables_of_contents", "page_numbers") and kind != "TOC":
             continue
+        if is_list_of_figures(code):
+            continue  # `update field` leaves it as it was (measured): updated below
         if not may_update(code):
             skipped.append(active_kind(code))
             continue
@@ -428,6 +548,16 @@ def _mac_update_fields(what, start, end):
             updated.append(f"{kind} field {i}")
         except Exception as exc:  # noqa: BLE001 - reported
             failed.append(f"{kind} field {i}: {str(exc).splitlines()[0]}")
+    if what in ("tables_of_contents", "page_numbers", "all") and start is None:
+        # A list of figures is rebuilt through its `table of figures` (measured).
+        from appscript import k
+
+        for i in range(1, int(doc.count(each=k.table_of_figures)) + 1):
+            try:
+                doc.tables_of_figures[i].update()
+                updated.append(f"list of figures {i}")
+            except Exception as exc:  # noqa: BLE001 - reported
+                failed.append(f"list of figures {i}: {str(exc).splitlines()[0]}")
     result = {"success": True, "updated": len(updated), "which": updated[:50]}
     if what == "page_numbers" and updated:
         result["note"] = ("On macOS a table of contents is updated whole: its entries "
@@ -509,6 +639,17 @@ def register(mcp) -> None:
         return await call(_insert_toc_impl, p.after, p.before, p.upper_level, p.lower_level,
                           p.hyperlinks, p.page_numbers, p.from_paragraph, p.to_paragraph,
                           undo="Insert table of contents")
+
+    @mcp.tool(name="word_insert_list_of_figures",
+              annotations=annotations("Insert a list of figures", WRITES))
+    async def word_insert_list_of_figures(params: InsertFiguresInput) -> str:
+        """Insert a list of figures, or of tables: every caption of one label
+        (word_insert_caption) with its page, as Word's own command makes it.
+        Reads back its entries. word_update_fields with tables_of_contents
+        brings it up to date after captions are added."""
+        p = params
+        return await call(_insert_list_of_figures_impl, p.label, p.after, p.before,
+                          p.hyperlinks, p.page_numbers, undo="Insert list of figures")
 
     @mcp.tool(name="word_update_fields", annotations=annotations("Update fields", WRITES))
     async def word_update_fields(params: UpdateFieldsInput) -> str:

@@ -11,8 +11,18 @@ permission:
   https://learn.microsoft.com/en-us/office/vba/api/word.page.enhmetafilebits),
   drawn into a PNG with GDI+.
 - macOS: Word saves the document as a PDF (it keeps its own file), and
-  Quartz draws the page into a PNG. Word for Mac's PDF shows comments and
-  tracked changes in a margin (measured).
+  Quartz draws the page into a PNG.
+
+Windows draws a page without comments, with tracked changes as accepted, so
+it shows the page as it will print. Word for Mac's PDF of a document with
+comments or tracked changes shrinks the page to about two thirds and draws
+them in a grey pane beside it, inside the same page size (measured on 16.114:
+neither the window's view nor the print options change it). So on the Mac
+such a document is drawn from a copy: a new document given the original's
+`formatted text`, its last section's page setup and headers carried over
+(they live in the last paragraph mark, which `formatted text` leaves out),
+its changes accepted and its comments deleted. The original is not touched,
+and the user's active document is given back.
 """
 
 from __future__ import annotations
@@ -182,6 +192,88 @@ def _mac_pdf_folder(doc) -> str:
     return CONTAINER
 
 
+#: The page setup a copy carries over from the last section, in this order:
+#: the orientation turns the page, so the sizes come after it, and setting
+#: the lines or characters a page turns on the document grid, so the grid's
+#: own setting comes after them (measured).
+CARRIED_SETUP = ("orientation", "page_width", "page_height", "top_margin", "bottom_margin",
+                 "left_margin", "right_margin", "gutter", "header_distance", "footer_distance",
+                 "lines_page", "chars_line", "layout_mode", "different_first_page_header_footer",
+                 "odd_and_even_pages_header_footer")
+HEADER_KINDS = ("header_footer_primary", "header_footer_first_page", "header_footer_even_pages")
+
+
+def _mac_active_name(app):
+    try:
+        return app.active_document.name.get()
+    except Exception:  # noqa: BLE001 - no document active
+        return None
+
+
+def _mac_close_copy(app, copy, active) -> None:
+    from appscript import k
+
+    copy.close(saving=k.no)
+    if active:
+        try:
+            app.documents[active].activate_object()
+        except Exception:  # noqa: BLE001 - the user's document was closed meanwhile
+            pass
+
+
+def _carry_last_section(doc, copy) -> None:
+    """The last section's page setup, columns, text direction, headers and
+    footers, which live in the last paragraph mark."""
+    from appscript import k
+
+    last = int(doc.count(each=k.section))
+    if int(copy.count(each=k.section)) != last:
+        raise RuntimeError("Word made a copy of the document with another number of "
+                           "sections, so its pages would not be the document's.")
+    src, dst = doc.sections[last], copy.sections[last]
+    dst.text_object.orientation.set(src.text_object.orientation.get())  # vertical text
+    for name in CARRIED_SETUP:
+        value = getattr(src.page_setup, name).get()
+        if value != k.missing_value:
+            getattr(dst.page_setup, name).set(value)
+    columns = int(src.page_setup.count(each=k.text_column))
+    if columns != int(dst.page_setup.count(each=k.text_column)):
+        dst.page_setup.set_number_of_text_columns(number_of_columns=columns)
+    for kind in HEADER_KINDS:
+        for get in ("get_header", "get_footer"):
+            mine = getattr(src, get)(index=getattr(k, kind))
+            theirs = getattr(dst, get)(index=getattr(k, kind))
+            if last > 1 and mine.link_to_previous.get():
+                theirs.link_to_previous.set(True)
+                continue
+            if last > 1:
+                theirs.link_to_previous.set(False)
+            theirs.text_object.formatted_text.set(mine.text_object)
+
+
+def _mac_without_markup(app, doc):
+    """A new document holding `doc` as it will print: its comments deleted and
+    its tracked changes accepted (module docstring). The caller closes it."""
+    from appscript import k
+
+    # By name: a reference by place in Word's list would point at the copy once
+    # the copy is made, since a new document goes first (measured).
+    doc = app.documents[doc.name.get()]
+    copy = app.make(new=k.document)
+    try:
+        copy.text_object.formatted_text.set(doc.text_object)
+        _carry_last_section(doc, copy)
+        if int(copy.count(each=k.revision)):
+            copy.accept_all_revisions()
+        # One at a time from the last: `delete all comments` is refused (-1708).
+        for n in range(int(copy.count(each=k.Word_comment)), 0, -1):
+            copy.Word_comments[n].delete()
+    except BaseException:
+        copy.close(saving=k.no)
+        raise
+    return copy
+
+
 @mac_impl(_get_page_image_impl)
 def _mac_get_page_image(page, paragraph_index):
     import Quartz
@@ -203,11 +295,25 @@ def _mac_get_page_image(page, paragraph_index):
         raise ValueError(f"There is no page {page}: the document has {total} pages.")
     folder = _mac_pdf_folder(doc)
     pdf = os.path.join(folder, f"ms-word-mcp-page-{os.getpid()}.pdf")
+    source, active = doc, None
+    if int(doc.count(each=k.Word_comment)) or int(doc.count(each=k.revision)):
+        active = _mac_active_name(word.get_app())
+        source = _mac_without_markup(word.get_app(), doc)
+        total = source.text_object.get_range_information(
+            information_type=k.number_of_pages_in_document)
+        if page > int(total):
+            _mac_close_copy(word.get_app(), source, active)
+            raise ValueError(f"There is no page {page} once the comments and tracked "
+                             f"changes are taken out: the document then has {total} pages.")
     # Word for Mac is sandboxed and writes in its own folder without asking;
     # WORD_MAC_FILES_DIR names another folder Word has been allowed into, so
     # the server does not read Word's container. Saving as PDF does not change
     # the document's own file (measured).
-    doc.save_as(file_name=pdf, file_format=k.format_PDF)
+    try:
+        source.save_as(file_name=pdf, file_format=k.format_PDF)
+    finally:
+        if source is not doc:
+            _mac_close_copy(word.get_app(), source, active)
     try:
         url = NSURL.fileURLWithPath_(pdf)
         document = Quartz.CGPDFDocumentCreateWithURL(url)
