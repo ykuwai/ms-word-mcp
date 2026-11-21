@@ -311,6 +311,8 @@ class FakeFind:
 
 
 class FakeRange:
+    StoryType = 1  # wdMainTextStory: the stand-in has no headers or footers
+
     def __init__(self, doc, start, end):
         self.doc = doc
         self.Start = start
@@ -328,6 +330,20 @@ class FakeRange:
         else:
             self.doc.replace(self.Start, self.End, value)
         self.End = self.Start + len(value)
+
+    @property
+    def LanguageID(self):
+        """The text's language; 9999999 (wdUndefined) when it holds more than one."""
+        found = {a.get("language", 1033) for a in self.doc.attrs[self.Start:self.End]}
+        return found.pop() if len(found) == 1 else 9999999
+
+    @LanguageID.setter
+    def LanguageID(self, value):
+        for a in self.doc.attrs[self.Start:self.End]:
+            a["language"] = value
+
+    def GetSpellingSuggestions(self):
+        return [SimpleNamespace(Name=s) for s in self.doc.suggestions.get(self.Text, [])]
 
     @property
     def Document(self):
@@ -494,6 +510,68 @@ class FakeNotes:
         note = FakeNote(self, rng.Start)
         self.items.append(note)
         return note
+
+
+class FakeComment:
+    """A comment: the text it is about (its scope), its own text in the comments'
+    story, and for a reply, the comment it answers (Ancestor)."""
+
+    def __init__(self, comments, start, end, text, ancestor=None):
+        self.comments, self.start, self.end, self.text = comments, start, end, text
+        self.Ancestor = ancestor
+        self.Author, self.Initial = "Office User", "OU"
+        self.Date = datetime(2026, 11, 20, 9, 30)
+        self.Done = False
+        self.Replies = SimpleNamespace(Add=self._reply)
+
+    @property
+    def Scope(self):
+        return FakeRange(self.comments.doc, self.start, self.end)
+
+    @property
+    def Range(self):
+        """Where its text sits in the comments' story: one place per comment."""
+        return SimpleNamespace(Text=self.text, Start=self.comments.ordered().index(self) * 100)
+
+    def _reply(self, scope, text):
+        reply = FakeComment(self.comments, scope.Start, scope.End, text, ancestor=self)
+        self.comments.items.append(reply)
+        return reply
+
+    def DeleteRecursively(self):
+        for other in list(self.comments.items):
+            if other.Ancestor is self:
+                other.DeleteRecursively()
+        self.comments.items.remove(self)
+
+
+class FakeComments:
+    """Word's order: by where the text they are about starts, a reply after its
+    comment and the replies before it."""
+
+    def __init__(self, doc):
+        self.doc = doc
+        self.items = []
+
+    def ordered(self):
+        def key(c):
+            root = c
+            while root.Ancestor is not None:
+                root = root.Ancestor
+            return (root.start, self.items.index(root), c.Ancestor is not None, self.items.index(c))
+        return sorted(self.items, key=key)
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def Item(self, number):
+        return self.ordered()[number - 1]
+
+    def Add(self, rng, text):
+        comment = FakeComment(self, rng.Start, rng.End, text)
+        self.items.append(comment)
+        return comment
 
 
 class FakeHyperlink:
@@ -808,6 +886,13 @@ class FakeDocument:
         self.InlineShapes = FakeInlineShapes(self)
         self.Footnotes = FakeNotes(self)
         self.Endnotes = FakeNotes(self)
+        self.Comments = FakeComments(self)
+        # Lists of figures: none, unless a test adds them.
+        self.TablesOfFigures = SimpleNamespace(Count=0, Item=lambda i: None)
+        # One section, whose headers and footers are not there (Exists False).
+        absent = SimpleNamespace(Item=lambda i: SimpleNamespace(Exists=False))
+        section = SimpleNamespace(Headers=absent, Footers=absent)
+        self.Sections = SimpleNamespace(Count=1, Item=lambda i: section)
         self.Hyperlinks = FakeHyperlinks()
         self.Bookmarks = FakeBookmarks()
         self.Name = name
@@ -1043,6 +1128,21 @@ FakeDocument.ListTemplates = property(
 FakeRange.OMaths = property(lambda self: SimpleNamespace(Count=0))
 # No tables in a fake document.
 FakeDocument.Tables = property(lambda self: SimpleNamespace(Count=0))
+
+
+def _errors(doc, spans):
+    """Word's list of errors: each a range of the text."""
+    items = [FakeRange(doc, a, b) for a, b in spans]
+    return SimpleNamespace(Count=len(items), Item=lambda i: items[i - 1])
+
+
+# Spelling and grammar errors as (start, end) spans, set by a test, and the
+# suggestions for a misspelled word.
+FakeDocument.spelling_spans = ()
+FakeDocument.grammar_spans = ()
+FakeDocument.suggestions = {}
+FakeDocument.SpellingErrors = property(lambda self: _errors(self, self.spelling_spans))
+FakeDocument.GrammaticalErrors = property(lambda self: _errors(self, self.grammar_spans))
 
 
 def _cross_reference_items(self, kind):
