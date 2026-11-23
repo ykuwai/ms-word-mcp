@@ -294,6 +294,8 @@ def run_steps(path: str) -> None:
     run_unlink_field_steps()
     run_note_field_steps()
     run_direction_steps()
+    run_style_direction_steps()
+    run_complex_language_steps()
     run_chapter_number_steps()
     run_floating_picture_steps(Path(path).parent)
     run_safety_steps(Path(path).parent)
@@ -2437,6 +2439,70 @@ def run_direction_steps() -> None:
         step("close the document for paragraph direction", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
+
+
+def run_style_direction_steps() -> None:
+    """A style made right to left: the paragraphs that only have it follow it. Word
+    keeps them as they were, writing the old direction on each, unless the tool gives
+    them the new one (measured on both platforms)."""
+    other = step("a document for a style's direction", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        step("three Hebrew paragraphs in Normal", text._insert_paragraphs_impl,
+             [{"text": t, "style": "Normal"} for t in ("שלום אחד.", "שלום שתיים.", "שלום שלוש.")], None, None)
+        step("Normal right to left", formatting._set_style_impl, "Normal", False, None, None, None,
+             {"direction": "right_to_left"}, None, None, None, None, None, None, None)
+        record("its paragraphs follow it", _directions(3) == [0, 0, 0], _directions(3))
+        step("a picture of the page", screen._get_page_image_impl, 1, None,
+             check=lambda o: o.get("page") == 1)
+        step("close the document for a style's direction", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def _directions(count: int) -> list:
+    """Each paragraph's ReadingOrder (0 right to left), as Word's object model reads it."""
+    if backend.IS_MACOS:
+        from ms_word_mcp.tools import _vba, mac as m
+
+        full = m._full(backend.word.document())
+        return _vba.batch(full, [("get", f"Paragraphs/Item(n{i})/Format", "ReadingOrder")
+                                 for i in range(1, count + 1)])
+    doc = backend.word.document()
+    return [int(doc.Paragraphs.Item(i).Format.ReadingOrder) for i in range(1, count + 1)]
+
+
+def run_complex_language_steps() -> None:
+    """Hebrew and Arabic are complex-script languages: Word keeps them apart from
+    the language of Latin-script text, and a style cannot have them."""
+    other = step("a document for complex-script languages", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        step("a Hebrew and an Arabic paragraph", text._insert_paragraphs_impl,
+             [{"text": "שלום עולם.", "style": "Normal"}, {"text": "مرحبا بالعالم.", "style": "Normal"}],
+             None, None)
+        step("Hebrew marked as Hebrew", checks._set_language_impl, "hebrew", 1, 1,
+             check=lambda o: o.get("language") == "hebrew" and "complex-script" in o.get("note", ""))
+        step("Arabic marked as Arabic", checks._set_language_impl, "arabic", 2, 2,
+             check=lambda o: o.get("language") == "arabic")
+        record("a style refuses Hebrew, saying what to do",
+               _refused(lambda: formatting.SetStyleInput(style="Normal", language="hebrew")),
+               None)
+        step("close the document for complex-script languages", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def _refused(make) -> bool:
+    try:
+        make()
+    except Exception as exc:  # noqa: BLE001 - the input's own refusal
+        return "word_set_language" in str(exc)
+    return False
 
 
 def run_table_steps() -> None:

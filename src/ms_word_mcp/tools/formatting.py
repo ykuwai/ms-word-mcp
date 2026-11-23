@@ -432,6 +432,10 @@ class SetStyleInput(Input):
         if self.east_asian_language == "no_proofing":
             raise ValueError("no_proofing goes in `language`: it turns checking off for the "
                              "whole style.")
+        from .checks import COMPLEX_SCRIPT, STYLE_COMPLEX
+
+        if self.language in COMPLEX_SCRIPT:
+            raise ValueError(STYLE_COMPLEX.format(language=self.language) + " Nothing was changed.")
         if self.create is None and all(getattr(self, f) is None for f in (
                 "base_style", "next_style", "font", "paragraph", "quick_style", "priority",
                 "automatically_update", "no_space_between_same_style", "numbering",
@@ -472,6 +476,40 @@ def _start_plain(doc, s, kind, base_style) -> None:
     s.Font = base.Font.Duplicate
     if kind == "paragraph":
         s.ParagraphFormat = base.ParagraphFormat.Duplicate
+
+
+def _style_followers(doc, s):
+    """Before a style's direction changes: (its direction, the paragraphs in it that
+    follow it: that direction and none of their own, as the text's XML shows)."""
+    old = int(s.ParagraphFormat.ReadingOrder)
+    name = style_name(s)
+    paras = doc.Paragraphs
+    count = paras.Count
+    try:
+        own = P.own_directions(doc.Content.WordOpenXML)
+    except Exception:  # noqa: BLE001 - then told apart by direction alone
+        own = None
+    if own is not None and len(own) != count:
+        own = None
+    following = []
+    for i in range(1, count + 1):
+        p = paras.Item(i)
+        if style_name(p.Style) == name and int(p.Format.ReadingOrder) == old and not (own and own[i - 1]):
+            following.append(i)
+    return old, following
+
+
+def _unpin_direction(doc, pinned, new: int) -> int:
+    """After the change: the paragraphs that followed the style and that Word left
+    with its old direction are given the new one. How many."""
+    old, following = pinned
+    if old == new:
+        return 0
+    paras = doc.Paragraphs
+    stuck = [i for i in following if int(paras.Item(i).Format.ReadingOrder) == old]
+    for i in stuck:
+        paras.Item(i).Format.ReadingOrder = new
+    return len(stuck)
 
 
 def _set_style_impl(style, create, base_style, next_style, font, paragraph, quick_style,
@@ -543,6 +581,7 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
     para_spec = P.given(paragraph, P.PARAGRAPH_NAMES)
     font_refused = P.com_apply(s.Font, P.FONT_PROPS, font_spec) if font_spec else {}
     para_refused, style_side = {}, None
+    pinned = _style_followers(doc, s) if "direction" in para_spec else None
     if para_spec:
         fmt = s.ParagraphFormat
         style_side = P.com_read(fmt, [p for p in P.PARAGRAPH_PROPS if p.name == "alignment"]).get("alignment")
@@ -569,6 +608,9 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
     warnings += P.mismatches(font_spec, described.get("font", {}), font_refused)
     warnings += P.mismatches(para_spec, described.get("paragraph", {}), para_refused)
     warnings += P.direction_flips(para_spec, [style_side], [described.get("paragraph", {}).get("alignment")])
+    if pinned is not None:
+        warnings += P.unpinned_note(_unpin_direction(doc, pinned, P.DIRECTIONS[para_spec["direction"]]),
+                                    style_name(s))
     warnings += _tab_mismatch(para_spec, described.get("paragraph", {}))
     warnings += P.border_mismatches(para_spec, described.get("paragraph", {}))
     warnings += numbering_warnings(numbering, described.get("numbering"), style)

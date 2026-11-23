@@ -268,7 +268,11 @@ class ParagraphSpec(Input):
     alignment: Literal[tuple(ALIGNMENTS)] | None = None  # type: ignore[valid-type]
     direction: Literal[tuple(DIRECTIONS)] | None = Field(None, description=(  # type: ignore[valid-type]
         "right_to_left for Arabic, Hebrew and other right-to-left paragraphs: "
-        "punctuation and numbers then sit where those languages put them. "
+        "punctuation and numbers then sit where those languages put them. Word keeps a "
+        "paragraph's start or end alignment when its direction changes, so a right-aligned "
+        "paragraph made right to left moves to the left: give `alignment` in the same call "
+        "to choose the side. A paragraph that starts with a number can lose the space after "
+        "it; a right-to-left mark (U+200F) at the start of the text keeps it. "
         "On the Mac this needs ms-word-mcp's VBA bridge: its scripting has no reading "
         "order."))
     tab_stops: list[TabStop] | None = Field(None, max_length=20, description=(
@@ -437,6 +441,30 @@ def direction_flips(spec: dict, before: list, after: list) -> list[str]:
     return [f"alignment now reads '{now}' where it read '{was}' ({len(flipped)} paragraph(s) or style): "
             "Word keeps a paragraph's start or end alignment when its direction changes, so the "
             "side flips. Give alignment in the same call to choose the side."]
+
+
+def own_directions(xml) -> list[bool] | None:
+    """Whether each paragraph of a story's XML (WordOpenXML) sets a direction of its
+    own (w:bidi among its own properties); a text box's paragraphs are left out."""
+    import re
+
+    if not isinstance(xml, str) or "<w:body>" not in xml:
+        return None
+    xml = re.sub(r"<w:txbxContent>.*?</w:txbxContent>", "", xml, flags=re.S)
+    own = []
+    for para in re.findall(r"<w:p[ >].*?</w:p>|<w:p/>", xml[xml.find("<w:body>"):], re.S):
+        props = re.search(r"<w:pPr>(.*?)</w:pPr>", para, re.S)
+        own.append(bool(props and re.search(r"<w:bidi\b", props.group(1))))
+    return own
+
+
+def unpinned_note(count: int, style: str) -> list[str]:
+    if not count:
+        return []
+    return [f"{count} paragraph(s) in {style} were given its new direction: Word keeps a style's "
+            "paragraphs as they were when its direction changes, writing their old direction on "
+            "each (measured on Windows and the Mac). Paragraphs that had a direction of their own "
+            "stay as they were, and so do those of styles based on it."]
 
 
 def com_apply(obj, props, spec: dict) -> dict:

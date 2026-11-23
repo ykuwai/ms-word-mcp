@@ -183,6 +183,8 @@ Every member and constant is checked against Microsoft's documentation ([docs/re
 
 `word_set_style` defines any character and paragraph property on a style; `word_format_text` and `word_set_paragraph_format` take the same properties for the exceptions. The English built-in names ("Normal", "Heading 1", "TOC 1"...) work in every language of Word.
 
+Right-to-left text (Hebrew, Arabic): `direction: "right_to_left"` on paragraphs or on a style. Word keeps a paragraph's start or end alignment when its direction changes, so give `alignment` in the same call to choose the side; the result says when the side flipped. A style's new direction reaches the paragraphs that only have the style (Word keeps them as they were, writing the old direction on each; the server gives them the new one). Their language is marked with `word_set_language`, which sets Word's complex-script language for Hebrew and Arabic; a style cannot have one. A paragraph that starts with a number can lose the space after it: a right-to-left mark (U+200F) at the start of the text keeps it.
+
 ### 🧮 Equations
 
 `word_insert_equation` takes LaTeX or UnicodeMath and has Word's own equation editor build it. With `numbered`, the number sits at the right margin and is a field, so inserting an equation renumbers the rest. `word_insert_inline_equation` puts one among a paragraph's words, at the start or end of its text or in place of a placeholder; `word_get_equation` and `word_set_equation` reach it by its place in the paragraph (`nth`). With `chapter`, numbered equations and captions (`word_insert_caption`) count within each chapter, (2.1) and Figure 2.1, the chapter's number taken from the numbered heading before them.

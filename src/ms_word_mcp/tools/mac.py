@@ -826,6 +826,66 @@ def _bridged(doc, path: str, props, spec: dict, refused: dict, got: dict) -> Non
     got.update(P.com_read(obj, missing))
 
 
+#: Paragraphs read or set in one bridge request.
+DIRECTION_BATCH = 400
+
+
+def _own_directions(full: str) -> list[bool] | None:
+    from . import _vba
+
+    try:
+        return P.own_directions(_vba.Remote(full, "Content").WordOpenXML)
+    except Exception:  # noqa: BLE001 - then nothing can be told apart
+        return None
+
+
+def _style_followers(doc, style_name: str):
+    """Before a style's direction changes: (its direction, the paragraphs in it that
+    follow it: no direction of their own, as the text's XML shows), read in a few
+    bridge requests; None without the bridge."""
+    from . import _vba
+
+    if _vba.usable():
+        return None
+    full = _full(doc)
+    old = _vba.Remote(full, _style_path(style_name, "ParagraphFormat")).ReadingOrder
+    count = _count(doc)
+    own = _own_directions(full)
+    if own is not None and len(own) != count:
+        own = None  # cannot be matched: told apart by direction alone
+    following = []
+    for first in range(1, count + 1, DIRECTION_BATCH):
+        idx = list(range(first, min(count, first + DIRECTION_BATCH - 1) + 1))
+        ops = []
+        for i in idx:
+            ops += [("get", f"Paragraphs/Item(n{i})/Style", "NameLocal"),
+                    ("get", f"Paragraphs/Item(n{i})/Format", "ReadingOrder")]
+        got = _vba.batch(full, ops)
+        following += [i for i, name, order in zip(idx, got[0::2], got[1::2])
+                      if name == style_name and order == old and not (own and own[i - 1])]
+    return old, following
+
+
+def _unpin_direction(doc, style_name: str, pinned, new: int) -> int:
+    """After the style's direction changed: the paragraphs that followed it and that
+    Word for Mac left with the old direction are given the new one. How many."""
+    from . import _vba
+
+    old, following = pinned
+    if old == new or not following:
+        return 0
+    full = _full(doc)
+    stuck = []
+    for at in range(0, len(following), DIRECTION_BATCH):
+        part = following[at:at + DIRECTION_BATCH]
+        got = _vba.batch(full, [("get", f"Paragraphs/Item(n{i})/Format", "ReadingOrder") for i in part])
+        stuck += [i for i, order in zip(part, got) if order == old]
+    for at in range(0, len(stuck), DIRECTION_BATCH):
+        _vba.batch(full, [("let", f"Paragraphs/Item(n{i})/Format", "ReadingOrder", new)
+                          for i in stuck[at:at + DIRECTION_BATCH]])
+    return len(stuck)
+
+
 def _bridged_tabs(doc, path: str, tab_stops) -> tuple[list | None, list[str]]:
     """Tab stops through the VBA bridge: the custom stops read back, or None
     and the warning when the bridge cannot be used."""
@@ -1380,6 +1440,7 @@ def set_style(style, create, base_style, next_style, font, paragraph, quick_styl
         _bridged(doc, _style_path(name, "Font"), P.FONT_PROPS, font_spec, font_refused, {})
     para_refused, tab_warnings = {}, []
     style_side = None
+    pinned = _style_followers(doc, name) if "direction" in para_spec else None
     if para_spec:
         fmt = s.paragraph_format
         style_side = P.mac_read(fmt, [p for p in P.PARAGRAPH_PROPS if p.name == "alignment"]).get("alignment")
@@ -1411,6 +1472,9 @@ def set_style(style, create, base_style, next_style, font, paragraph, quick_styl
     warnings += P.mismatches(para_spec, described.get("paragraph", {}), para_refused)
     warnings += P.direction_flips(para_spec, [style_side],
                                   [described.get("paragraph", {}).get("alignment")])
+    if pinned is not None:
+        warnings += P.unpinned_note(
+            _unpin_direction(doc, name, pinned, P.DIRECTIONS[para_spec["direction"]]), name)
     warnings += P.border_mismatches(para_spec, described.get("paragraph", {}))
     warnings += tab_warnings
     if "numbering" not in refused and "numbering" in described:

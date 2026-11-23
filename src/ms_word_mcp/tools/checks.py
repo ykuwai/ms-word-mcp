@@ -45,6 +45,14 @@ LANGUAGES = {
     "chinese_traditional": 1028, "no_proofing": 1024,
 }
 LANGUAGE_NAMES = {v: k for k, v in LANGUAGES.items()}
+#: Languages Word keeps as text's complex-script language (LanguageIDOther), apart
+#: from its Latin-script one: as the latter it refuses them, on a paragraph (it
+#: reads back mixed) and on a style (it keeps its old language), and a style has no
+#: complex-script language at all (measured on both platforms).
+COMPLEX_SCRIPT = ("hebrew", "arabic")
+STYLE_COMPLEX = ("{language} is a complex-script language, which Word keeps apart from a style's "
+                 "language and does not let a style set (measured on Windows and the Mac). "
+                 "word_set_language marks the paragraphs' {language} text as {language} instead.")
 Language = Literal[tuple(LANGUAGES)]  # type: ignore[valid-type]
 
 #: A range holding more than one language answers wdUndefined.
@@ -412,9 +420,14 @@ def language_set(language, start, end, got) -> dict:
     if got != lcid:
         raise RuntimeError(f"Paragraphs {start} to {end} read back as {language_name(got)}, not "
                            f"{language}.")
-    return {"success": True, "language": language, "start": start, "end": end,
-            "note": "Word checks spelling and grammar in this language now; "
-                    "word_check_spelling lists what it finds."}
+    out = {"success": True, "language": language, "start": start, "end": end,
+           "note": "Word checks spelling and grammar in this language now; "
+                   "word_check_spelling lists what it finds."}
+    if language in COMPLEX_SCRIPT:
+        out["note"] = (f"Word marks the paragraphs' {language} text as {language} (its complex-script "
+                       "language, kept apart from the language of Latin-script text) and checks it in "
+                       "it, given a dictionary for it.")
+    return out
 
 
 def _set_language_impl(language, start, end):
@@ -423,6 +436,9 @@ def _set_language_impl(language, start, end):
         start, end = 1, doc.Paragraphs.Count
     start, end = check_span(doc, start, end)
     rng = span_range(doc, start, end)
+    if language in COMPLEX_SCRIPT:
+        rng.LanguageIDOther = LANGUAGES[language]
+        return language_set(language, start, end, int(span_range(doc, start, end).LanguageIDOther))
     rng.LanguageID = LANGUAGES[language]
     return language_set(language, start, end, _language(span_range(doc, start, end)))
 
@@ -527,6 +543,18 @@ def _mac_set_language(language, start, end):
     start, end = m._span(doc, start, end)
     first, _ = m._bounds(doc, start)
     _, last = m._bounds(doc, end)
+    if language in COMPLEX_SCRIPT:
+        # Word for Mac's scripting has no complex-script language: the VBA bridge.
+        from . import _vba
+
+        why = _vba.usable()
+        if why:
+            raise ValueError(f"{language} is a complex-script language, which Word for Mac's scripting "
+                             f"cannot set, and ms-word-mcp's VBA bridge, which sets it, cannot be used "
+                             f"with this Word ({why}). Nothing was changed.")
+        rng = _vba.Remote(m._full(doc), _vba.path_of(("Range", first, last)))
+        rng.LanguageIDOther = LANGUAGES[language]
+        return language_set(language, start, end, int(rng.LanguageIDOther))
     doc.create_range(start=first, end_=last).language_ID.set(_mac_language_value(LANGUAGES[language]))
     got = _mac_code(doc.create_range(start=first, end_=last).language_ID.get())
     return language_set(language, start, end, MIXED if got is None else got)

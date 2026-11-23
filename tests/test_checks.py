@@ -287,3 +287,14 @@ def test_on_the_mac_the_health_check_reads_the_document(monkeypatch):
               language=b"\x02F\x0c\x00")
     out = checks._mac_check_document(100)
     assert out["counts"] == {"placeholder": 1, "unchecked_language": 1, "comments_left": 1}
+
+
+def test_a_style_refuses_a_complex_script_language_and_says_what_to_do():
+    import pytest
+    from pydantic import ValidationError
+
+    from ms_word_mcp.tools.formatting import SetStyleInput
+
+    with pytest.raises(ValidationError, match="complex-script language.*word_set_language"):
+        SetStyleInput(style="Normal", language="hebrew")
+    assert SetStyleInput(style="Normal", language="english_us").language == "english_us"
