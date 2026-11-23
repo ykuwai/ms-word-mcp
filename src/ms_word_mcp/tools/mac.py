@@ -809,6 +809,10 @@ def _bridged(doc, path: str, props, spec: dict, refused: dict, got: dict) -> Non
     missing = [p for p in props if p.mac is None and p.com and p.name in spec]
     if not missing:
         return
+    if any(p.name == "direction" for p in missing) and "alignment" in spec:
+        # The direction flips the side the scripting has just set: the alignment
+        # is set again after it (P.direction_first), as on Windows.
+        missing += [p for p in props if p.name == "alignment"]
     why = _vba.usable()
     if why:
         for p in missing:
@@ -877,6 +881,9 @@ def set_paragraph_format(start, end, paragraph):
     spec = P.given(paragraph, P.PARAGRAPH_NAMES)
     start, end = _span(doc, start, end)
     refused = {}
+    align = [p for p in P.PARAGRAPH_PROPS if p.name == "alignment"]
+    sides = [P.mac_read(doc.paragraphs[i].paragraph_format, align).get("alignment")
+             for i in range(start, min(end, start + 49) + 1)] if "direction" in spec else []
     for i in range(start, end + 1):
         fmt = doc.paragraphs[i].paragraph_format
         refused.update(P.mac_apply(fmt, P.PARAGRAPH_PROPS, spec))
@@ -913,6 +920,8 @@ def set_paragraph_format(start, end, paragraph):
         info = _info(doc, i)
         out.append({"index": i, "text": info["text"][:80], "style": info["style"],
                     **formatting.paragraph_readback(got, spec)})
+    if sides:
+        warnings += P.direction_flips(spec, sides, [o.get("alignment") for o in out])
     warnings = warnings + tab_warnings
     result = {"success": True, "paragraphs": out}
     if warnings:
@@ -1370,8 +1379,10 @@ def set_style(style, create, base_style, next_style, font, paragraph, quick_styl
     if font_spec:
         _bridged(doc, _style_path(name, "Font"), P.FONT_PROPS, font_spec, font_refused, {})
     para_refused, tab_warnings = {}, []
+    style_side = None
     if para_spec:
         fmt = s.paragraph_format
+        style_side = P.mac_read(fmt, [p for p in P.PARAGRAPH_PROPS if p.name == "alignment"]).get("alignment")
         para_refused = P.mac_apply(fmt, P.PARAGRAPH_PROPS, para_spec)
         P.mac_apply_line_spacing(fmt, para_spec.get("line_spacing_rule"),
                                  para_spec.get("line_spacing"))
@@ -1398,6 +1409,8 @@ def set_style(style, create, base_style, next_style, font, paragraph, quick_styl
             warnings.append(f"{key} reads back as {described.get(key)!r}, not {value!r}.")
     warnings += P.mismatches(font_spec, described.get("font", {}), font_refused)
     warnings += P.mismatches(para_spec, described.get("paragraph", {}), para_refused)
+    warnings += P.direction_flips(para_spec, [style_side],
+                                  [described.get("paragraph", {}).get("alignment")])
     warnings += P.border_mismatches(para_spec, described.get("paragraph", {}))
     warnings += tab_warnings
     if "numbering" not in refused and "numbering" in described:

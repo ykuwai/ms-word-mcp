@@ -293,6 +293,7 @@ def run_steps(path: str) -> None:
     run_content_control_steps()
     run_unlink_field_steps()
     run_note_field_steps()
+    run_direction_steps()
     run_chapter_number_steps()
     run_floating_picture_steps(Path(path).parent)
     run_safety_steps(Path(path).parent)
@@ -2401,6 +2402,39 @@ def run_note_field_steps() -> None:
         step("a field that is not there is said", _field_set, 2, 99999, None, "x",
              check=lambda o: "No field" in o.get("error", ""))
         step("close the document for fields in notes", documents._close_document_impl, False)
+    finally:
+        call_document.reset(token)
+
+
+def run_direction_steps() -> None:
+    """Right-to-left paragraphs: an alignment given with the direction stays as asked,
+    and a direction alone that flips the side says so (Word keeps a paragraph's
+    start or end alignment when its direction changes)."""
+    other = step("a document for paragraph direction", documents._create_document_impl, None, None)
+    if "error" in other:
+        return
+    token = call_document.set(other["full_name"])
+    try:
+        made = step("three Hebrew paragraphs", text._insert_paragraphs_impl,
+                    [{"text": t, "style": "Normal"} for t in ("שלום אחד.", "שלום שתיים.", "שלום שלוש.")],
+                    None, None)
+        if "error" in made:
+            return
+        step("all three aligned right", formatting._set_paragraph_format_impl, 1, 3, {"alignment": "right"},
+             check=lambda o: [p["alignment"] for p in o["paragraphs"]] == ["right"] * 3)
+        step("right to left and right in one call: still right", formatting._set_paragraph_format_impl, 1,
+             None, {"direction": "right_to_left", "alignment": "right"},
+             check=lambda o: o["paragraphs"][0]["alignment"] == "right" and "warnings" not in o)
+        step("right to left alone: the flip is said", formatting._set_paragraph_format_impl, 2, None,
+             {"direction": "right_to_left"},
+             check=lambda o: o["paragraphs"][0]["alignment"] == "left"
+             and "side flips" in " ".join(o.get("warnings", [])))
+        step("left to right again with an alignment: as asked", formatting._set_paragraph_format_impl, 2,
+             None, {"direction": "left_to_right", "alignment": "center"},
+             check=lambda o: o["paragraphs"][0]["alignment"] == "center" and "warnings" not in o)
+        step("a picture of the page", screen._get_page_image_impl, 1, None,
+             check=lambda o: o.get("page") == 1)
+        step("close the document for paragraph direction", documents._close_document_impl, False)
     finally:
         call_document.reset(token)
 

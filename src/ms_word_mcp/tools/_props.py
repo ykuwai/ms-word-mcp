@@ -413,6 +413,32 @@ def paired_steps(spec: dict) -> tuple[dict, dict]:
     return before, after
 
 
+def direction_first(props):
+    """The properties with a paragraph's direction first: Word keeps a paragraph's
+    start or end alignment when its direction changes, so its side flips (a right
+    alignment becomes left in a right-to-left paragraph, measured); an alignment
+    given with a direction is then set after it and stays as asked."""
+    return sorted(props, key=lambda prop: prop.name != "direction")
+
+
+#: The sides a direction change swaps.
+FLIPPED_SIDES = {"left": "right", "right": "left"}
+
+
+def direction_flips(spec: dict, before: list, after: list) -> list[str]:
+    """A note when a direction change alone moved paragraphs (or a style) to the
+    other side, Word keeping their start or end alignment (measured)."""
+    if "direction" not in spec or "alignment" in spec:
+        return []
+    flipped = [(b, a) for b, a in zip(before, after) if b in FLIPPED_SIDES and a == FLIPPED_SIDES[b]]
+    if not flipped:
+        return []
+    was, now = flipped[0]
+    return [f"alignment now reads '{now}' where it read '{was}' ({len(flipped)} paragraph(s) or style): "
+            "Word keeps a paragraph's start or end alignment when its direction changes, so the "
+            "side flips. Give alignment in the same call to choose the side."]
+
+
 def com_apply(obj, props, spec: dict) -> dict:
     """Set each given property on a COM Font or ParagraphFormat.
 
@@ -423,7 +449,7 @@ def com_apply(obj, props, spec: dict) -> dict:
     refused = {}
     before, after = paired_steps(spec) if props is PARAGRAPH_PROPS else ({}, {})
     for step in (before, spec, after):
-        for prop in props:
+        for prop in direction_first(props):
             if prop.name not in step:
                 continue
             try:

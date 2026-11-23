@@ -132,6 +132,9 @@ def _set_paragraph_format_impl(start, end, paragraph):
     start, end = check_span(doc, start, end)
     rng = span_range(doc, start, end)
     fmt = rng.ParagraphFormat
+    align = [p for p in P.PARAGRAPH_PROPS if p.name == "alignment"]
+    sides = [P.com_read(p.Format, align).get("alignment")
+             for _, p in paragraphs_in(doc, start, min(end, start + 49))] if "direction" in spec else []
     refused = P.com_apply(fmt, P.PARAGRAPH_PROPS, spec)
     P.com_apply_line_spacing(fmt, spec.get("line_spacing_rule"), spec.get("line_spacing"))
     P.com_apply_tab_stops(fmt, spec.get("tab_stops"))
@@ -153,6 +156,8 @@ def _set_paragraph_format_impl(start, end, paragraph):
                         + P.border_mismatches(spec, got))
         out.append({"index": index, "text": clean_text(p.Range.Text)[:80],
                     "style": style_name(p.Style), **paragraph_readback(got, spec)})
+    if sides:
+        warnings += P.direction_flips(spec, sides, [o.get("alignment") for o in out])
     follow(doc, rng)
     result = {"success": True, "paragraphs": out}
     if warnings:
@@ -537,9 +542,10 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
     font_spec = P.with_latin_extended(P.given(font, P.FONT_NAMES))
     para_spec = P.given(paragraph, P.PARAGRAPH_NAMES)
     font_refused = P.com_apply(s.Font, P.FONT_PROPS, font_spec) if font_spec else {}
-    para_refused = {}
+    para_refused, style_side = {}, None
     if para_spec:
         fmt = s.ParagraphFormat
+        style_side = P.com_read(fmt, [p for p in P.PARAGRAPH_PROPS if p.name == "alignment"]).get("alignment")
         para_refused = P.com_apply(fmt, P.PARAGRAPH_PROPS, para_spec)
         P.com_apply_line_spacing(fmt, para_spec.get("line_spacing_rule"),
                                  para_spec.get("line_spacing"))
@@ -562,6 +568,7 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
             warnings.append(f"{key} reads back as {described[key]!r}, not {value!r}.")
     warnings += P.mismatches(font_spec, described.get("font", {}), font_refused)
     warnings += P.mismatches(para_spec, described.get("paragraph", {}), para_refused)
+    warnings += P.direction_flips(para_spec, [style_side], [described.get("paragraph", {}).get("alignment")])
     warnings += _tab_mismatch(para_spec, described.get("paragraph", {}))
     warnings += P.border_mismatches(para_spec, described.get("paragraph", {}))
     warnings += numbering_warnings(numbering, described.get("numbering"), style)
