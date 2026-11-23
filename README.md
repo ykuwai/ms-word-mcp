@@ -259,6 +259,8 @@ The answers are the same, and on the Mac `detail` now gives what Windows gives (
 
 The first call that needs the template makes it a global template of the Word the server talks to, and the server takes it out again when it stops, so your Word is left as it was. On Windows it is added from the package with `AddIns.Add`. Word for Mac's scripting cannot add one, so the template is copied to Word's own folder, opened for a moment (which makes a new document from it), and that document's macro adds the template and is closed. If the bridge cannot be used, for instance because macros are turned off by policy, the tools read as before and `word_get_app_info` says why in `vba_bridge`.
 
+On macOS 14 and later, writing in another app's folder needs the user's leave: the app the server runs under (a terminal for Claude Code, Claude itself for the Claude desktop app) needs Full Disk Access (System Settings > Privacy & Security > Full Disk Access), then a restart. Without it the bridge cannot be loaded, and `vba_bridge` says so and names the app.
+
 ### 🔒 Security
 
 The server runs on your computer with your permissions and talks to one local client over stdio; it opens no port and makes no network request of its own.

@@ -445,3 +445,34 @@ def test_on_the_mac_wildcards_work_through_the_bridge_and_are_refused_without_it
     vba.error = bridge.Unavailable("macros are off")
     with pytest.raises(ValueError, match="Wildcards on macOS need ms-word-mcp's VBA bridge"):
         mac.find_replace("c?t", None, False, False, True)
+
+
+def test_a_macos_privacy_block_says_what_to_do(monkeypatch):
+    """Seen from the Claude desktop app: EPERM on Word's container, where the
+    template and the requests go. The reason names the app and Full Disk Access."""
+    import errno
+
+    from ms_word_mcp.backend import bridge
+
+    b = bridge.Bridge("mac")
+    monkeypatch.setattr(bridge, "enabled", lambda: True)
+    monkeypatch.setattr(bridge, "host_app", lambda: "Claude")
+
+    def blocked(app):
+        raise PermissionError(errno.EPERM, "Operation not permitted", bridge.MAC_TEMPLATE)
+
+    monkeypatch.setattr(b, "_load", blocked)
+    with pytest.raises(bridge.Unavailable) as got:
+        b.call(object(), "Ping")
+    why = str(got.value)
+    assert "privacy" in why and "Full Disk Access" in why and "quit Claude" in why
+    # Any other error stays as it was.
+    assert bridge.privacy_block(PermissionError(errno.EACCES, "denied", bridge.MAC_TEMPLATE)) is None
+    assert bridge.privacy_block(PermissionError(errno.EPERM, "x", "/elsewhere/file")) is None
+
+
+def test_the_host_app_is_found_among_the_parents():
+    from ms_word_mcp.backend import bridge
+
+    got = bridge.host_app()
+    assert got is None or (got and "/" not in got)

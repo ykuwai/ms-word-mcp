@@ -83,6 +83,50 @@ class Unavailable(RuntimeError):
     """The bridge cannot be used with this Word; read the way it was read before."""
 
 
+def host_app() -> str | None:
+    """The app this server runs under (the first .app among its parent processes:
+    "Claude", "Terminal", "iTerm"...), which macOS's privacy settings name."""
+    import subprocess
+
+    pid = os.getpid()
+    for _ in range(12):
+        try:
+            out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True,
+                                 text=True, timeout=5).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if not out:
+            return None
+        ppid, _, comm = out.partition(" ")
+        if ".app/" in comm:
+            return os.path.basename(comm.split(".app/")[0])
+        if not ppid.strip().isdigit() or int(ppid) <= 1:
+            return None
+        pid = int(ppid)
+    return None
+
+
+def privacy_block(exc: BaseException) -> str | None:
+    """A message that says what to do, when macOS's privacy protection kept this
+    server out of Word's folder (EPERM, "Operation not permitted": since macOS 14
+    an app needs the user's leave to write in another app's container, which Full
+    Disk Access gives); None for any other error."""
+    import errno
+
+    while exc is not None:
+        if isinstance(exc, PermissionError) and exc.errno == errno.EPERM and \
+                str(getattr(exc, "filename", "") or "").startswith(MAC_FOLDER):
+            app = host_app() or "the app this server runs under"
+            return (f"macOS's privacy protection keeps {app} out of Word's folder ({MAC_FOLDER}), "
+                    "where the bridge's template and its requests go (Operation not permitted). "
+                    f"Give {app} Full Disk Access (System Settings > Privacy & Security > Full Disk "
+                    f"Access), then quit {app} and open it again. Until then, what goes through the "
+                    "bridge is done the way it is without it, or refused where Word for Mac's "
+                    "scripting cannot do it.")
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
 def parse(answer: str) -> list[str]:
     """The lines of an answer after its "ok"."""
     lines = (answer or "").replace("\r\n", "\n").rstrip("\n").split("\n")
@@ -125,7 +169,7 @@ class Bridge:
                 self._load(app)
                 self.ready = True
             except Exception as exc:  # noqa: BLE001 - any failure: read as before
-                self.why_not = str(exc) or type(exc).__name__
+                self.why_not = privacy_block(exc) or str(exc) or type(exc).__name__
                 logger.warning("The VBA bridge cannot be used; reading as before: %s", self.why_not)
                 raise Unavailable(self.why_not) from exc
         return parse(self._run(app, what, list(fields)))
