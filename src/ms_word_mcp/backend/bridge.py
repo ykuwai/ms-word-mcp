@@ -84,26 +84,27 @@ class Unavailable(RuntimeError):
 
 
 def host_app() -> str | None:
-    """The app this server runs under (the first .app among its parent processes:
-    "Claude", "Terminal", "iTerm"...), which macOS's privacy settings name."""
+    """The app this server runs under, as macOS's privacy settings name it: the
+    topmost .app among its parent processes ("Claude" for the Claude desktop app,
+    whose Claude Code is a claude.app of its own inside it; "Terminal", "iTerm"...)."""
     import subprocess
 
-    pid = os.getpid()
-    for _ in range(12):
+    pid, found = os.getpid(), None
+    for _ in range(16):
         try:
             out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True,
                                  text=True, timeout=5).stdout.strip()
         except (OSError, subprocess.SubprocessError):
-            return None
+            break
         if not out:
-            return None
+            break
         ppid, _, comm = out.partition(" ")
         if ".app/" in comm:
-            return os.path.basename(comm.split(".app/")[0])
+            found = os.path.basename(comm.split(".app/")[0])
         if not ppid.strip().isdigit() or int(ppid) <= 1:
-            return None
+            break
         pid = int(ppid)
-    return None
+    return found
 
 
 def privacy_block(exc: BaseException) -> str | None:
