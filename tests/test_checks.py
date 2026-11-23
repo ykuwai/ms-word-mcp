@@ -298,3 +298,15 @@ def test_a_style_refuses_a_complex_script_language_and_says_what_to_do():
     with pytest.raises(ValidationError, match="complex-script language.*word_set_language"):
         SetStyleInput(style="Normal", language="hebrew")
     assert SetStyleInput(style="Normal", language="english_us").language == "english_us"
+
+
+def test_a_complex_script_language_is_read_from_the_text_not_the_styles():
+    from ms_word_mcp.tools.checks import complex_language_in
+
+    styles = '<w:styles><w:rPrDefault><w:rPr><w:lang w:val="en-US" w:bidi="ar-SA"/></w:rPr></w:rPrDefault></w:styles>'
+    marked = styles + '<w:body><w:r><w:rPr><w:rtl/><w:lang w:bidi="he-IL"/></w:rPr></w:r></w:body>'
+    plain = styles + '<w:body><w:r><w:t>x</w:t></w:r></w:body>'
+    assert complex_language_in(marked, "hebrew")
+    assert not complex_language_in(plain, "hebrew")  # the default is Arabic: Hebrew was not set
+    assert complex_language_in(plain, "arabic")  # Arabic is the default: Word writes nothing
+    assert not complex_language_in(marked, "arabic")

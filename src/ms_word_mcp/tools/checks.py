@@ -50,6 +50,8 @@ LANGUAGE_NAMES = {v: k for k, v in LANGUAGES.items()}
 #: reads back mixed) and on a style (it keeps its old language), and a style has no
 #: complex-script language at all (measured on both platforms).
 COMPLEX_SCRIPT = ("hebrew", "arabic")
+#: Their tags in a document's XML (w:lang's w:bidi).
+COMPLEX_TAGS = {"hebrew": "he-IL", "arabic": "ar-SA"}
 STYLE_COMPLEX = ("{language} is a complex-script language, which Word keeps apart from a style's "
                  "language and does not let a style set (measured on Windows and the Mac). "
                  "word_set_language marks the paragraphs' {language} text as {language} instead.")
@@ -460,6 +462,20 @@ def _check_document_impl(limit):
 
 # -- Mac -------------------------------------------------------------------------------
 
+def complex_language_in(xml: str, language: str) -> bool:
+    """Whether a range's XML (WordOpenXML) marks its text with this complex-script
+    language: w:bidi on its runs, or none on them where the document's default is it
+    (Word then writes nothing, measured with Arabic)."""
+    import re
+
+    tag = COMPLEX_TAGS[language]
+    body = xml[xml.find("<w:body>"):] if "<w:body>" in xml else ""
+    if f'w:bidi="{tag}"' in body:
+        return True
+    default = re.search(r"<w:rPrDefault>.*?w:bidi=\"([^\"]+)\"", xml, re.S)
+    return "w:bidi=" not in body and default is not None and default.group(1) == tag
+
+
 def _mac_code(value) -> int | None:
     """The Windows language ID in a Word for Mac language value: an enumerator
     it names (english_us), or a code it does not (a custom locale)."""
@@ -552,9 +568,15 @@ def _mac_set_language(language, start, end):
             raise ValueError(f"{language} is a complex-script language, which Word for Mac's scripting "
                              f"cannot set, and ms-word-mcp's VBA bridge, which sets it, cannot be used "
                              f"with this Word ({why}). Nothing was changed.")
+        # Word for Mac swaps the two for right-to-left text: its LanguageID writes the
+        # complex-script language (w:bidi) and LanguageIDOther the Latin one (w:val),
+        # where Word for Windows writes w:bidi through LanguageIDOther (measured). The
+        # paragraphs then read "mixed" through LanguageID: their XML is read instead.
         rng = _vba.Remote(m._full(doc), _vba.path_of(("Range", first, last)))
-        rng.LanguageIDOther = LANGUAGES[language]
-        return language_set(language, start, end, int(rng.LanguageIDOther))
+        rng.LanguageID = LANGUAGES[language]
+        xml = _vba.Remote(m._full(doc), _vba.path_of(("Range", first, last))).WordOpenXML or ""
+        return language_set(language, start, end,
+                            LANGUAGES[language] if complex_language_in(xml, language) else MIXED)
     doc.create_range(start=first, end_=last).language_ID.set(_mac_language_value(LANGUAGES[language]))
     got = _mac_code(doc.create_range(start=first, end_=last).language_ID.get())
     return language_set(language, start, end, MIXED if got is None else got)

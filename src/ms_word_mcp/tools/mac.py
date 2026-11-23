@@ -266,6 +266,21 @@ def activate_document(document):
     return documents._activate_document_impl(document)
 
 
+#: Word's own folder on the Mac, where its sandbox always lets it create files.
+WORD_FOLDER = os.path.expanduser("~/Library/Containers/com.microsoft.Word/Data/Documents")
+
+
+def _sandbox_refusal(exc: Exception, path: str) -> str | None:
+    """What to do, when Word for Mac refused to create a file (-1708): it is sandboxed,
+    and makes new files only in folders it has been let into (measured: a folder of
+    another app's temporary files, where it had saved before)."""
+    if "-1708" not in str(exc):
+        return None
+    return (f"Word for Mac could not create '{path}' (error -1708): it is sandboxed, and makes new "
+            f"files only in folders it has been let into. Save in Word's own folder ({WORD_FOLDER}), "
+            "or in a folder you have saved to once from Word's Save dialog.")
+
+
 @mac_impl(documents._create_document_impl)
 def create_document(template, save_as):
     if template:
@@ -279,7 +294,17 @@ def create_document(template, save_as):
     doc = app.create_new_document()
     name = doc.name.get()
     if save_as:
-        app.documents[name].save_as(file_name=save_as, file_format=_k().format_document)
+        try:
+            app.documents[name].save_as(file_name=save_as, file_format=_k().format_document)
+        except Exception as exc:  # noqa: BLE001 - a sandbox refusal is said as one
+            why = _sandbox_refusal(exc, save_as)
+            if why is None:
+                raise
+            # Not left open: the target stays where it was, and a step after this one
+            # would edit that document thinking it the new one (seen in an agent's run).
+            app.documents[name].close(saving=_k().no)
+            raise ValueError(why + " Nothing was created: the new document was closed, and "
+                                   "calls without `document` still go to the one they went to.") from exc
         if not os.path.exists(save_as):
             raise RuntimeError(f"Word answered without error, but there is no file at "
                                f"'{save_as}'.")
@@ -959,6 +984,12 @@ def set_paragraph_format(start, end, paragraph):
     if "tab_stops" in spec:
         _, tab_warnings = _bridged_tabs(doc, _range_path(span_start, span_end, "ParagraphFormat"),
                                         spec["tab_stops"])
+    if spec.get("alignment") in P.FLIPPED_SIDES:
+        for i in range(start, end + 1):
+            fmt = doc.paragraphs[i].paragraph_format
+            instead = P.mirrored(spec, P.mac_read(fmt, align).get("alignment"))
+            if instead:
+                P.mac_apply(fmt, align, {"alignment": instead})
     out, warnings = [], []
     for i in range(start, min(end, start + 49) + 1):
         fmt = doc.paragraphs[i].paragraph_format
@@ -1147,10 +1178,16 @@ def save_document_as(path, overwrite, from_page=None, to_page=None, markup=False
     doc = word.document()
     ext = os.path.splitext(path)[1].lower()
     own = _full(doc)
-    if ext == ".pdf":
-        pages = _mac_save_pdf(word.get_app(), doc, path, from_page, to_page, markup)
-    else:
-        doc.save_as(file_name=path, file_format=getattr(k, SAVE_K[ext]))
+    try:
+        if ext == ".pdf":
+            pages = _mac_save_pdf(word.get_app(), doc, path, from_page, to_page, markup)
+        else:
+            doc.save_as(file_name=path, file_format=getattr(k, SAVE_K[ext]))
+    except Exception as exc:  # noqa: BLE001 - a sandbox refusal is said as one
+        why = _sandbox_refusal(exc, path)
+        if why is None:
+            raise
+        raise ValueError(why + " The document stays as it was.") from exc
     if not os.path.exists(path):
         raise RuntimeError(f"Word answered without error, but there is no file at '{path}'.")
     if ext == ".pdf":
@@ -1253,6 +1290,42 @@ def _mac_style_list(doc, name: str) -> dict | None:
         for i in range(1, count + 1)])
 
 
+#: Word for Mac resets the first paragraph's own formatting (its direction, and with
+#: it its alignment) when a style's borders or shading are read or set through
+#: Apple Events (measured; not through VBA): they go through the bridge only.
+STYLE_BORDERS_NO_BRIDGE = (
+    "A style's borders and shading are read and set on the Mac through ms-word-mcp's VBA bridge "
+    "only: through Word for Mac's scripting, reading or setting them resets the first paragraph's "
+    "own formatting (its direction and alignment; measured). The bridge cannot be used with this "
+    "Word ({why}).")
+
+
+class _BridgedFormat:
+    """A paragraph format reached through the bridge, with what P.com_read_borders,
+    P.com_apply_borders and the shading pair ask of a COM one."""
+
+    def __init__(self, full: str, path: str) -> None:
+        self._full, self._path = full, path
+
+    @property
+    def Borders(self):  # noqa: N802 - COM's name
+        from . import _vba
+
+        full, path = self._full, self._path
+
+        class _Items:
+            def Item(self, code):  # noqa: N802 - COM's name
+                return _vba.Remote(full, f"{path}/Borders/Item(n{code})")
+
+        return _Items()
+
+    @property
+    def Shading(self):  # noqa: N802 - COM's name
+        from . import _vba
+
+        return _vba.Remote(self._full, f"{self._path}/Shading")
+
+
 def _bridged_style(doc, out: dict, kind: str) -> None:
     """What Windows says of a style and Word for Mac's scripting cannot read
     (quick_style, priority, locked; the font's and paragraph's members it
@@ -1306,11 +1379,18 @@ def _describe_mac_style(s, doc=None) -> dict:
         fmt = s.paragraph_format
         out["paragraph"] = {**P.mac_read(fmt, P.PARAGRAPH_PROPS),
                             **P.mac_read_line_spacing(fmt)}
-        borders, shading = P.mac_read_borders(s), P.mac_read_shading(s)
-        if borders:
-            out["paragraph"]["borders"] = borders
-        if shading:
-            out["paragraph"]["shading"] = shading
+        from . import _vba
+
+        why = _vba.usable() if doc is not None else "no document to reach it in"
+        if why:
+            out["paragraph"]["borders_and_shading"] = STYLE_BORDERS_NO_BRIDGE.format(why=why)
+        else:
+            fmt_b = _BridgedFormat(_full(doc), _style_path(s.name_local.get(), "ParagraphFormat"))
+            borders, shading = P.com_read_borders(fmt_b), P.com_read_shading(fmt_b)
+            if borders:
+                out["paragraph"]["borders"] = borders
+            if shading:
+                out["paragraph"]["shading"] = shading
     if doc is not None:
         _bridged_style(doc, out, kind)
     return out
@@ -1447,8 +1527,18 @@ def set_style(style, create, base_style, next_style, font, paragraph, quick_styl
         para_refused = P.mac_apply(fmt, P.PARAGRAPH_PROPS, para_spec)
         P.mac_apply_line_spacing(fmt, para_spec.get("line_spacing_rule"),
                                  para_spec.get("line_spacing"))
-        para_refused.update(P.mac_apply_borders(s, para_spec.get("borders")))
-        P.mac_apply_shading(s, para_spec.get("shading"))
+        if para_spec.get("borders") or para_spec.get("shading") is not None:
+            from . import _vba
+
+            why = _vba.usable()
+            if why:
+                for key in ("borders", "shading"):
+                    if para_spec.get(key) is not None:
+                        para_refused[key] = STYLE_BORDERS_NO_BRIDGE.format(why=why)
+            else:
+                fmt_b = _BridgedFormat(_full(doc), _style_path(name, "ParagraphFormat"))
+                para_refused.update(P.com_apply_borders(fmt_b, para_spec.get("borders")))
+                P.com_apply_shading(fmt_b, para_spec.get("shading"))
         _bridged(doc, _style_path(name, "ParagraphFormat"), P.PARAGRAPH_PROPS, para_spec,
                  para_refused, {})
         if "tab_stops" in para_spec:

@@ -429,6 +429,17 @@ def direction_first(props):
 FLIPPED_SIDES = {"left": "right", "right": "left"}
 
 
+def mirrored(spec: dict, got_alignment) -> str | None:
+    """The side to set instead, when a left or right alignment read back as the other
+    side: Word sets the alignment of a paragraph whose direction differs from its
+    style's mirrored, and reads it as it is (measured on Word for Mac, through Apple
+    Events and VBA alike; the page shows the read value)."""
+    want = spec.get("alignment")
+    if want in FLIPPED_SIDES and got_alignment == FLIPPED_SIDES[want]:
+        return FLIPPED_SIDES[want]
+    return None
+
+
 def direction_flips(spec: dict, before: list, after: list) -> list[str]:
     """A note when a direction change alone moved paragraphs (or a style) to the
     other side, Word keeping their start or end alignment (measured)."""
@@ -461,10 +472,10 @@ def own_directions(xml) -> list[bool] | None:
 def unpinned_note(count: int, style: str) -> list[str]:
     if not count:
         return []
-    return [f"{count} paragraph(s) in {style} were given its new direction: Word keeps a style's "
-            "paragraphs as they were when its direction changes, writing their old direction on "
-            "each (measured on Windows and the Mac). Paragraphs that had a direction of their own "
-            "stay as they were, and so do those of styles based on it."]
+    return [f"Word kept {count} paragraph(s) in {style} at its old direction, writing that direction on "
+            "each when the style's changed (measured on Windows and the Mac); they were given the new "
+            "one, and the style's other paragraphs follow it. Paragraphs that had a direction of their "
+            "own stay as they were, and so do those of styles based on it."]
 
 
 def com_apply(obj, props, spec: dict) -> dict:

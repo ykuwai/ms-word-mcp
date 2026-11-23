@@ -2427,6 +2427,9 @@ def run_direction_steps() -> None:
         step("right to left and right in one call: still right", formatting._set_paragraph_format_impl, 1,
              None, {"direction": "right_to_left", "alignment": "right"},
              check=lambda o: o["paragraphs"][0]["alignment"] == "right" and "warnings" not in o)
+        step("reading the style", formatting._get_style_impl, "Normal")
+        record("leaves paragraph 1's right to left as it was (Word for Mac reset it when a style's "
+               "borders were read through Apple Events)", _directions(1) == [0], _directions(1))
         step("right to left alone: the flip is said", formatting._set_paragraph_format_impl, 2, None,
              {"direction": "right_to_left"},
              check=lambda o: o["paragraphs"][0]["alignment"] == "left"
@@ -2455,6 +2458,13 @@ def run_style_direction_steps() -> None:
         step("Normal right to left", formatting._set_style_impl, "Normal", False, None, None, None,
              {"direction": "right_to_left"}, None, None, None, None, None, None, None)
         record("its paragraphs follow it", _directions(3) == [0, 0, 0], _directions(3))
+        step("paragraph 3 left to right of its own", formatting._set_paragraph_format_impl, 3, None,
+             {"direction": "left_to_right"})
+        step("aligned right: right (Word sets it mirrored where the style's direction differs)",
+             formatting._set_paragraph_format_impl, 3, None, {"alignment": "right"},
+             check=lambda o: o["paragraphs"][0]["alignment"] == "right" and "warnings" not in o)
+        step("aligned left: left", formatting._set_paragraph_format_impl, 3, None, {"alignment": "left"},
+             check=lambda o: o["paragraphs"][0]["alignment"] == "left" and "warnings" not in o)
         step("a picture of the page", screen._get_page_image_impl, 1, None,
              check=lambda o: o.get("page") == 1)
         step("close the document for a style's direction", documents._close_document_impl, False)

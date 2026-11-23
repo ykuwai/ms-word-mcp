@@ -140,6 +140,12 @@ def _set_paragraph_format_impl(start, end, paragraph):
     P.com_apply_tab_stops(fmt, spec.get("tab_stops"))
     refused.update(P.com_apply_borders(fmt, spec.get("borders")))
     P.com_apply_shading(fmt, spec.get("shading"))
+    if spec.get("alignment") in P.FLIPPED_SIDES:
+        align = [q for q in P.PARAGRAPH_PROPS if q.name == "alignment"]
+        for _, p in paragraphs_in(doc, start, end):
+            instead = P.mirrored(spec, P.com_read(p.Format, align).get("alignment"))
+            if instead:
+                p.Format.Alignment = P.ALIGNMENTS[instead]
     out = []
     warnings = []
     for index, p in paragraphs_in(doc, start, min(end, start + 49)):
@@ -435,7 +441,7 @@ class SetStyleInput(Input):
         from .checks import COMPLEX_SCRIPT, STYLE_COMPLEX
 
         if self.language in COMPLEX_SCRIPT:
-            raise ValueError(STYLE_COMPLEX.format(language=self.language) + " Nothing was changed.")
+            raise ValueError(STYLE_COMPLEX.format(language=self.language).rstrip("."))
         if self.create is None and all(getattr(self, f) is None for f in (
                 "base_style", "next_style", "font", "paragraph", "quick_style", "priority",
                 "automatically_update", "no_space_between_same_style", "numbering",
