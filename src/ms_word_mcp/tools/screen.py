@@ -310,7 +310,16 @@ def _mac_get_page_image(page, paragraph_index):
     # the server does not read Word's container. Saving as PDF does not change
     # the document's own file (measured).
     try:
-        source.save_as(file_name=pdf, file_format=k.format_PDF)
+        try:
+            source.save_as(file_name=pdf, file_format=k.format_PDF)
+        except Exception:  # noqa: BLE001 - Word's sandbox: next to the document is not always its to write
+            # Word may save the document it opened, yet not make a file beside it
+            # in a folder it was not let into: it answers -1708 (measured, a document
+            # in another app's temporary folder). Its own folder it always writes.
+            if folder == CONTAINER or os.environ.get("WORD_MAC_FILES_DIR"):
+                raise
+            pdf = os.path.join(CONTAINER, os.path.basename(pdf))
+            source.save_as(file_name=pdf, file_format=k.format_PDF)
     finally:
         if source is not doc:
             _mac_close_copy(word.get_app(), source, active)
@@ -318,6 +327,15 @@ def _mac_get_page_image(page, paragraph_index):
         url = NSURL.fileURLWithPath_(pdf)
         document = Quartz.CGPDFDocumentCreateWithURL(url)
         if document is None:
+            if pdf.startswith(CONTAINER) and os.path.exists(pdf) and not os.access(pdf, os.R_OK):
+                from ..backend.bridge import host_app
+
+                app = host_app() or "the app this server runs under"
+                raise RuntimeError(
+                    f"Word wrote the page's PDF in its own folder, which macOS's privacy protection "
+                    f"keeps {app} out of. Give {app} Full Disk Access (System Settings > Privacy & "
+                    f"Security > Full Disk Access) and open it again, or save the document in a "
+                    f"folder of yours first.")
             raise RuntimeError("Word answered without error, but its PDF cannot be read.")
         pdf_page = Quartz.CGPDFDocumentGetPage(document, page)
         box = Quartz.CGPDFPageGetBoxRect(pdf_page, Quartz.kCGPDFMediaBox)
