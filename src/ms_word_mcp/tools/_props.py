@@ -193,14 +193,14 @@ class FontSpec(Input):
         "Font for Arabic, Hebrew and other right-to-left text."))
     size: float | None = Field(None, gt=0, le=1638, description="Points, Latin and East Asian.")
     size_complex_script: float | None = Field(None, gt=0, le=1638, description=(
-        "Points, complex-script text (Windows only)."))
+        "Points, complex-script text. On the Mac this needs ms-word-mcp's VBA bridge."))
     bold: bool | None = None
     bold_complex_script: bool | None = None
     italic: bool | None = None
     italic_complex_script: bool | None = None
     underline: Literal[tuple(UNDERLINES)] | None = None  # type: ignore[valid-type]
     underline_color: Trimmed | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description=(
-        "#RRGGBB (Windows only)."))
+        "#RRGGBB. On the Mac this needs ms-word-mcp's VBA bridge."))
     color: Trimmed | None = Field(None, pattern=r"^#?[0-9A-Fa-f]{6}$", description="#RRGGBB.")
     strikethrough: bool | None = None
     double_strikethrough: bool | None = None
@@ -268,11 +268,16 @@ class ParagraphSpec(Input):
     alignment: Literal[tuple(ALIGNMENTS)] | None = None  # type: ignore[valid-type]
     direction: Literal[tuple(DIRECTIONS)] | None = Field(None, description=(  # type: ignore[valid-type]
         "right_to_left for Arabic, Hebrew and other right-to-left paragraphs: "
-        "punctuation and numbers then sit where those languages put them. "
-        "Windows only; Word for Mac's scripting has no reading order."))
+        "punctuation and numbers then sit where those languages put them. Word keeps a "
+        "paragraph's start or end alignment when its direction changes, so a right-aligned "
+        "paragraph made right to left moves to the left: give `alignment` in the same call "
+        "to choose the side. A paragraph that starts with a number can lose the space after "
+        "it; a right-to-left mark (U+200F) at the start of the text keeps it. "
+        "On the Mac this needs ms-word-mcp's VBA bridge: its scripting has no reading "
+        "order."))
     tab_stops: list[TabStop] | None = Field(None, max_length=20, description=(
         "The paragraphs' own tab stops, replacing the ones they have; [] clears "
-        "them. Windows only for now."))
+        "them. On the Mac this needs ms-word-mcp's VBA bridge."))
     borders: ParagraphBorders | None = Field(None, description=(
         "Lines around the paragraphs, by side: {\"bottom\": {\"style\": \"single\", "
         "\"width\": 1.5, \"color\": \"#1F4E79\"}} for a rule under a heading."))
@@ -412,6 +417,67 @@ def paired_steps(spec: dict) -> tuple[dict, dict]:
     return before, after
 
 
+def direction_first(props):
+    """The properties with a paragraph's direction first: Word keeps a paragraph's
+    start or end alignment when its direction changes, so its side flips (a right
+    alignment becomes left in a right-to-left paragraph, measured); an alignment
+    given with a direction is then set after it and stays as asked."""
+    return sorted(props, key=lambda prop: prop.name != "direction")
+
+
+#: The sides a direction change swaps.
+FLIPPED_SIDES = {"left": "right", "right": "left"}
+
+
+def mirrored(spec: dict, got_alignment) -> str | None:
+    """The side to set instead, when a left or right alignment read back as the other
+    side: Word sets the alignment of a paragraph whose direction differs from its
+    style's mirrored, and reads it as it is (measured on Word for Mac, through Apple
+    Events and VBA alike; the page shows the read value)."""
+    want = spec.get("alignment")
+    if want in FLIPPED_SIDES and got_alignment == FLIPPED_SIDES[want]:
+        return FLIPPED_SIDES[want]
+    return None
+
+
+def direction_flips(spec: dict, before: list, after: list) -> list[str]:
+    """A note when a direction change alone moved paragraphs (or a style) to the
+    other side, Word keeping their start or end alignment (measured)."""
+    if "direction" not in spec or "alignment" in spec:
+        return []
+    flipped = [(b, a) for b, a in zip(before, after) if b in FLIPPED_SIDES and a == FLIPPED_SIDES[b]]
+    if not flipped:
+        return []
+    was, now = flipped[0]
+    return [f"alignment now reads '{now}' where it read '{was}' ({len(flipped)} paragraph(s) or style): "
+            "Word keeps a paragraph's start or end alignment when its direction changes, so the "
+            "side flips. Give alignment in the same call to choose the side."]
+
+
+def own_directions(xml) -> list[bool] | None:
+    """Whether each paragraph of a story's XML (WordOpenXML) sets a direction of its
+    own (w:bidi among its own properties); a text box's paragraphs are left out."""
+    import re
+
+    if not isinstance(xml, str) or "<w:body>" not in xml:
+        return None
+    xml = re.sub(r"<w:txbxContent>.*?</w:txbxContent>", "", xml, flags=re.S)
+    own = []
+    for para in re.findall(r"<w:p[ >].*?</w:p>|<w:p/>", xml[xml.find("<w:body>"):], re.S):
+        props = re.search(r"<w:pPr>(.*?)</w:pPr>", para, re.S)
+        own.append(bool(props and re.search(r"<w:bidi\b", props.group(1))))
+    return own
+
+
+def unpinned_note(count: int, style: str) -> list[str]:
+    if not count:
+        return []
+    return [f"Word kept {count} paragraph(s) in {style} at its old direction, writing that direction on "
+            "each when the style's changed (measured on Windows and the Mac); they were given the new "
+            "one, and the style's other paragraphs follow it. Paragraphs that had a direction of their "
+            "own stay as they were, and so do those of styles based on it."]
+
+
 def com_apply(obj, props, spec: dict) -> dict:
     """Set each given property on a COM Font or ParagraphFormat.
 
@@ -422,7 +488,7 @@ def com_apply(obj, props, spec: dict) -> dict:
     refused = {}
     before, after = paired_steps(spec) if props is PARAGRAPH_PROPS else ({}, {})
     for step in (before, spec, after):
-        for prop in props:
+        for prop in direction_first(props):
             if prop.name not in step:
                 continue
             try:

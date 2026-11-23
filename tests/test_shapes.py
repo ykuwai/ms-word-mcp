@@ -441,3 +441,49 @@ def test_a_floating_picture_takes_a_full_path_and_floats():
         shapes.InsertFloatingPictureInput(path="a.png", index=1)
     with pytest.raises(ValidationError, match="word_insert_picture"):
         shapes.InsertFloatingPictureInput(path="/a.png", index=1, wrap="inline")
+
+
+def test_shapes_to_group_are_two_or_more_and_each_once():
+    from pydantic import ValidationError
+
+    assert shapes.GroupShapesInput(shapes=["A", 2], name="Pair").shapes == ["A", 2]
+    with pytest.raises(ValidationError):
+        shapes.GroupShapesInput(shapes=["A"])
+    with pytest.raises(ValidationError, match="named twice"):
+        shapes.GroupShapesInput(shapes=["A", "A"])
+    with pytest.raises(ValidationError, match="start at 1"):
+        shapes.GroupShapesInput(shapes=[0, 1])
+
+
+def test_ungrouping_says_which_shapes_came_out():
+    out = shapes.ungroup_answer("Pair", ["A", "B"], 3)
+    assert (out["ungrouped"], out["shapes"], out["count"]) == ("Pair", ["A", "B"], 3)
+    assert "not a group" in shapes.NOT_A_GROUP.format(name="C", kind="line")
+
+
+def test_shapes_in_headers_and_footers_come_after_the_bodys_in_their_order():
+    keys = [shapes.hf_key(2, "header", "primary", 0), shapes.hf_key(1, "footer", "primary", 5),
+            shapes.hf_key(1, "header", "first", 0), shapes.hf_key(1, "header", "primary", 9)]
+    assert sorted(keys) == [keys[3], keys[2], keys[1], keys[0]]
+
+
+def test_a_place_in_a_header_or_footer_is_checked():
+    from pydantic import ValidationError
+
+    made = shapes.InsertShapeInput(kind="oval", index=1, width=10, height=10,
+                                   header_footer={"part": "footer"})
+    assert made.header_footer.which == "primary" and made.header_footer.section == 1
+    assert shapes.spec_of(made, "kind", "index", "width", "height")["header_footer"] == {
+        "part": "footer", "which": "primary", "section": 1}
+    with pytest.raises(ValidationError):
+        shapes.InsertShapeInput(kind="oval", index=1, width=10, height=10,
+                                header_footer={"part": "side"})
+
+
+def test_a_shape_is_anchored_to_another_paragraph_by_number():
+    from pydantic import ValidationError
+
+    assert shapes.SetShapeInput(shape="A", anchor_to=3).anchor_to == 3
+    with pytest.raises(ValidationError):
+        shapes.SetShapeInput(shape="A", anchor_to=0)
+    assert "moves a shape of the body" in shapes.REANCHOR_IN_BODY.format(name="H", part="header")

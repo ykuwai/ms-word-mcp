@@ -23,6 +23,7 @@ from ._word import (
     WD_COLLAPSE_END, WD_FIND_STOP, check_span, clean_text, paragraph_info,
     paragraphs_in, resolve_style, span_range, style_name,
 )
+from .checks import Language
 
 
 class Target(Input):
@@ -131,11 +132,20 @@ def _set_paragraph_format_impl(start, end, paragraph):
     start, end = check_span(doc, start, end)
     rng = span_range(doc, start, end)
     fmt = rng.ParagraphFormat
+    align = [p for p in P.PARAGRAPH_PROPS if p.name == "alignment"]
+    sides = [P.com_read(p.Format, align).get("alignment")
+             for _, p in paragraphs_in(doc, start, min(end, start + 49))] if "direction" in spec else []
     refused = P.com_apply(fmt, P.PARAGRAPH_PROPS, spec)
     P.com_apply_line_spacing(fmt, spec.get("line_spacing_rule"), spec.get("line_spacing"))
     P.com_apply_tab_stops(fmt, spec.get("tab_stops"))
     refused.update(P.com_apply_borders(fmt, spec.get("borders")))
     P.com_apply_shading(fmt, spec.get("shading"))
+    if spec.get("alignment") in P.FLIPPED_SIDES:
+        align = [q for q in P.PARAGRAPH_PROPS if q.name == "alignment"]
+        for _, p in paragraphs_in(doc, start, end):
+            instead = P.mirrored(spec, P.com_read(p.Format, align).get("alignment"))
+            if instead:
+                p.Format.Alignment = P.ALIGNMENTS[instead]
     out = []
     warnings = []
     for index, p in paragraphs_in(doc, start, min(end, start + 49)):
@@ -152,6 +162,8 @@ def _set_paragraph_format_impl(start, end, paragraph):
                         + P.border_mismatches(spec, got))
         out.append({"index": index, "text": clean_text(p.Range.Text)[:80],
                     "style": style_name(p.Style), **paragraph_readback(got, spec)})
+    if sides:
+        warnings += P.direction_flips(spec, sides, [o.get("alignment") for o in out])
     follow(doc, rng)
     result = {"success": True, "paragraphs": out}
     if warnings:
@@ -271,6 +283,10 @@ def _describe_style(s) -> dict:
             pass
     if kind == "paragraph":
         out["linked"] = _linked(s)
+        try:
+            out["numbering"] = _style_list(s)
+        except Exception:  # noqa: BLE001 - described without it
+            pass
         for key, member in (("base_style", "BaseStyle"),
                             ("next_style", "NextParagraphStyle")):
             try:
@@ -290,6 +306,10 @@ def _describe_style(s) -> dict:
         except Exception:  # noqa: BLE001
             out["base_style"] = None
     if kind in ("paragraph", "character"):
+        try:
+            out.update(style_language(s.LanguageID, s.LanguageIDFarEast, s.NoProofing))
+        except Exception:  # noqa: BLE001 - described without it
+            pass
         out["font"] = P.com_read(s.Font, P.FONT_PROPS)
     if kind == "paragraph":
         fmt = s.ParagraphFormat
@@ -310,6 +330,67 @@ def _describe_style(s) -> dict:
 def _get_style_impl(style):
     doc = backend.word.document()
     return {"success": True, "style": _describe_style(resolve_style(doc, style))}
+
+
+class StyleNumbering(Input):
+    like: Trimmed = Field(..., min_length=1, description=(
+        "A numbered style whose numbering this style joins: \"Heading 1\" once the "
+        "headings are numbered (word_apply_list with linked_style)."))
+    level: int = Field(..., ge=1, le=9, description="The list level this style takes.")
+
+
+def style_list(level: int, levels: list[tuple]) -> dict:
+    """A style's numbering: its level, how that level's number is written, and
+    the style each level of the list is linked to. `levels` holds (index,
+    NumberStyle, NumberFormat, LinkedStyle) for the list's levels."""
+    from .lists import NUMBER_STYLES
+
+    out = {"level": level}
+    for index, number_style, number_format, _ in levels:
+        if index == level:
+            out["number_style"] = next((k for k, v in NUMBER_STYLES.items()
+                                        if v == number_style), number_style)
+            out["number_format"] = number_format
+    out["linked_styles"] = {str(index): linked for index, _, _, linked in levels if linked}
+    return out
+
+
+def _style_list(s) -> dict | None:
+    """The style's numbering over COM, or None when it has none."""
+    template = s.ListTemplate
+    if template is None:
+        return None
+    levels = template.ListLevels
+    return style_list(s.ListLevelNumber, [
+        (i, lv.NumberStyle, lv.NumberFormat, lv.LinkedStyle or None)
+        for i, lv in ((i, levels.Item(i)) for i in range(1, levels.Count + 1))])
+
+
+def numbering_warnings(numbering, got: dict | None, name: str) -> list[str]:
+    if numbering is None:
+        return []
+    if numbering == "none":
+        return [] if got is None else [f"The style still has numbering: {got}."]
+    if got is None or got.get("level") != numbering["level"]:
+        return [f"The style reads back at list level {(got or {}).get('level')}, "
+                f"not {numbering['level']}."]
+    return []
+
+
+def style_language(language_id, east_asian_id, no_proofing) -> dict:
+    """A style's languages, in word_set_language's names."""
+    from .checks import language_name
+
+    return {"language": "no_proofing" if no_proofing else language_name(language_id),
+            "east_asian_language": language_name(east_asian_id)}
+
+
+def language_warnings(language, east_asian_language, described: dict) -> list[str]:
+    out = []
+    for key, wanted in (("language", language), ("east_asian_language", east_asian_language)):
+        if wanted is not None and described.get(key) != wanted:
+            out.append(f"{key} reads back as {described.get(key)!r}, not {wanted!r}.")
+    return out
 
 
 class SetStyleInput(Input):
@@ -333,18 +414,38 @@ class SetStyleInput(Input):
     no_space_between_same_style: bool | None = Field(None, description=(
         "Paragraph styles: drop the space before and after between paragraphs of "
         "this style (\"Don't add space between paragraphs of the same style\")."))
+    language: Language | None = Field(None, description=(
+        "The language the style's text is checked in, as word_set_language names it "
+        "(english_us, english_uk, japanese...); no_proofing turns checking off. Every "
+        "paragraph in the style follows, which fixes a whole document's language in one call."))
+    east_asian_language: Language | None = Field(None, description=(
+        "The language of its Japanese, Chinese or Korean text (japanese, "
+        "chinese_simplified...)."))
+    numbering: StyleNumbering | Literal["none"] | None = Field(None, description=(
+        "Paragraph styles: join another style's numbering at a level, as a heading "
+        "style of your own joins Heading 1-3 at level 4 ({\"like\": \"Heading 1\", "
+        "\"level\": 4}), or \"none\" to take the style's numbering off."))
 
     @model_validator(mode="after")
     def _consistent(self):
         if self.create == "character" and self.paragraph is not None:
             raise ValueError("A character style has no paragraph formatting.")
         if self.create == "character" and (self.next_style or self.automatically_update
-                                           or self.no_space_between_same_style):
-            raise ValueError("next_style, automatically_update and "
-                             "no_space_between_same_style apply to paragraph styles.")
+                                           or self.no_space_between_same_style
+                                           or self.numbering):
+            raise ValueError("next_style, automatically_update, no_space_between_same_style "
+                             "and numbering apply to paragraph styles.")
+        if self.east_asian_language == "no_proofing":
+            raise ValueError("no_proofing goes in `language`: it turns checking off for the "
+                             "whole style.")
+        from .checks import COMPLEX_SCRIPT, STYLE_COMPLEX
+
+        if self.language in COMPLEX_SCRIPT:
+            raise ValueError(STYLE_COMPLEX.format(language=self.language).rstrip("."))
         if self.create is None and all(getattr(self, f) is None for f in (
                 "base_style", "next_style", "font", "paragraph", "quick_style", "priority",
-                "automatically_update", "no_space_between_same_style")):
+                "automatically_update", "no_space_between_same_style", "numbering",
+                "language", "east_asian_language")):
             raise ValueError("Give something to set, or `create` to make the style.")
         return self
 
@@ -383,8 +484,43 @@ def _start_plain(doc, s, kind, base_style) -> None:
         s.ParagraphFormat = base.ParagraphFormat.Duplicate
 
 
+def _style_followers(doc, s):
+    """Before a style's direction changes: (its direction, the paragraphs in it that
+    follow it: that direction and none of their own, as the text's XML shows)."""
+    old = int(s.ParagraphFormat.ReadingOrder)
+    name = style_name(s)
+    paras = doc.Paragraphs
+    count = paras.Count
+    try:
+        own = P.own_directions(doc.Content.WordOpenXML)
+    except Exception:  # noqa: BLE001 - then told apart by direction alone
+        own = None
+    if own is not None and len(own) != count:
+        own = None
+    following = []
+    for i in range(1, count + 1):
+        p = paras.Item(i)
+        if style_name(p.Style) == name and int(p.Format.ReadingOrder) == old and not (own and own[i - 1]):
+            following.append(i)
+    return old, following
+
+
+def _unpin_direction(doc, pinned, new: int) -> int:
+    """After the change: the paragraphs that followed the style and that Word left
+    with its old direction are given the new one. How many."""
+    old, following = pinned
+    if old == new:
+        return 0
+    paras = doc.Paragraphs
+    stuck = [i for i in following if int(paras.Item(i).Format.ReadingOrder) == old]
+    for i in stuck:
+        paras.Item(i).Format.ReadingOrder = new
+    return len(stuck)
+
+
 def _set_style_impl(style, create, base_style, next_style, font, paragraph, quick_style,
-                    priority, automatically_update, no_space_between_same_style):
+                    priority, automatically_update, no_space_between_same_style,
+                    numbering=None, language=None, east_asian_language=None):
     doc = backend.word.document()
     existing = _find_style(doc, style)
     if create:
@@ -400,8 +536,28 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
     kind = _STYLE_TYPES.get(s.Type, s.Type)
     if paragraph and kind != "paragraph":
         raise ValueError(f"'{style}' is a {kind} style, which has no paragraph formatting.")
+    if numbering is not None and kind != "paragraph":
+        raise ValueError(f"'{style}' is a {kind} style, which takes no numbering.")
+    if numbering not in (None, "none"):
+        like = resolve_style(doc, numbering["like"])
+        if like.ListTemplate is None:
+            raise ValueError(f"'{numbering['like']}' has no numbering to join. Number it "
+                             "first: word_apply_list with linked_style on its level.")
 
     refused = {}
+    from .checks import LANGUAGES
+
+    if language == "no_proofing":
+        s.NoProofing = True
+    elif language is not None:
+        s.LanguageID = LANGUAGES[language]
+        s.NoProofing = False
+    if east_asian_language is not None:
+        s.LanguageIDFarEast = LANGUAGES[east_asian_language]
+    if numbering == "none":
+        s.LinkToListTemplate(None)
+    elif numbering is not None:
+        s.LinkToListTemplate(like.ListTemplate, numbering["level"])
     # A style just created already has its base (_start_plain); setting it
     # again is left out, since that is the one step the measured clean path
     # (scripts/probes/windows_style_steps.py) does not take.
@@ -430,9 +586,11 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
     font_spec = P.with_latin_extended(P.given(font, P.FONT_NAMES))
     para_spec = P.given(paragraph, P.PARAGRAPH_NAMES)
     font_refused = P.com_apply(s.Font, P.FONT_PROPS, font_spec) if font_spec else {}
-    para_refused = {}
+    para_refused, style_side = {}, None
+    pinned = _style_followers(doc, s) if "direction" in para_spec else None
     if para_spec:
         fmt = s.ParagraphFormat
+        style_side = P.com_read(fmt, [p for p in P.PARAGRAPH_PROPS if p.name == "alignment"]).get("alignment")
         para_refused = P.com_apply(fmt, P.PARAGRAPH_PROPS, para_spec)
         P.com_apply_line_spacing(fmt, para_spec.get("line_spacing_rule"),
                                  para_spec.get("line_spacing"))
@@ -455,8 +613,14 @@ def _set_style_impl(style, create, base_style, next_style, font, paragraph, quic
             warnings.append(f"{key} reads back as {described[key]!r}, not {value!r}.")
     warnings += P.mismatches(font_spec, described.get("font", {}), font_refused)
     warnings += P.mismatches(para_spec, described.get("paragraph", {}), para_refused)
+    warnings += P.direction_flips(para_spec, [style_side], [described.get("paragraph", {}).get("alignment")])
+    if pinned is not None:
+        warnings += P.unpinned_note(_unpin_direction(doc, pinned, P.DIRECTIONS[para_spec["direction"]]),
+                                    style_name(s))
     warnings += _tab_mismatch(para_spec, described.get("paragraph", {}))
     warnings += P.border_mismatches(para_spec, described.get("paragraph", {}))
+    warnings += numbering_warnings(numbering, described.get("numbering"), style)
+    warnings += language_warnings(language, east_asian_language, described)
     result = {"success": True, "created": bool(create), "style": described}
     if warnings:
         result["warnings"] = warnings
@@ -536,4 +700,6 @@ def register(mcp) -> None:
             p.font.model_dump() if p.font else None,
             p.paragraph.model_dump() if p.paragraph else None,
             p.quick_style, p.priority, p.automatically_update,
-            p.no_space_between_same_style, undo="Define style")
+            p.no_space_between_same_style,
+            p.numbering.model_dump() if isinstance(p.numbering, StyleNumbering) else p.numbering,
+            p.language, p.east_asian_language, undo="Define style")

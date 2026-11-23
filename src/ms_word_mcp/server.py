@@ -239,7 +239,8 @@ user to stop typing.
 
 ## Fixing an existing document
 
-Read it first (`word_get_paragraphs` with `detail` shows each paragraph's
+When the user speaks of "this" or "what I've selected", `word_get_selection`
+gives what is selected in Word and the paragraphs it spans. Read it first (`word_get_paragraphs` with `detail` shows each paragraph's
 style, fonts, bold and color). Paragraphs made to look like headings by
 formatting alone: `word_apply_style` with a heading style and
 `clear_direct_formatting`. Typed bullets ("・", "-", "•"): take the typed
@@ -256,6 +257,24 @@ out and given in `deleted_text`, and a paragraph marked as deleted whole has
 is accepted. `word_list_revisions` lists the changes;
 `word_accept_revisions` and `word_reject_revisions` take their numbers, which
 move after each call, or `every`.
+
+## Before sending
+
+`word_check_document` lists what to fix before a document goes out: skipped
+heading levels, placeholders, pictures without alt text, comments and tracked
+changes left, and more. `word_check_spelling` gives Word's spelling and grammar
+findings and the language the text is checked in; text marked with a language
+Word has no dictionary for is never checked, and `word_set_language` fixes that.
+
+## Comments
+
+`word_add_comment` puts a comment on a paragraph, or on some text in it
+(`on`). Word signs it as the Office user, whatever name is asked for.
+`word_list_comments` numbers them in the order of the text they are about;
+the numbers move when one is added or deleted. On the Mac, replying, marking a
+comment done, and listing which comment a reply answers go through
+ms-word-mcp's VBA bridge; `word_get_app_info` says whether it works
+(`vba_bridge`).
 
 ## Paragraph numbers
 
@@ -297,11 +316,13 @@ mainly Latin document. East Asian layouts measure spacing in grid lines
 mcp = WordServer("ms_word_mcp", lifespan=app_lifespan, instructions=INSTRUCTIONS)
 
 from .tools import (  # noqa: E402,F401 - mac registers the Mac halves
-    documents, edit, equations, fields, formatting, links, lists, mac, notes, page, references, revisions,
-    screen, shapes, tables, text, view)
+    checks, comments, content_controls, documents, edit, equations, fields, formatting, links,
+    lists, mac, notes, page, references, revisions, screen, selection, shapes, tables, text,
+    view)
 
-for module in (documents, text, formatting, lists, tables, references, shapes, notes, links, equations,
-               fields, revisions, page, view, screen, edit):
+for module in (documents, text, selection, formatting, lists, tables, references, content_controls,
+               shapes, notes, links, equations, fields, revisions, comments, checks, page, view, screen,
+               edit):
     module.register(mcp)
 
 
@@ -407,14 +428,16 @@ def summary(description):
     return text[:120]
 
 
-AREAS = {"documents": "Documents", "text": "Reading and writing text",
+AREAS = {"documents": "Documents", "text": "Reading and writing text", "selection": "What the user has selected",
          "formatting": "Formatting and styles", "lists": "Lists", "tables": "Tables",
          "references": "Pictures, captions and cross-references",
+         "content_controls": "Content controls: the tagged boxes of templates, forms and add-ins",
          "shapes": "Floating shapes, text boxes and lines",
          "notes": "Footnotes and endnotes", "links": "Hyperlinks and bookmarks",
          "page": "The page: setup, vertical text, headers, footers, ruby",
          "equations": "Equations", "fields": "Fields and tables of contents",
-         "revisions": "Tracked changes",
+         "revisions": "Tracked changes", "comments": "Comments",
+         "checks": "Checks: spelling, language and the document's health",
          "view": "View", "screen": "Seeing a page", "edit": "Undo"}
 
 
@@ -544,9 +567,9 @@ async def word_describe(names: list[str] | None = None) -> str:
     with word_describe().
     """
     if not names:
-        return (catalog_lines() + "\n\nNot here yet: comments and tracked changes. "
-                "Paragraph direction (right to left), tab stops and "
-                "adding table columns work on Windows only."
+        return (catalog_lines() + "\n\nOn macOS, paragraph direction (right to left), tab "
+                "stops, adding table columns and creating a style go through ms-word-mcp's "
+                "VBA bridge; word_get_app_info says whether it works (vba_bridge)."
                 "\n\nNext: word_describe(names=[...]) for the arguments of the tools "
                 "you will use, then word_run or word_run_steps.")
     found, missing = {}, []

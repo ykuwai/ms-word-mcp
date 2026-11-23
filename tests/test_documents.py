@@ -133,3 +133,41 @@ def test_a_new_document_saves_only_as_a_format_word_writes():
     with pytest.raises(ValueError, match="must end in"):
         documents.CreateDocumentInput(save_as=os.path.abspath("a.exe"))
     assert documents.CreateDocumentInput(save_as=os.path.abspath("a.docx")).save_as
+
+
+def test_a_sandbox_refusal_closes_the_new_document_and_says_what_to_do(monkeypatch, tmp_path):
+    """Seen in an agent's run on the Mac: save_as in a folder Word may not write to
+    answered -1708, the untitled document stayed open and later steps edited the
+    previous document."""
+    import pytest
+
+    from ms_word_mcp import backend
+    from ms_word_mcp.tools import mac
+
+    closed = []
+
+    class FakeDoc:
+        def __init__(self, name): self.name_ = name
+        @property
+        def name(self):
+            class N:
+                def get(_): return self.name_
+            return N()
+        def save_as(self, **kw): raise RuntimeError("Command failed: error -1708")
+        def close(self, saving): closed.append((self.name_, saving))
+
+    class FakeApp:
+        documents = {"Document9": FakeDoc("Document9")}
+        def create_new_document(self): return self.documents["Document9"]
+
+    class FakeWord:
+        target_full_name = "/kept/previous.docx"
+        def get_app(self, allow_launch=False): return FakeApp()
+
+    monkeypatch.setattr(backend, "word", FakeWord())
+    monkeypatch.setattr(mac, "_k", lambda: type("K", (), {"no": "no", "format_document": "docx"}))
+    with pytest.raises(ValueError, match="sandboxed.*Word's own folder.*new document was closed"):
+        mac.create_document(None, str(tmp_path / "x.docx"))
+    assert closed == [("Document9", "no")]
+    assert backend.word.target_full_name == "/kept/previous.docx"
+    assert mac._sandbox_refusal(RuntimeError("error -1728"), "p") is None

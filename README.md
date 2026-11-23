@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <strong>Real-time Microsoft Word control on Windows and macOS —<br>an MCP server with <!--tools-->84<!--/tools--> tools that works in the document beside you.</strong>
+  <strong>Real-time Microsoft Word control on Windows and macOS —<br>an MCP server with <!--tools-->106<!--/tools--> tools that works in the document beside you.</strong>
 </p>
 
 ---
@@ -116,7 +116,7 @@ uv sync
 
 ## 🛠️ Tool Categories
 
-Documents, reading, writing, formatting, styles, lists, tables, pictures, captions and cross-references, the page, equations, floating shapes and pictures, footnotes and endnotes, hyperlinks and bookmarks, fields and tables of contents, the view, a picture of a page, and undo.
+Documents, reading, writing, formatting, styles, lists, tables, pictures, captions and cross-references, the page, equations, floating shapes and pictures, footnotes and endnotes, comments, spelling and a health check, hyperlinks and bookmarks, fields and tables of contents, the view, a picture of a page, and undo.
 
 The full list of tools, by category, is in [TOOLS.md](https://github.com/ykuwai/ms-word-mcp/blob/main/TOOLS.md). Comments are not here yet.
 
@@ -183,13 +183,21 @@ Every member and constant is checked against Microsoft's documentation ([docs/re
 
 `word_set_style` defines any character and paragraph property on a style; `word_format_text` and `word_set_paragraph_format` take the same properties for the exceptions. The English built-in names ("Normal", "Heading 1", "TOC 1"...) work in every language of Word.
 
+Right-to-left text (Hebrew, Arabic): `direction: "right_to_left"` on paragraphs or on a style. Word keeps a paragraph's start or end alignment when its direction changes, so give `alignment` in the same call to choose the side; the result says when the side flipped. A style's new direction reaches the paragraphs that only have the style (Word keeps them as they were, writing the old direction on each; the server gives them the new one). Their language is marked with `word_set_language`, which sets Word's complex-script language for Hebrew and Arabic; a style cannot have one. A paragraph that starts with a number can lose the space after it: a right-to-left mark (U+200F) at the start of the text keeps it.
+
 ### 🧮 Equations
 
-`word_insert_equation` takes LaTeX or UnicodeMath and has Word's own equation editor build it. With `numbered`, the number sits at the right margin and is a field, so inserting an equation renumbers the rest.
+`word_insert_equation` takes LaTeX or UnicodeMath and has Word's own equation editor build it. With `numbered`, the number sits at the right margin and is a field, so inserting an equation renumbers the rest. `word_insert_inline_equation` puts one among a paragraph's words, at the start or end of its text or in place of a placeholder; `word_get_equation` and `word_set_equation` reach it by its place in the paragraph (`nth`). With `chapter`, numbered equations and captions (`word_insert_caption`) count within each chapter, (2.1) and Figure 2.1, the chapter's number taken from the numbered heading before them.
+
+### 🗂️ Content Controls
+
+`word_list_content_controls`, `word_insert_content_control`, `word_set_content_control` and `word_delete_content_control` read and write the tagged boxes that templates, forms and add-ins keep in a document: their text, tag, title and locks. A tag of tens of thousands of characters, as add-ins keep their data in, goes through whole. `word_insert_content_control` with `around` makes text already in the document a control's, formatting and all. On the Mac they go through the [VBA bridge](#the-vba-bridge), since Word for Mac's scripting has no content controls.
+
+`word_unlink_fields` turns fields into the text they show, formatted as it is: those of a type (`kind`) or whose code holds a text (`contains`), in the main text, the footnotes and the endnotes.
 
 ### 🖼️ Shapes and Floating Pictures
 
-`word_insert_shape`, `word_insert_text_box`, `word_insert_line` and `word_insert_floating_picture` add objects with text wrapping, position, layer order, fill, line and text. `word_set_shape` changes them afterwards, crops and fades pictures, and moves a picture between floating and in line.
+`word_insert_shape`, `word_insert_text_box`, `word_insert_line` and `word_insert_floating_picture` add objects with text wrapping, position, layer order, fill, line and text. `word_set_shape` changes them afterwards, crops and fades pictures, moves a picture between floating and in line, and anchors a shape to another paragraph (`anchor_to`). With `header_footer` they go in a header or footer instead, as a logo or a rule on every page (on the Mac a floating picture there goes through the [VBA bridge](#the-vba-bridge)).
 
 ### 📄 Seeing a Page
 
@@ -203,6 +211,7 @@ Every member and constant is checked against Microsoft's documentation ([docs/re
 | `WORD_FOLLOW_EDITS` | `on` | Scroll the document's window to each change. |
 | `WORD_ALLOW_ACTIVE_FIELDS` | `off` | Allow fields that reach outside the document: INCLUDETEXT, INCLUDEPICTURE, INCLUDE, LINK, IMPORT, RD, EMBED, DATABASE, DDE, DDEAUTO, MACROBUTTON, PRINT, ASK, FILLIN. Off, `word_insert_field` refuses them and `word_update_fields` leaves the ones already in a document as they are. On, Word may stop and ask you about them in a dialog of its own, and the tool waits until you answer. |
 | `WORD_ALLOW_NETWORK_PATHS` | `off` | Allow files named by a network path (`\\server\share\...`). Off, they are refused: saving to one sends the document to that server, and even checking for the file connects to it with your credentials. |
+| `WORD_VBA_BRIDGE` | `on` | Load the server's VBA bridge into Word: a few macros that read paragraphs and find and replace in one call, and on the Mac give comments their replies and done state. Off, everything is read as before, more slowly, and on the Mac replying to or resolving a comment is refused. See [The VBA Bridge](#the-vba-bridge). |
 | `WORD_MAC_FILES_DIR` | the document's folder | macOS: where Word writes the PDF a page picture is drawn from, for a moment. By default the document's own folder, or Word's own folder for a document never saved. |
 
 Set them in the server's `env`:
@@ -237,6 +246,23 @@ Calls reach Word one at a time, in the order they were asked for. When Word has 
 
 If Word is not running, `word_create_document` and `word_open_document` start it; other tools answer that it is not running.
 
+### The VBA Bridge
+
+Reading a paragraph over COM or Apple Events asks Word once for each property, and 200 paragraphs took 8 to 27 seconds. The server ships a Word template, `ms-word-mcp-bridge.dotm`, whose macros read them inside Word in one call. The macros are the source in [`WordMcpBridge.bas`](src/ms_word_mcp/backend/vba/WordMcpBridge.bas), and a test checks the template was built from it.
+
+| `word_get_paragraphs`, 200 paragraphs | Without the bridge | With it |
+|---|---|---|
+| Windows | 8.1 s; 11.7 s with `detail` | 0.28 s; 0.30 s with `detail` |
+| macOS | 6.9 s; 26.9 s with `detail` | 0.45 s; 0.53 s with `detail` |
+
+`word_find_replace` goes through it too: 3,000 matches are replaced in one call, in 2.4 s on Windows and 7.4 s on macOS, where one call used to get through 740 and 1,249 of them. On macOS it also brings wildcard searches, and the whole replacement becomes one Undo step.
+
+The answers are the same, and on the Mac `detail` now gives what Windows gives (a mixed paragraph's bold reads as mixed, theme and automatic colors as none). On the Mac the bridge also reaches what Word for Mac's scripting lacks: comments' replies and done state, adding table columns, creating a style, paragraph direction and tab stops, a complex-script size and an underline color, and a shape's alt text and vertical anchor.
+
+The first call that needs the template makes it a global template of the Word the server talks to, and the server takes it out again when it stops, so your Word is left as it was. On Windows it is added from the package with `AddIns.Add`. Word for Mac's scripting cannot add one, so the template is copied to Word's own folder, opened for a moment (which makes a new document from it), and that document's macro adds the template and is closed. If the bridge cannot be used, for instance because macros are turned off by policy, the tools read as before and `word_get_app_info` says why in `vba_bridge`.
+
+On macOS 14 and later, writing in another app's folder needs the user's leave: the app the server runs under (a terminal for Claude Code, Claude itself for the Claude desktop app) needs Full Disk Access (System Settings > Privacy & Security > Full Disk Access), then a restart. Without it the bridge cannot be loaded, and `vba_bridge` says so and names the app.
+
 ### 🔒 Security
 
 The server runs on your computer with your permissions and talks to one local client over stdio; it opens no port and makes no network request of its own.
@@ -246,6 +272,7 @@ An AI using these tools can read and change any document open in Word, open any 
 What the server does about it:
 
 - Macros are disabled while it opens a document or creates one from a template. Word would otherwise run them. The document stays open with macros off.
+- The only macros it runs are its own, from the bridge template in the package, and they only do what the tools ask: read paragraphs, find and replace, work with comments, and on the Mac set the formatting its scripting cannot reach. `WORD_VBA_BRIDGE=off` leaves them out.
 - Fields that reach outside the document are refused and left alone unless you set `WORD_ALLOW_ACTIVE_FIELDS`.
 - Network paths are refused unless you set `WORD_ALLOW_NETWORK_PATHS`.
 - A new link goes to http, https, mailto or tel, or to a path relative to the document. A link the document already has is left as it is.
@@ -258,16 +285,23 @@ To report a vulnerability, see [SECURITY.md](https://github.com/ykuwai/ms-word-m
 
 The same tools, the same arguments, the same answers. What differs is what Word for Mac's scripting can reach, and where it cannot reach something the tool says so.
 
-Not available on macOS:
+Through the [VBA bridge](#the-vba-bridge) only, since Word for Mac's scripting cannot reach them (without it the tools say so):
 
-- `word_insert_table_columns`: Word for Mac's scripting cannot add columns
+- `word_insert_table_columns`, creating a style, and linking a style to numbering
 - Paragraph direction (right to left) and tab stops
 - The size of complex-script text and the color of an underline
+- A style's `quick_style` and `priority`
 - Alt text on a floating shape, and where text sits from top to bottom in one
+- Grouping shapes and ungrouping them (`word_group_shapes`, `word_ungroup_shape`), and a group's `members` in `word_list_shapes`
+- A floating picture in a header or footer
+- Content controls (`word_list_content_controls` and the rest)
+- Fields in footnotes and endnotes, turned into their text (`word_unlink_fields`)
+- Replies to comments and their done state, wildcard searches, and text added after an equation that ends the document
 
 Smaller differences:
 
-- Each change is its own Undo step, because Word for Mac's scripting cannot group them, and a style can be changed but not created. Tools say so in their results.
+- Each change is its own Undo step, because Word for Mac's scripting cannot group them. Tools say so in their results. A replacement through the [VBA bridge](#the-vba-bridge) is one step.
+- Loading the [VBA bridge](#the-vba-bridge) the first time opens a document made from its template for about a second, and leaves the template and a lock file in Word's own folder.
 - Word for Mac is sandboxed: it writes without asking only inside `~/Library/Containers/com.microsoft.Word/Data/Documents`, and saving elsewhere may make Word ask for access.
 - Word asks you about each file outside its own folder, so `word_insert_picture` puts a copy in Word's folder for a moment and reads it there. The first time, macOS may ask once whether the app the server runs in may use Word's data.
 - `word_get_page_image` has Word save a PDF next to the document for a moment. For a document never saved, the PDF goes in Word's own folder, and macOS may ask the same question.
